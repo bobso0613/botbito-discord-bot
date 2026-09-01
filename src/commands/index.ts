@@ -1,0 +1,5 @@
+import type { Command } from "../types/command.js";
+import { helpCommand } from "./help.command.js";
+import { payoutCommand } from "./payout.command.js";
+
+export const commands: Command[] = [payoutCommand, helpCommand];
