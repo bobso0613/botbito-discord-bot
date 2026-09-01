@@ -1,9 +1,35 @@
 import { google } from "googleapis";
+import { readFile } from "node:fs/promises";
 
-const GOOGLE_SHEETS_SCOPE =
-  "https://www.googleapis.com/auth/spreadsheets.readonly";
+const GOOGLE_SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
+const COMBINED_PAYOUT_SHEET_RANGE = "Combined!A:ZZ";
 
 export type SheetRow = string[];
+
+interface GoogleServiceAccountCredentials {
+  client_email: string;
+  private_key: string;
+}
+
+const loadGoogleServiceAccountCredentials = async (
+  filePath: string,
+): Promise<GoogleServiceAccountCredentials> => {
+  const fileContents = await readFile(filePath, "utf8");
+  const credentials = JSON.parse(
+    fileContents,
+  ) as Partial<GoogleServiceAccountCredentials>;
+
+  if (!credentials.client_email || !credentials.private_key) {
+    throw new Error(
+      "Google service account credentials are missing required fields",
+    );
+  }
+
+  return {
+    client_email: credentials.client_email,
+    private_key: credentials.private_key,
+  };
+};
 
 export const readSheetValues = async (
   range: string,
@@ -17,7 +43,11 @@ export const readSheetValues = async (
     throw new Error("GOOGLE_APPLICATION_CREDENTIALS must be set");
   }
 
+  const credentials = await loadGoogleServiceAccountCredentials(
+    process.env.GOOGLE_APPLICATION_CREDENTIALS,
+  );
   const auth = new google.auth.GoogleAuth({
+    credentials,
     scopes: [GOOGLE_SHEETS_SCOPE],
   });
   const sheets = google.sheets({ version: "v4", auth });
@@ -28,3 +58,6 @@ export const readSheetValues = async (
 
   return (response.data.values ?? []).map((row) => row.map(String));
 };
+
+export const readCombinedPayoutSheetRows = async (): Promise<SheetRow[]> =>
+  readSheetValues(COMBINED_PAYOUT_SHEET_RANGE);

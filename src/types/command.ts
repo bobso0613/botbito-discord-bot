@@ -5,5 +5,6 @@ import type {
 
 export interface Command {
   data: SlashCommandBuilder;
+  guildIds?: readonly string[];
   execute: (interaction: ChatInputCommandInteraction) => Promise<void>;
 }

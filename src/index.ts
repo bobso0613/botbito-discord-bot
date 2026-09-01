@@ -22,7 +22,6 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 const commandsByName = new Collection(
   commands.map((command) => [command.data.name, command]),
 );
-const commandBody = commands.map((command) => command.data.toJSON());
 
 const registerGuildSlashCommands = async (guildId: string): Promise<void> => {
   if (!clientId) {
@@ -32,6 +31,11 @@ const registerGuildSlashCommands = async (guildId: string): Promise<void> => {
     return;
   }
 
+  const commandBody = commands
+    .filter(
+      (command) => !command.guildIds || command.guildIds.includes(guildId),
+    )
+    .map((command) => command.data.toJSON());
   const rest = new REST().setToken(botToken);
   await rest.put(Routes.applicationGuildCommands(clientId, guildId), {
     body: commandBody,

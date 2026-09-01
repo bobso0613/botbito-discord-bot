@@ -10,9 +10,29 @@ if (!token || !clientId) {
 }
 
 const rest = new REST().setToken(token);
-const body = commands.map((command) => command.data.toJSON());
+const globalCommandBody = commands
+  .filter((command) => !command.guildIds)
+  .map((command) => command.data.toJSON());
+const guildIds = [
+  ...new Set(commands.flatMap((command) => command.guildIds ?? [])),
+];
 
-await rest.put(Routes.applicationCommands(clientId), { body });
+await rest.put(Routes.applicationCommands(clientId), {
+  body: globalCommandBody,
+});
+
+for (const guildId of guildIds) {
+  const guildCommandBody = commands
+    .filter(
+      (command) => !command.guildIds || command.guildIds.includes(guildId),
+    )
+    .map((command) => command.data.toJSON());
+
+  await rest.put(Routes.applicationGuildCommands(clientId, guildId), {
+    body: guildCommandBody,
+  });
+}
+
 console.log(
-  `Registered ${body.length} global slash command(s). Global updates can take up to 1 hour to appear.`,
+  `Registered ${globalCommandBody.length} global and guild-specific slash command(s) for ${guildIds.length} guild(s).`,
 );
