@@ -1,15 +1,15 @@
 import { google } from "googleapis";
 import { readFile } from "node:fs/promises";
+import {
+  COMBINED_PAYOUT_SHEET_RANGE,
+  GOOGLE_SHEETS_SCOPE,
+} from "../constants/index.js";
+import type {
+  GoogleServiceAccountCredentials,
+  SheetRow,
+} from "../types/google-sheets.js";
 
-const GOOGLE_SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
-const COMBINED_PAYOUT_SHEET_RANGE = "Combined!A:ZZ";
-
-export type SheetRow = string[];
-
-interface GoogleServiceAccountCredentials {
-  client_email: string;
-  private_key: string;
-}
+export type { SheetRow } from "../types/google-sheets.js";
 
 const loadGoogleServiceAccountCredentials = async (
   filePath: string,

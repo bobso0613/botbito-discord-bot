@@ -1,15 +1,7 @@
 import type { ChatInputCommandInteraction } from "discord.js";
+import type { InteractionContext } from "../types/interaction-context.js";
 
-export interface InteractionContext {
-  userId: string;
-  username: string;
-  discordTag: string;
-  displayName: string;
-  userAvatarUrl: string;
-  guildId: string | null;
-  guildName: string | null;
-  guildIconUrl: string | null;
-}
+export type { InteractionContext } from "../types/interaction-context.js";
 
 export const getInteractionContext = (
   interaction: ChatInputCommandInteraction,

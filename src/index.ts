@@ -4,6 +4,7 @@ import {
   Collection,
   Events,
   GatewayIntentBits,
+  MessageFlags,
   REST,
   Routes,
 } from "discord.js";
@@ -18,7 +19,9 @@ if (!token) {
 
 const botToken = token;
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
+});
 const commandsByName = new Collection(
   commands.map((command) => [command.data.name, command]),
 );
@@ -62,7 +65,31 @@ client.on(Events.InteractionCreate, async (interaction) => {
   const command = commandsByName.get(interaction.commandName);
   if (!command) return;
 
-  await command.execute(interaction);
+  try {
+    await command.execute(interaction);
+  } catch (error) {
+    console.error(`Failed to execute /${interaction.commandName}:`, error);
+
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply(
+          "Something went wrong while processing this command. Please try again.",
+        );
+      } else {
+        await interaction.reply({
+          content:
+            "Something went wrong while processing this command. Please try again.",
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+    } catch (replyError) {
+      console.error("Failed to send command error response:", replyError);
+    }
+  }
+});
+
+client.on(Events.Error, (error) => {
+  console.error("Discord client error:", error);
 });
 
 client.login(botToken);

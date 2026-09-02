@@ -7,22 +7,26 @@ import {
   PAYOUT_CHANNEL_BY_GUILD,
   PAYOUT_GUILD_IDS,
 } from "../constants/index.js";
-import { getPayoutDetails } from "../services/payout.service.js";
-import {
-  buildPayoutEmbed,
-  buildPayoutEmbedNotJoined,
-} from "../templates/payout.template.js";
+import { getPayoutSummary } from "../services/payout.service.js";
+import { buildPayoutSummaryEmbed } from "../templates/payout.template.js";
 import type { Command } from "../types/command.js";
+import {
+  getDisplayNameByDiscordTag,
+  resolvePayoutDisplayName,
+} from "../utils/guild-members.js";
 import { getInteractionContext } from "../utils/interaction-context.js";
 
-export const payoutCommand: Command = {
+export const payoutSummaryCommand: Command = {
   data: new SlashCommandBuilder()
-    .setName("payout")
-    .setDescription("Get your payout details") as SlashCommandBuilder,
+    .setName("payoutsummary")
+    .setDescription(
+      "View the server's Share Ready payout summary",
+    ) as SlashCommandBuilder,
   guildIds: PAYOUT_GUILD_IDS,
   execute: async (interaction: ChatInputCommandInteraction) => {
     if (
       !interaction.guildId ||
+      !interaction.guild ||
       !PAYOUT_GUILD_IDS.includes(interaction.guildId)
     ) {
       await interaction.reply({
@@ -46,18 +50,22 @@ export const payoutCommand: Command = {
 
     await interaction.deferReply();
 
-    const guildId = interaction.guildId;
     const context = getInteractionContext(interaction);
-    const details = await getPayoutDetails({
-      guildId,
-      discordTag: context.discordTag,
-    });
-    const embed =
-      details.distributed !== 0 ||
-      details.pending !== 0 ||
-      details.shareReady !== 0
-        ? buildPayoutEmbed(details, context)
-        : buildPayoutEmbedNotJoined(context);
+    const summary = await getPayoutSummary(interaction.guildId);
+    const displayNameByDiscordTag = await getDisplayNameByDiscordTag(
+      interaction.guild,
+    );
+    const summaryWithDisplayNames = {
+      ...summary,
+      shareReadyPayouts: summary.shareReadyPayouts.map((payout) => ({
+        ...payout,
+        displayName: resolvePayoutDisplayName(
+          payout.discordTag,
+          displayNameByDiscordTag,
+        ),
+      })),
+    };
+    const embed = buildPayoutSummaryEmbed(summaryWithDisplayNames, context);
     await interaction.editReply({ embeds: [embed] });
   },
 };

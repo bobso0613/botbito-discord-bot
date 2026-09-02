@@ -4,13 +4,8 @@ import {
   SlashCommandBuilder,
   type ChatInputCommandInteraction,
 } from "discord.js";
+import { COMMAND_GUIDE } from "../constants/index.js";
 import type { Command } from "../types/command.js";
-
-// Maintain this list whenever commands are added, removed, or changed.
-const COMMAND_GUIDE: { name: string; description: string }[] = [
-  { name: "/payout", description: "Get your payout details" },
-  { name: "/help", description: "Display this guide" },
-];
 
 export const helpCommand: Command = {
   data: new SlashCommandBuilder()

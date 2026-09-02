@@ -1,46 +1,22 @@
+import { PAYOUT_HEADERS } from "../constants/index.js";
+import type {
+  PayoutDetails,
+  PayoutLookup,
+  PayoutSummary,
+} from "../types/payout.js";
 import {
-  readCombinedPayoutSheetRows,
-  type SheetRow,
-} from "./google-sheets.service.js";
+  findGuildStartColumn,
+  findPayoutRow,
+  parseZeny,
+} from "../utils/payout-sheet.js";
+import { readCombinedPayoutSheetRows } from "./google-sheets.service.js";
 
-export interface PayoutDetails {
-  pending: number;
-  shareReady: number;
-  distributed: number;
-  currency: "z";
-}
-
-export interface PayoutLookup {
-  guildId: string;
-  discordTag: string;
-}
-
-const PAYOUT_HEADERS = ["Pending", "Share Ready", "Distributed"] as const;
-
-const parseZeny = (value: string | undefined): number => {
-  if (!value) return 0;
-
-  const amount = Number(value.replace(/[^0-9.-]/g, ""));
-  return Number.isFinite(amount) ? amount : 0;
-};
-
-const findGuildStartColumn = (headerRow: SheetRow, guildId: string): number =>
-  headerRow.findIndex((value) => value.trim() === guildId);
-
-const findPayoutRow = (
-  rows: SheetRow[],
-  discordTag: string,
-): SheetRow | undefined => {
-  const playerTags = new Set([
-    discordTag.toLocaleLowerCase(),
-    `@${discordTag}`.toLocaleLowerCase(),
-  ]);
-
-  const foundRow = rows.find((row) =>
-    playerTags.has(row[0]?.trim().toLocaleLowerCase()),
-  );
-  return foundRow;
-};
+export type {
+  PayoutDetails,
+  PayoutLookup,
+  PayoutSummary,
+  ShareReadyPayout,
+} from "../types/payout.js";
 
 export const getPayoutDetails = async (
   lookup: PayoutLookup,
@@ -63,6 +39,45 @@ export const getPayoutDetails = async (
     pending: payoutValues[0],
     shareReady: payoutValues[1],
     distributed: payoutValues[2],
+    currency: "z",
+  };
+};
+
+export const getPayoutSummary = async (
+  guildId: string,
+): Promise<PayoutSummary> => {
+  const rows = await readCombinedPayoutSheetRows();
+  const [guildRow = [], statusRow = [], ...playerRows] = rows;
+  const guildStartColumn = findGuildStartColumn(guildRow, guildId);
+  const shareReadyColumn = statusRow.findIndex(
+    (value, index) =>
+      index >= guildStartColumn && value.trim() === "Share Ready",
+  );
+  const shareReadyPayouts =
+    shareReadyColumn === -1
+      ? []
+      : playerRows
+          .map((row) => ({
+            displayName: row[0]?.trim(),
+            discordTag: row[0]?.trim(),
+            amount: parseZeny(row[shareReadyColumn]),
+          }))
+          .filter(
+            (
+              payout,
+            ): payout is {
+              displayName: string;
+              discordTag: string;
+              amount: number;
+            } => Boolean(payout.discordTag) && payout.amount !== 0,
+          );
+
+  return {
+    shareReadyPayouts,
+    totalShareReady: shareReadyPayouts.reduce(
+      (total, payout) => total + payout.amount,
+      0,
+    ),
     currency: "z",
   };
 };

@@ -1,19 +1,15 @@
 import { EmbedBuilder } from "discord.js";
-import type { PayoutDetails } from "../services/payout.service.js";
-import type { InteractionContext } from "../utils/interaction-context.js";
+import type { InteractionContext } from "../types/interaction-context.js";
+import type { PayoutDetails, PayoutSummary } from "../types/payout.js";
+import { formatZeny } from "../utils/format-zeny.js";
+import { getEmbedFooter } from "../utils/payout-embed.js";
+import { PAYOUT_TO_PING_TAG } from "../constants/index.js";
 
 export const buildPayoutEmbed = (
   details: PayoutDetails,
   context: InteractionContext,
 ): EmbedBuilder => {
-  const formatAmount = (amount: number): string =>
-    `\`${amount.toLocaleString()} ${details.currency}\``;
-  const footer = context.guildIconUrl
-    ? {
-        text: context.guildName ?? "Direct Message",
-        iconURL: context.guildIconUrl,
-      }
-    : { text: context.guildName ?? "Direct Message" };
+  const footer = getEmbedFooter(context);
 
   return new EmbedBuilder()
     .setAuthor({
@@ -23,24 +19,84 @@ export const buildPayoutEmbed = (
     .addFields(
       {
         name: "⌛ Pending",
-        value: `${formatAmount(details.pending)}`,
+        value: formatZeny(details.pending),
         inline: true,
       },
       { name: "\u200b", value: "", inline: true },
       {
         name: "✅ Distributed",
-        value: `${formatAmount(details.distributed)}`,
+        value: formatZeny(details.distributed),
         inline: true,
       },
       { name: "\u200b", value: "", inline: false },
       {
         name: "☑️ Share Ready",
-        value: `${formatAmount(details.shareReady)}\nYour monies are ready 🙏`,
+        value: `${formatZeny(details.shareReady)}${details.shareReady > 0 ? `\nPlease ping <@92073343238279168> if you want to claim.` : ""}`,
         inline: false,
       },
     )
     .setThumbnail(context.userAvatarUrl)
     .setColor("#00b0f4")
+    .setFooter(footer)
+    .setTimestamp();
+};
+
+export const buildPayoutEmbedNotJoined = (
+  context: InteractionContext,
+): EmbedBuilder => {
+  const footer = getEmbedFooter(context);
+
+  return new EmbedBuilder()
+    .setAuthor({
+      name: `💵 ${context.displayName} (@${context.discordTag})`,
+    })
+    .setTitle("Payout Status")
+    .setDescription(
+      `Hello ${context.displayName}, I cannot see your name in the list. 🫠\nPlease join our runs 🥺🙏`,
+    )
+    .setColor("#ff9494")
+    .setThumbnail(context.userAvatarUrl)
+    .setFooter(footer)
+    .setTimestamp();
+};
+
+export const buildPayoutSummaryEmbed = (
+  summary: PayoutSummary,
+  context: InteractionContext,
+): EmbedBuilder => {
+  const footer = getEmbedFooter(context);
+  const nameColumnWidth = 16;
+  const amountColumnWidth = 16;
+  const shareReadyHeader = `${"Name".padEnd(nameColumnWidth)} ${"Share Ready".padStart(amountColumnWidth)}`;
+  const shareReadyDivider = `${"-".repeat(nameColumnWidth)} ${"-".repeat(amountColumnWidth)}`;
+  const shareReadyList = summary.shareReadyPayouts.length
+    ? summary.shareReadyPayouts
+        .map((payout) => {
+          const amount = `${payout.amount.toLocaleString()} z`;
+          return `${payout.displayName.padEnd(nameColumnWidth)} ${amount.padStart(amountColumnWidth)}`;
+        })
+        .join("\n")
+    : "No Share Ready payouts.";
+
+  return new EmbedBuilder()
+    .setTitle("Payout Summary")
+    .setDescription(
+      `Available for release:\n\`\`\`\n${shareReadyHeader}\n${shareReadyDivider}\n${shareReadyList}\n\`\`\``,
+    )
+    .addFields(
+      {
+        name: "Total",
+        value: formatZeny(summary.totalShareReady),
+        inline: false,
+      },
+      {
+        name: "Distribution",
+        value: `Please ping <@92073343238279168> if you want to claim.`,
+        inline: false,
+      },
+    )
+    .setThumbnail(context.guildIconUrl)
+    .setColor("#fff194")
     .setFooter(footer)
     .setTimestamp();
 };
