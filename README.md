@@ -31,13 +31,7 @@ Enable the **Server Members Intent** in the Discord Developer Portal for the bot
 
 `/payoutsummary` 📊 displays every non-zero Share Ready payout and its total for the calling server. Each row shows the Discord guild display name and its right-aligned zeny balance. It uses the Server Members Intent to resolve display names from the sheet's Discord tags.
 
-Both payout commands are available only in the following server channels:
-
-| Guild ID              | Allowed channel        |
-| --------------------- | ---------------------- |
-| `499171225046876170`  | <#1470361558893723710> |
-| `92073842977030144`   | <#1465658706711547946> |
-| `1115484031455346718` | <#1115484031455346721> |
+Both payout commands are available only in the following select server channels. ask the owner of repository for this.
 
 Using a payout command elsewhere in one of those servers returns an ephemeral message with a link to its allowed channel. The summary and individual payout embeds ask members to contact <@92073343238279168> when a Share Ready payout is available.
 
