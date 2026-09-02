@@ -5,6 +5,7 @@ import { formatZeny } from "../utils/format-zeny.js";
 import { getEmbedFooter } from "../utils/payout-embed.js";
 import { PAYOUT_TO_PING_TAG } from "../constants/index.js";
 
+/** Builds the standard payout-status embed for a member. */
 export const buildPayoutEmbed = (
   details: PayoutDetails,
   context: InteractionContext,
@@ -41,6 +42,7 @@ export const buildPayoutEmbed = (
     .setTimestamp();
 };
 
+/** Builds the payout-status embed shown when a member is not in the payout sheet. */
 export const buildPayoutEmbedNotJoined = (
   context: InteractionContext,
 ): EmbedBuilder => {
@@ -60,6 +62,7 @@ export const buildPayoutEmbedNotJoined = (
     .setTimestamp();
 };
 
+/** Builds the guild-wide Share Ready payout summary embed. */
 export const buildPayoutSummaryEmbed = (
   summary: PayoutSummary,
   context: InteractionContext,

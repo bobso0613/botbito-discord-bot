@@ -18,6 +18,10 @@ export type {
   ShareReadyPayout,
 } from "../types/payout.js";
 
+/**
+ * Gets a member's payout balances for the guild where they invoked the command.
+ * @param lookup - The calling guild and Discord tag used to find the sheet row.
+ */
 export const getPayoutDetails = async (
   lookup: PayoutLookup,
 ): Promise<PayoutDetails> => {
@@ -43,6 +47,10 @@ export const getPayoutDetails = async (
   };
 };
 
+/**
+ * Lists all non-zero Share Ready payouts for a guild and calculates their total.
+ * @param guildId - The Discord guild ID that identifies the payout column group.
+ */
 export const getPayoutSummary = async (
   guildId: string,
 ): Promise<PayoutSummary> => {

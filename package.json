@@ -8,8 +8,10 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
     "deploy-commands": "tsx src/deploy-commands.ts",
+    "docs": "typedoc",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
-    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage"
+    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
+    "prepare": "husky"
   },
   "dependencies": {
     "discord.js": "^14.16.3",
@@ -19,9 +21,11 @@
   "devDependencies": {
     "@types/jest": "^30.0.0",
     "@types/node": "^22.15.30",
+    "husky": "^9.1.7",
     "jest": "^30.4.2",
     "ts-jest": "^29.4.12",
     "tsx": "^4.19.4",
+    "typedoc": "^0.28.20",
     "typescript": "^5.8.3"
   }
 }

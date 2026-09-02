@@ -92,8 +92,29 @@ src/
 - `npm run build` compiles TypeScript to `dist/`.
 - `npm start` runs the compiled bot.
 - `npm run deploy-commands` registers `/help` globally and payout commands in their configured guilds.
-- `npm test` runs Jest tests.
-- `npm run test:coverage` runs Jest with coverage output.
+- `npm test` runs the Jest unit tests.
+- `npm run test:coverage` runs Jest with coverage output for payout services and utilities.
+- `npm run docs` generates TypeDoc HTML reference pages in `docs/`.
 - On hosting, run `npm run build` once, then start the bot with `npm start`.
 
 make sure .env and private/ folders are present
+
+## Git Hooks 🪝
+
+Husky installs a pre-commit check when dependencies are installed. Every commit runs `npm run test:coverage && npm run build && npm run docs` in that order. The commit is blocked if unit tests fail, global coverage falls below 80%, TypeScript does not compile, or documentation generation fails.
+
+## Testing 🧪
+
+Jest unit tests are co-located with the modules they cover. The current suite verifies command permission and reply flows, zeny formatting, payout-sheet parsing and tag matching, guild-member display-name resolution, interaction context extraction, embed footer construction, and payout service mapping. Google Sheets and Discord API boundaries are mocked, so tests do not read credentials or make external API calls.
+
+`npm run test:coverage` enforces at least 80% global branch, function, line, and statement coverage.
+
+## Documentation 📚
+
+Public bot services, interaction helpers, and payout embed builders use JSDoc-style comments. Generate the browsable TypeScript reference with:
+
+```bash
+npm run docs
+```
+
+The generated `docs/` directory is excluded from Git; keep the source comments current when public behavior changes.

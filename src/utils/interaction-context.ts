@@ -3,6 +3,7 @@ import type { InteractionContext } from "../types/interaction-context.js";
 
 export type { InteractionContext } from "../types/interaction-context.js";
 
+/** Extracts user and guild presentation data from a slash command interaction. */
 export const getInteractionContext = (
   interaction: ChatInputCommandInteraction,
 ): InteractionContext => ({

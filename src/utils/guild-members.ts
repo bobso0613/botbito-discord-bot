@@ -16,6 +16,7 @@ export const getDisplayNameByDiscordTag = async (
   );
 };
 
+/** Resolves a sheet Discord tag to a guild display name with a tag fallback. */
 export const resolvePayoutDisplayName = (
   discordTag: string,
   displayNameByDiscordTag: ReadonlyMap<string, string>,

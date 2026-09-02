@@ -31,6 +31,12 @@ const loadGoogleServiceAccountCredentials = async (
   };
 };
 
+/**
+ * Reads values from an A1-notation range in the configured Google spreadsheet.
+ * @param range - The sheet range to read, such as `Combined!A:ZZ`.
+ * @param spreadsheetId - The spreadsheet ID; defaults to `GOOGLE_SHEETS_ID`.
+ * @returns Rows of string cell values.
+ */
 export const readSheetValues = async (
   range: string,
   spreadsheetId = process.env.GOOGLE_SHEETS_ID,
@@ -59,5 +65,6 @@ export const readSheetValues = async (
   return (response.data.values ?? []).map((row) => row.map(String));
 };
 
+/** Reads the payout source range from the `Combined` worksheet. */
 export const readCombinedPayoutSheetRows = async (): Promise<SheetRow[]> =>
   readSheetValues(COMBINED_PAYOUT_SHEET_RANGE);
