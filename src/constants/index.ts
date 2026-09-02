@@ -7,13 +7,6 @@ export const PAYOUT_HEADERS = [
   "Distributed",
 ] as const;
 
-export const PAYOUT_CHANNEL_BY_GUILD: Readonly<Record<string, string>> = {
-  "499171225046876170": "1470361558893723710",
-  "92073842977030144": "1465658706711547946",
-  "1115484031455346718": "1115484031455346721",
-};
-export const PAYOUT_GUILD_IDS = Object.keys(PAYOUT_CHANNEL_BY_GUILD);
-
 export const COMMAND_GUIDE: ReadonlyArray<{
   name: string;
   description: string;
@@ -25,6 +18,3 @@ export const COMMAND_GUIDE: ReadonlyArray<{
   },
   { name: "/help", description: "Display this guide" },
 ];
-
-export const PAYOUT_TO_PING_ID: number = 92073343238279168;
-export const PAYOUT_TO_PING_TAG: string = "bobito";

@@ -3,7 +3,7 @@
   "entryPoints": ["src"],
   "entryPointStrategy": "expand",
   "exclude": ["**/*.test.ts"],
-  "highlightLanguages": ["bash", "dotenv"],
+  "highlightLanguages": ["bash", "dotenv", "json"],
   "out": "docs",
   "name": "Botbito Discord Bot API",
   "tsconfig": "tsconfig.build.json"

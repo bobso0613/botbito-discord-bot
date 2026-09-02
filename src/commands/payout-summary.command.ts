@@ -4,9 +4,9 @@ import {
   type ChatInputCommandInteraction,
 } from "discord.js";
 import {
-  PAYOUT_CHANNEL_BY_GUILD,
+  DISCORD_SETTINGS,
   PAYOUT_GUILD_IDS,
-} from "../constants/index.js";
+} from "../config/discord-settings.js";
 import { getPayoutSummary } from "../services/payout.service.js";
 import { buildPayoutSummaryEmbed } from "../templates/payout.template.js";
 import type { Command } from "../types/command.js";
@@ -38,9 +38,11 @@ export const payoutSummaryCommand: Command = {
     }
 
     if (
-      interaction.channelId !== PAYOUT_CHANNEL_BY_GUILD[interaction.guildId]
+      interaction.channelId !==
+      DISCORD_SETTINGS.payoutChannelByGuild[interaction.guildId]
     ) {
-      const allowedChannelId = PAYOUT_CHANNEL_BY_GUILD[interaction.guildId];
+      const allowedChannelId =
+        DISCORD_SETTINGS.payoutChannelByGuild[interaction.guildId];
       await interaction.reply({
         content: `This command is not allowed in this channel. Use it in <#${allowedChannelId}>.`,
         flags: MessageFlags.Ephemeral,

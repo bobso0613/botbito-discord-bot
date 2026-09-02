@@ -19,12 +19,26 @@ if (!token) {
 
 const botToken = token;
 
+console.log(`Bot process started with PID ${process.pid}.`);
+
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
 });
 const commandsByName = new Collection(
   commands.map((command) => [command.data.name, command]),
 );
+
+const getServerTimestamp = (): string =>
+  new Date().toLocaleString("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    timeZoneName: "short",
+  });
 
 const registerGuildSlashCommands = async (guildId: string): Promise<void> => {
   if (!clientId) {
@@ -67,8 +81,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   try {
     await command.execute(interaction);
+    console.log(
+      `[${getServerTimestamp()}] command=/${interaction.commandName} status=success guildId=${interaction.guildId ?? "direct-message"} userId=${interaction.user.id}`,
+    );
   } catch (error) {
-    console.error(`Failed to execute /${interaction.commandName}:`, error);
+    console.error(
+      `[${getServerTimestamp()}] command=/${interaction.commandName} status=fail guildId=${interaction.guildId ?? "direct-message"} userId=${interaction.user.id}`,
+      error,
+    );
 
     try {
       if (interaction.deferred || interaction.replied) {

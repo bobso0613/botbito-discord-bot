@@ -3,7 +3,7 @@ import type { InteractionContext } from "../types/interaction-context.js";
 import type { PayoutDetails, PayoutSummary } from "../types/payout.js";
 import { formatZeny } from "../utils/format-zeny.js";
 import { getEmbedFooter } from "../utils/payout-embed.js";
-import { PAYOUT_TO_PING_TAG } from "../constants/index.js";
+import { DISCORD_SETTINGS } from "../config/discord-settings.js";
 
 /** Builds the standard payout-status embed for a member. */
 export const buildPayoutEmbed = (
@@ -32,7 +32,11 @@ export const buildPayoutEmbed = (
       { name: "\u200b", value: "", inline: false },
       {
         name: "☑️ Share Ready",
-        value: `${formatZeny(details.shareReady)}${details.shareReady > 0 ? `\nPlease ping <@92073343238279168> if you want to claim.` : ""}`,
+        value: `${formatZeny(details.shareReady)}${
+          details.shareReady > 0
+            ? `\nPlease ping <@${DISCORD_SETTINGS.payoutToPingId}> (@${DISCORD_SETTINGS.payoutToPingTag}) if you want to claim.`
+            : ""
+        }`,
         inline: false,
       },
     )
@@ -94,7 +98,7 @@ export const buildPayoutSummaryEmbed = (
       },
       {
         name: "Distribution",
-        value: `Please ping <@92073343238279168> if you want to claim.`,
+        value: `Please ping <@${DISCORD_SETTINGS.payoutToPingId}> (@${DISCORD_SETTINGS.payoutToPingTag}) if you want to claim.`,
         inline: false,
       },
     )

@@ -21,6 +21,18 @@ GOOGLE_SHEETS_ID=
 
 `GOOGLE_APPLICATION_CREDENTIALS` must point to a Google service-account JSON file. Store that file under `private/`; the directory is excluded from Git. Grant the service account's `client_email` Viewer access to the spreadsheet.
 
+Create `private/discord_settings.json` to configure payout command channels and the payout contact:
+
+```json
+{
+  "payoutChannelByGuild": {
+    "guild-id": "channel-id"
+  },
+  "payoutToPingId": "discord-user-id",
+  "payoutToPingTag": "discord-user-tag"
+}
+```
+
 Enable the **Server Members Intent** in the Discord Developer Portal for the bot application. `/payoutsummary` uses it to resolve Discord display names from the sheet's Discord tags.
 
 ## Commands 💬
@@ -31,9 +43,9 @@ Enable the **Server Members Intent** in the Discord Developer Portal for the bot
 
 `/payoutsummary` 📊 displays every non-zero Share Ready payout and its total for the calling server. Each row shows the Discord guild display name and its right-aligned zeny balance. It uses the Server Members Intent to resolve display names from the sheet's Discord tags.
 
-Both payout commands are available only in the following select server channels. ask the owner of repository for this.
+Both payout commands are available only in the guild-to-channel mappings configured in `private/discord_settings.json`.
 
-Using a payout command elsewhere in one of those servers returns an ephemeral message with a link to its allowed channel. The summary and individual payout embeds ask members to contact <@92073343238279168> when a Share Ready payout is available.
+Using a payout command elsewhere in an allowed server returns an ephemeral message with a link to its configured channel. The summary and individual payout embeds use the configured payout contact when a Share Ready payout is available.
 
 The bot registers payout commands separately in each permitted guild on startup and whenever it joins a guild. This avoids the delay associated with global command propagation. `/help` is registered globally; payout commands are not registered outside the allowlist.
 
@@ -53,6 +65,8 @@ For `/payoutsummary`, the bot selects that guild's `Share Ready` column, include
 
 ```text
 src/
+├── config/
+│   └── discord-settings.ts
 ├── index.ts
 ├── deploy-commands.ts
 ├── commands/
@@ -91,7 +105,7 @@ src/
 - `npm run docs` generates TypeDoc HTML reference pages in `docs/`.
 - On hosting, run `npm run build` once, then start the bot with `npm start`.
 
-make sure .env and private/ folders are present
+Ensure `.env`, `private/discord_settings.json`, and the Google service-account JSON are present in `private/` before starting the bot.
 
 ## Git Hooks 🪝
 
