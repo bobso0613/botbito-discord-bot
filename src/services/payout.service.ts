@@ -2,6 +2,8 @@ import { PAYOUT_HEADERS } from "../constants/index.js";
 import type {
   PayoutDetails,
   PayoutLookup,
+  PayoutSort,
+  PayoutSortDirection,
   PayoutSummary,
 } from "../types/payout.js";
 import {
@@ -9,12 +11,15 @@ import {
   findPayoutRow,
   parseZeny,
 } from "../utils/payout-sheet.js";
+import { sortShareReadyPayouts } from "../utils/payout-summary.js";
 import { readCombinedPayoutSheetRows } from "./google-sheets.service.js";
 
 export type {
   PayoutDetails,
   PayoutLookup,
   PayoutSummary,
+  PayoutSort,
+  PayoutSortDirection,
   ShareReadyPayout,
 } from "../types/payout.js";
 
@@ -53,6 +58,8 @@ export const getPayoutDetails = async (
  */
 export const getPayoutSummary = async (
   guildId: string,
+  sortBy: PayoutSort = "amount",
+  direction: PayoutSortDirection = "desc",
 ): Promise<PayoutSummary> => {
   const rows = await readCombinedPayoutSheetRows();
   const [guildRow = [], statusRow = [], ...playerRows] = rows;
@@ -80,8 +87,14 @@ export const getPayoutSummary = async (
             } => Boolean(payout.discordTag) && payout.amount !== 0,
           );
 
-  return {
+  const sortedPayouts = sortShareReadyPayouts(
     shareReadyPayouts,
+    sortBy,
+    direction,
+  );
+
+  return {
+    shareReadyPayouts: sortedPayouts,
     totalShareReady: shareReadyPayouts.reduce(
       (total, payout) => total + payout.amount,
       0,

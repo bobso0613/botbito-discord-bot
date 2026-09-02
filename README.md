@@ -41,13 +41,15 @@ Enable the **Server Members Intent** in the Discord Developer Portal for the bot
 
 `/payout` 💰 displays the command user's Pending, Share Ready, and Distributed balances in zeny (`z`). When the user has no non-zero payout balance, it instead displays a message that they are not on the list.
 
-`/payoutsummary` 📊 displays every non-zero Share Ready payout and its total for the calling server. Each row shows the Discord guild display name and its right-aligned zeny balance. It uses the Server Members Intent to resolve display names from the sheet's Discord tags.
+`/payoutsummary` 📊 displays every non-zero Share Ready payout and its total for the calling server. Each row shows the Discord guild display name and its right-aligned zeny balance. It uses the Server Members Intent to resolve display names from the sheet's Discord tags. The optional `sort` parameter supports `Name` and `Share Ready amount`; the optional `direction` parameter supports `Ascending` and `Descending`. By default, payouts are sorted by Share Ready amount descending, with Name ascending as the tie-breaker.
 
 Both payout commands are available only in the guild-to-channel mappings configured in `private/discord_settings.json`.
 
 Using a payout command elsewhere in an allowed server returns an ephemeral message with a link to its configured channel. The summary and individual payout embeds use the configured payout contact when a Share Ready payout is available.
 
 The bot registers payout commands separately in each permitted guild on startup and whenever it joins a guild. This avoids the delay associated with global command propagation. `/help` is registered globally; payout commands are not registered outside the allowlist.
+
+After changing payout command options, run `npm run deploy-commands` to update the registered guild commands in Discord.
 
 ## Payout Sheet 📊
 
@@ -59,7 +61,7 @@ Payout data is read from the `Combined` sheet over the `A:ZZ` range.
 
 For `/payout`, the bot finds the matching Discord tag in column A, selects the status columns belonging to the server where the command was run, and displays those three values. Empty or invalid cells are treated as `0 z`.
 
-For `/payoutsummary`, the bot selects that guild's `Share Ready` column, includes every non-zero row, and calculates the displayed total.
+For `/payoutsummary`, the bot selects that guild's `Share Ready` column, includes every non-zero row, calculates the displayed total, and applies the requested sorting options.
 
 ## Project Layout 🧱
 
@@ -91,7 +93,8 @@ src/
     ├── guild-members.ts
     ├── interaction-context.ts
     ├── payout-embed.ts
-    └── payout-sheet.ts
+    ├── payout-sheet.ts
+    └── payout-summary.ts
 ```
 
 ## Scripts 📜

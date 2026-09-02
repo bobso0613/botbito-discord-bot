@@ -10,17 +10,37 @@ import {
 import { getPayoutSummary } from "../services/payout.service.js";
 import { buildPayoutSummaryEmbed } from "../templates/payout.template.js";
 import type { Command } from "../types/command.js";
+import type { PayoutSort, PayoutSortDirection } from "../types/payout.js";
 import {
   getDisplayNameByDiscordTag,
   resolvePayoutDisplayName,
 } from "../utils/guild-members.js";
 import { getInteractionContext } from "../utils/interaction-context.js";
+import { sortShareReadyPayouts } from "../utils/payout-summary.js";
 
 export const payoutSummaryCommand: Command = {
   data: new SlashCommandBuilder()
     .setName("payoutsummary")
-    .setDescription(
-      "View the server's Share Ready payout summary",
+    .setDescription("View the server's Share Ready payout summary")
+    .addStringOption((option) =>
+      option
+        .setName("sort")
+        .setDescription("Sort payouts by name or Share Ready amount")
+        .setRequired(false)
+        .addChoices(
+          { name: "Name", value: "name" },
+          { name: "Share Ready amount", value: "amount" },
+        ),
+    )
+    .addStringOption((option) =>
+      option
+        .setName("direction")
+        .setDescription("Sort direction")
+        .setRequired(false)
+        .addChoices(
+          { name: "Ascending", value: "asc" },
+          { name: "Descending", value: "desc" },
+        ),
     ) as SlashCommandBuilder,
   guildIds: PAYOUT_GUILD_IDS,
   execute: async (interaction: ChatInputCommandInteraction) => {
@@ -53,19 +73,31 @@ export const payoutSummaryCommand: Command = {
     await interaction.deferReply();
 
     const context = getInteractionContext(interaction);
-    const summary = await getPayoutSummary(interaction.guildId);
+    const sortBy = (interaction.options.getString("sort") ??
+      "amount") as PayoutSort;
+    const direction = (interaction.options.getString("direction") ??
+      "desc") as PayoutSortDirection;
+    const summary = await getPayoutSummary(
+      interaction.guildId,
+      sortBy,
+      direction,
+    );
     const displayNameByDiscordTag = await getDisplayNameByDiscordTag(
       interaction.guild,
     );
     const summaryWithDisplayNames = {
       ...summary,
-      shareReadyPayouts: summary.shareReadyPayouts.map((payout) => ({
-        ...payout,
-        displayName: resolvePayoutDisplayName(
-          payout.discordTag,
-          displayNameByDiscordTag,
-        ),
-      })),
+      shareReadyPayouts: sortShareReadyPayouts(
+        summary.shareReadyPayouts.map((payout) => ({
+          ...payout,
+          displayName: resolvePayoutDisplayName(
+            payout.discordTag,
+            displayNameByDiscordTag,
+          ),
+        })),
+        sortBy,
+        direction,
+      ),
     };
     const embed = buildPayoutSummaryEmbed(summaryWithDisplayNames, context);
     await interaction.editReply({ embeds: [embed] });

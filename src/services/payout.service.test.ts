@@ -1,6 +1,7 @@
 import { jest } from "@jest/globals";
+import type { SheetRow } from "../types/google-sheets.js";
 
-const readCombinedPayoutSheetRows = jest.fn();
+const readCombinedPayoutSheetRows = jest.fn<() => Promise<SheetRow[]>>();
 
 jest.unstable_mockModule("./google-sheets.service.js", () => ({
   readCombinedPayoutSheetRows,
@@ -46,11 +47,22 @@ describe("payout service", () => {
   it("returns non-zero Share Ready payouts and their total for a guild", async () => {
     await expect(getPayoutSummary("guild-a")).resolves.toEqual({
       shareReadyPayouts: [
-        { displayName: "@alice", discordTag: "@alice", amount: 200 },
         { displayName: "@bob", discordTag: "@bob", amount: 500 },
+        { displayName: "@alice", discordTag: "@alice", amount: 200 },
       ],
       totalShareReady: 700,
       currency: "z",
     });
+  });
+
+  it("sorts payouts by name in ascending order when requested", async () => {
+    await expect(getPayoutSummary("guild-a", "name", "asc")).resolves.toEqual(
+      expect.objectContaining({
+        shareReadyPayouts: [
+          { displayName: "@alice", discordTag: "@alice", amount: 200 },
+          { displayName: "@bob", discordTag: "@bob", amount: 500 },
+        ],
+      }),
+    );
   });
 });

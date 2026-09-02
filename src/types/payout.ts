@@ -16,6 +16,9 @@ export interface ShareReadyPayout {
   amount: number;
 }
 
+export type PayoutSort = "name" | "amount";
+export type PayoutSortDirection = "asc" | "desc";
+
 export interface PayoutSummary {
   shareReadyPayouts: ShareReadyPayout[];
   totalShareReady: number;

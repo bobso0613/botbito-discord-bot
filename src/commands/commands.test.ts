@@ -1,7 +1,8 @@
 import { jest } from "@jest/globals";
+import type { PayoutDetails, PayoutSummary } from "../types/payout.js";
 
-const getPayoutDetails = jest.fn();
-const getPayoutSummary = jest.fn();
+const getPayoutDetails = jest.fn<() => Promise<PayoutDetails>>();
+const getPayoutSummary = jest.fn<() => Promise<PayoutSummary>>();
 const buildPayoutEmbed = jest.fn().mockReturnValue({ kind: "payout" });
 const buildPayoutEmbedNotJoined = jest
   .fn()
@@ -14,7 +15,7 @@ const getInteractionContext = jest.fn().mockReturnValue({
   guildId: "499171225046876170",
 });
 const getDisplayNameByDiscordTag = jest
-  .fn()
+  .fn<() => Promise<Map<string, string>>>()
   .mockResolvedValue(new Map([["alice", "Alice"]]));
 const resolvePayoutDisplayName = jest.fn().mockReturnValue("Alice");
 
@@ -48,6 +49,9 @@ const createInteraction = (overrides: Record<string, unknown> = {}) => ({
   reply: jest.fn(),
   deferReply: jest.fn(),
   editReply: jest.fn(),
+  options: {
+    getString: jest.fn<(name: string) => string | null>().mockReturnValue(null),
+  },
   ...overrides,
 });
 
@@ -134,5 +138,25 @@ describe("command handlers", () => {
     expect(interaction.editReply).toHaveBeenCalledWith({
       embeds: [{ kind: "summary" }],
     });
+    expect(getPayoutSummary).toHaveBeenCalledWith(
+      allowedGuildId,
+      "amount",
+      "desc",
+    );
+
+    const sortedInteraction = createInteraction({
+      options: {
+        getString: jest.fn((name: string) =>
+          name === "sort" ? "name" : "asc",
+        ),
+      },
+    });
+    await payoutSummaryCommand.execute(sortedInteraction as never);
+
+    expect(getPayoutSummary).toHaveBeenLastCalledWith(
+      allowedGuildId,
+      "name",
+      "asc",
+    );
   });
 });
