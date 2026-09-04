@@ -57,6 +57,36 @@ export const guildSchedCommand: Command = {
 
     const member = await interaction.guild.members.fetch(interaction.user.id);
     const isPublic = interaction.options.getBoolean("public") ?? false;
+
+    // Build excluded channels list based on role restrictions
+    let excludedChannelsForPublic = source.excludedChannelIds ?? [];
+    if (isPublic && source.roleRestrictedChannels) {
+      // Check if the current channel is role-restricted
+      const currentChannelRequiredRole =
+        source.roleRestrictedChannels[interaction.channelId];
+      if (currentChannelRequiredRole) {
+        // User is invoking in a role-restricted channel
+        if (member.roles.cache.has(currentChannelRequiredRole)) {
+          // User has the required role, allow this channel (remove from excluded if present)
+          excludedChannelsForPublic = excludedChannelsForPublic.filter(
+            (channelId) => channelId !== interaction.channelId,
+          );
+        } else {
+          // User doesn't have the required role, exclude this channel
+          excludedChannelsForPublic = [
+            ...excludedChannelsForPublic,
+            interaction.channelId,
+          ];
+        }
+      } else {
+        // Current channel is not role-restricted, so exclude all role-restricted channels
+        excludedChannelsForPublic = [
+          ...excludedChannelsForPublic,
+          ...Object.keys(source.roleRestrictedChannels),
+        ];
+      }
+    }
+
     await interaction.deferReply(
       isPublic ? {} : { flags: MessageFlags.Ephemeral },
     );
@@ -65,7 +95,7 @@ export const guildSchedCommand: Command = {
       interaction.guild,
       member,
       source.categoryId,
-      isPublic ? source.excludedChannelIds : undefined,
+      isPublic ? excludedChannelsForPublic : undefined,
     );
     const context = getInteractionContext(interaction);
     const categoryName =

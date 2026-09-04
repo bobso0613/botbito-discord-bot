@@ -110,6 +110,7 @@ describe("getActiveGuildSchedules", () => {
         channelUrl: "https://discord.com/channels/guild/earlier-schedule",
         isSignedUp: false,
         isReserve: false,
+        charNote: undefined,
       },
       {
         title: "New schedule",
@@ -118,6 +119,7 @@ describe("getActiveGuildSchedules", () => {
         channelUrl: "https://discord.com/channels/guild/schedule",
         isSignedUp: false,
         isReserve: true,
+        charNote: "_give link_",
       },
     ]);
     expect(inaccessibleFetch).not.toHaveBeenCalled();
@@ -130,5 +132,59 @@ describe("getActiveGuildSchedules", () => {
     );
     expect(publicSchedules).toHaveLength(1);
     expect(publicSchedules[0]?.title).toBe("Earlier schedule");
+  });
+
+  it("extracts character notes from schedule description", async () => {
+    const member = { displayName: "Lucian Blight" };
+    const accessiblePermissions = { has: jest.fn().mockReturnValue(true) };
+    const createMessage = (description: string) => ({
+      author: { id: DISCORD_SETTINGS.guildScheduleBotId },
+      createdTimestamp: 1,
+      embeds: [
+        {
+          title: "Test Schedule",
+          description,
+          fields: [],
+        },
+      ],
+    });
+    const createAccessibleChannel = (messages: Map<string, unknown>) => ({
+      type: ChannelType.GuildText,
+      id: "schedule-channel",
+      parentId: "schedule-category",
+      name: "test-signup",
+      url: "https://discord.com/channels/guild/schedule",
+      permissionsFor: jest.fn().mockReturnValue(accessiblePermissions),
+      messages: { fetch: jest.fn().mockResolvedValue(messages as never) },
+    });
+
+    const guildWithCharNote = {
+      channels: {
+        cache: new Map([
+          [
+            "schedule",
+            createAccessibleChannel(
+              new Map([
+                [
+                  "msg",
+                  createMessage(
+                    "`04`: 🎸 Clown - **Lucian Blight** (_Mango Bay_)\nYour Time: <t:4070905800:F>",
+                  ),
+                ],
+              ]),
+            ),
+          ],
+        ]),
+      },
+    };
+
+    const schedulesWithNote = await getActiveGuildSchedules(
+      guildWithCharNote as never,
+      member as never,
+      "schedule-category",
+    );
+
+    expect(schedulesWithNote).toHaveLength(1);
+    expect(schedulesWithNote[0]?.charNote).toBe("_Mango Bay_");
   });
 });

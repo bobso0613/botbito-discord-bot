@@ -6,4 +6,5 @@ export interface GuildSchedule {
   channelUrl: string;
   isSignedUp: boolean;
   isReserve: boolean;
+  charNote?: string;
 }

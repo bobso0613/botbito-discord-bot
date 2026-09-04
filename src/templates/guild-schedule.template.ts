@@ -8,12 +8,19 @@ const getScheduleStatusIndicator = (schedule: GuildSchedule): string => {
   return schedule.isSignedUp ? " - 📝 " : "";
 };
 
+const getScheduleStatusWithNote = (schedule: GuildSchedule): string => {
+  const status = getScheduleStatusIndicator(schedule);
+  if (!status && !schedule.charNote) return "";
+  if (schedule.charNote) return `${status} - ${schedule.charNote}`;
+  return status;
+};
+
 const formatGuildSchedule = (schedule: GuildSchedule): string => {
   const relativeTimestamp = schedule.timestamp.replace(":F>", ":R>");
   return [
     `🗓️ **[${schedule.title}](${schedule.channelUrl})**`,
     `${schedule.timestamp} (${relativeTimestamp})`,
-    `↪ [#${schedule.channelName}](${schedule.channelUrl})${getScheduleStatusIndicator(schedule)}`,
+    `↪ [#${schedule.channelName}](${schedule.channelUrl})${getScheduleStatusWithNote(schedule)}`,
   ].join("\n");
 };
 
@@ -64,7 +71,7 @@ export const buildGuildScheduleEmbed = (
     )
     .addFields({
       name: "\u200b",
-      value: `Only showing signup channels within __${categoryName}__ category.\nusing <@${context.userId}>`,
+      value: `Only showing signup channels within __${categoryName}__ category.\ncommand invoked by <@${context.userId}>`,
     })
     .setTimestamp()
     .setFooter(footer);

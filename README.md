@@ -38,7 +38,10 @@ Create `private/discord_settings.json` to configure payout command channels, gui
     "guild-id": {
       "categoryId": "schedule-category-id",
       "allowedCommandChannelIds": ["optional-extra-command-channel-id"],
-      "excludedChannelIds": ["private-signup-channel-id"]
+      "excludedChannelIds": ["private-signup-channel-id"],
+      "roleRestrictedChannels": {
+        "restricted-channel-id": "required-role-id"
+      }
     }
   }
 }
@@ -48,17 +51,23 @@ Enable the **Server Members Intent** in the Discord Developer Portal for the bot
 
 ## Commands 💬
 
-`/help` 📖 displays a private guide to available commands.
+`/help` ℹ️ displays a private guide to available commands with descriptions, parameters, and usage for each command. Each command is labeled with its associated emoji for quick recognition.
 
 `/payout` 💰 displays the command user's Pending, Share Ready, and Distributed balances in zeny (`z`). When the user has no non-zero payout balance, it instead displays a message that they are not on the list.
 
-`/payoutsummary` 📊 displays every non-zero Share Ready payout and its total for the calling server. Each row shows the Discord guild display name and its right-aligned zeny balance. It uses the Server Members Intent to resolve display names from the sheet's Discord tags. The optional `sort` parameter supports `Name` and `Share Ready amount`; the optional `direction` parameter supports `Ascending` and `Descending`. By default, payouts are sorted by Share Ready amount descending, with Name ascending as the tie-breaker.
+`/payoutsummary` 📄 displays every non-zero Share Ready payout and its total for the calling server. Each row shows the Discord guild display name and its right-aligned zeny balance. It uses the Server Members Intent to resolve display names from the sheet's Discord tags. The optional `sort` parameter supports `Name` and `Share Ready amount`; the optional `direction` parameter supports `Ascending` and `Descending`. By default, payouts are sorted by Share Ready amount descending, with Name ascending as the tie-breaker.
 
 `/guildsched` 🗓️ lists active runs from the configured guild schedule category. It is available in that category's text channels and any configured `allowedCommandChannelIds`; anyone who can use those channels can run the command. The bot includes only signup channels the invoking member can view and read, uses the newest active schedule per channel, and orders results earliest to latest.
 
-Each schedule links to the run and its actual signup channel. The output groups runs where the member is signed up or reserve before runs where they are not signed up. `📝` marks a standard signup and `🪑` marks a reserve slot. The embed notes the category from which signup channels are shown and mentions the invoking member.
+Each schedule links to the run and its actual signup channel. The output groups runs where the member is signed up or reserve before runs where they are not signed up. `📝` marks a standard signup and `🪑` marks a reserve slot. Character notes from signup entries (e.g., "alt character", "reserve slot") are displayed next to the status indicator when present. The embed notes the category from which signup channels are shown and mentions the invoking member.
 
-Use `/guildsched public:true` to post the schedule embed for everyone in the current channel. Without the option, the response is private. Public output omits configured `excludedChannelIds`; private output can include them when the invoking member has access.
+Use `/guildsched public:true` to post the schedule embed for everyone in the current channel. Without the option, the response is private.
+
+**Public output behavior:**
+
+- When invoked in a role-restricted channel: Only displays that channel's schedules if the user has the required role. Otherwise, displays only non-restricted channels.
+- When invoked in a non-restricted channel: Displays only non-restricted channels (all role-restricted channels are excluded).
+- Private output can include all accessible channels regardless of role restrictions.
 
 Both payout commands are available only in the guild-to-channel mappings configured in `private/discord_settings.json`.
 
@@ -79,6 +88,56 @@ Payout data is read from the `Combined` sheet over the `A:ZZ` range.
 For `/payout`, the bot finds the matching Discord tag in column A, selects the status columns belonging to the server where the command was run, and displays those three values. Empty or invalid cells are treated as `0 z`.
 
 For `/payoutsummary`, the bot selects that guild's `Share Ready` column, includes every non-zero row, calculates the displayed total, and applies the requested sorting options.
+
+## Guild Schedule Format 📅
+
+Schedule embeds are posted by the configured `guildScheduleBotId` bot in signup channels. Each entry's format determines how the bot displays signup and reserve information.
+
+Signup entries use this format:
+
+```plain
+- **DisplayName** (character note)
+```
+
+Reserve entries use this format:
+
+```plain
+Reserve - **DisplayName** (character note)
+```
+
+The character note is optional and displayed in parentheses. Examples:
+
+- `- **PlayerName** (alt)` → displays as "📝 - alt"
+- `Reserve - **PlayerName** (wallet)` → displays as "🪑 - wallet"
+- `- **PlayerName**` → displays as "📝 " (no note)
+
+The bot extracts the note text and displays it alongside the status indicator (📝 for signups, 🪑 for reserves) in the `/guildsched` command output.
+
+## Role-Restricted Guild Schedule Channels 🔐
+
+Certain schedule channels can be restricted to users with specific Discord roles. This is useful for private or elite signup channels that should only be visible to authorized members when posting publicly.
+
+Configure role-restricted channels in `private/discord_settings.json`:
+
+```json
+"guildScheduleSourceByGuild": {
+  "guild-id": {
+    "categoryId": "schedule-category-id",
+    "roleRestrictedChannels": {
+      "restricted-channel-id": "required-role-id",
+      "another-restricted-channel-id": "another-required-role-id"
+    }
+  }
+}
+```
+
+**Access Control Behavior:**
+
+- **Private schedules** (`/guildsched` without `public:true`): All accessible channels are shown, including role-restricted ones if the user can view them in Discord.
+- **Public schedules** (`/guildsched public:true`):
+  - If invoked in a role-restricted channel by a user with the required role: That channel's schedules are displayed along with non-restricted channels.
+  - If invoked in a role-restricted channel by a user WITHOUT the required role: Only non-restricted channels are displayed.
+  - If invoked in a non-restricted channel: Only non-restricted channels are displayed (all role-restricted channels are excluded).
 
 ## Project Layout 🧱
 
@@ -137,7 +196,7 @@ Husky installs a pre-commit check when dependencies are installed. Every commit 
 
 ## Testing 🧪
 
-Jest unit tests are co-located with the modules they cover. The current suite verifies command permission and reply flows, zeny formatting, payout-sheet parsing and tag matching, guild-member display-name resolution, interaction context extraction, embed footer construction, and payout service mapping. Google Sheets and Discord API boundaries are mocked, so tests do not read credentials or make external API calls.
+Jest unit tests are co-located with the modules they cover. The current suite verifies command permission and reply flows, zeny formatting, payout-sheet parsing and tag matching, guild-member display-name resolution, interaction context extraction, embed footer construction, payout service mapping, character note extraction from schedule entries, schedule embed formatting with character notes, and role-based channel access control for public guild schedules. Google Sheets and Discord API boundaries are mocked, so tests do not read credentials or make external API calls.
 
 `npm run test:coverage` enforces at least 80% global branch, function, line, and statement coverage.
 

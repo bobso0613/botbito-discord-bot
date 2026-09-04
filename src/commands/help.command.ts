@@ -18,11 +18,29 @@ export const helpCommand: Command = {
       .setTitle("Command Guide")
       .setColor(0x5865f2)
       .addFields(
-        COMMAND_GUIDE.map((command) => ({
-          name: command.name,
-          value: command.description,
-        })),
+        COMMAND_GUIDE.flatMap((command) => {
+          const fields = [
+            {
+              name: `${command.emoji} \`${command.name}\``,
+              value: command.description,
+            },
+          ];
+          if (command.parameters && command.parameters.length > 0) {
+            const parameterText = command.parameters
+              .map(
+                (param) =>
+                  `• **${param.name}** ${param.required ? "(required)" : "(optional)"}: ${param.description}`,
+              )
+              .join("\n");
+            fields.push({
+              name: "Parameters",
+              value: parameterText,
+            });
+          }
+          return fields;
+        }),
       )
+      .setThumbnail(interaction.client.user?.avatarURL() || null)
       .setTimestamp();
 
     await interaction.reply({

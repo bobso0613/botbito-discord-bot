@@ -48,6 +48,11 @@ const createInteraction = (overrides: Record<string, unknown> = {}) => ({
   guildId: allowedGuildId,
   channelId: allowedChannelId,
   guild: { id: allowedGuildId },
+  client: {
+    user: {
+      avatarURL: jest.fn().mockReturnValue("https://example.com/avatar.png"),
+    },
+  },
   reply: jest.fn(),
   deferReply: jest.fn(),
   editReply: jest.fn(),
@@ -220,6 +225,9 @@ describe("command handlers", () => {
   });
 
   it("makes guild schedules public when requested", async () => {
+    const roleCache = new Map([
+      ["1545320299220963458", { id: "1545320299220963458" }],
+    ]);
     const interaction = createInteraction({
       options: {
         getString: jest
@@ -236,6 +244,7 @@ describe("command handlers", () => {
         members: {
           fetch: jest.fn().mockResolvedValue({
             displayName: "Lucian Blight",
+            roles: { cache: roleCache },
           } as never),
         },
         channels: { cache: new Map() },
@@ -255,9 +264,10 @@ describe("command handlers", () => {
       guild: {
         id: allowedGuildId,
         members: {
-          fetch: jest
-            .fn()
-            .mockResolvedValue({ displayName: "Lucian Blight" } as never),
+          fetch: jest.fn().mockResolvedValue({
+            displayName: "Lucian Blight",
+            roles: { cache: new Map() },
+          } as never),
         },
         channels: { cache: new Map() },
       },
@@ -268,6 +278,37 @@ describe("command handlers", () => {
     expect(interaction.deferReply).toHaveBeenCalledWith({
       flags: MessageFlags.Ephemeral,
     });
+  });
+
+  it("denies public guild schedules to users without the required role", async () => {
+    const interaction = createInteraction({
+      options: {
+        getString: jest
+          .fn<(name: string) => string | null>()
+          .mockReturnValue(null),
+        getBoolean: jest
+          .fn<(name: string) => boolean | null>()
+          .mockReturnValue(true),
+      },
+      user: { id: "user-id" },
+      channelId: "1542541803914403840", // Role-restricted channel without user having the role
+      channel: { type: 0, parentId: "1481977001811247245" },
+      guild: {
+        id: allowedGuildId,
+        members: {
+          fetch: jest.fn().mockResolvedValue({
+            displayName: "Lucian Blight",
+            roles: { cache: new Map() }, // User has no roles
+          } as never),
+        },
+        channels: { cache: new Map() },
+      },
+    });
+
+    await guildSchedCommand.execute(interaction as never);
+
+    // Should still defer (public reply), but the role-restricted channel should be excluded
+    expect(interaction.deferReply).toHaveBeenCalledWith({});
   });
 
   it("denies payout commands outside the allowed server or channel", async () => {

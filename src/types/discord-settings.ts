@@ -10,6 +10,7 @@ export interface DiscordSettings {
         categoryId: string;
         allowedCommandChannelIds?: string[];
         excludedChannelIds?: string[];
+        roleRestrictedChannels?: Readonly<Record<string, string>>;
       }
     >
   >;

@@ -61,6 +61,19 @@ const isMemberReserve = (
   return reservePattern.test(embedText);
 };
 
+/** Extracts the character note from a schedule embed for the invoking member. */
+const getMemberCharNote = (
+  embedText: string,
+  displayNamePattern: string,
+): string | undefined => {
+  const charNotePattern = new RegExp(
+    `\\*\\*${displayNamePattern}\\*\\*\\s*\\(([^)]+)\\)`,
+    "i",
+  );
+  const match = embedText.match(charNotePattern);
+  return match?.[1];
+};
+
 /** Checks whether a member can view and read a candidate schedule channel. */
 const isAccessibleScheduleChannel = (
   channel: TextChannel,
@@ -103,6 +116,7 @@ const getNewestChannelSchedule = async (
                       !isReserve &&
                       isMemberSignedUp(embedText, displayNamePattern),
                     isReserve,
+                    charNote: getMemberCharNote(embedText, displayNamePattern),
                   },
                 ]
               : [];
