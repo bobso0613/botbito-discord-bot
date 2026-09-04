@@ -5,6 +5,8 @@ import { formatZeny } from "../utils/format-zeny.js";
 import { getEmbedFooter } from "../utils/payout-embed.js";
 import { DISCORD_SETTINGS } from "../config/discord-settings.js";
 
+const pepeMoneyRainEmojiId = process.env.PEPEMONEYRAIN_EMOJI_ID;
+
 /** Builds the standard payout-status embed for a member. */
 export const buildPayoutEmbed = (
   details: PayoutDetails,
@@ -19,22 +21,22 @@ export const buildPayoutEmbed = (
     .setTitle("Payout Status")
     .addFields(
       {
+        name: `<a:pepemoneyrain:${pepeMoneyRainEmojiId}> Claimable`,
+        value: `${formatZeny(details.shareReady)}`,
+        inline: true,
+      },
+      {
         name: "⌛ Pending",
         value: formatZeny(details.pending),
         inline: true,
       },
       { name: "\u200b", value: "", inline: true },
-      {
-        name: "✅ Distributed",
-        value: formatZeny(details.distributed),
-        inline: true,
-      },
       { name: "\u200b", value: "", inline: false },
       {
-        name: "☑️ Share Ready",
-        value: `${formatZeny(details.shareReady)}${
+        name: "✅ Distributed",
+        value: `${formatZeny(details.distributed)}${
           details.shareReady > 0
-            ? `\nPlease ping <@${DISCORD_SETTINGS.payoutToPingId}> (@${DISCORD_SETTINGS.payoutToPingTag}) if you want to claim.`
+            ? `\n\nPlease ping <@${DISCORD_SETTINGS.payoutToPingId}> (@${DISCORD_SETTINGS.payoutToPingTag}) if you want to claim.`
             : ""
         }`,
         inline: false,

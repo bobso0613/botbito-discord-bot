@@ -7,6 +7,7 @@ import {
   MessageFlags,
   REST,
   Routes,
+  ActivityType,
 } from "discord.js";
 import { commands } from "./commands/index.js";
 
@@ -63,6 +64,15 @@ const registerGuildSlashCommands = async (guildId: string): Promise<void> => {
 };
 
 client.once(Events.ClientReady, async (readyClient) => {
+  readyClient.user.setPresence({
+    activities: [
+      {
+        name: "/help /payout /guildsched | @bobito",
+        type: ActivityType.Listening,
+      },
+    ],
+  });
+
   for (const guildId of readyClient.guilds.cache.keys()) {
     await registerGuildSlashCommands(guildId);
   }

@@ -17,11 +17,14 @@ DISCORD_TOKEN=
 DISCORD_CLIENT_ID=
 GOOGLE_APPLICATION_CREDENTIALS=./private/service-account.json
 GOOGLE_SHEETS_ID=
+PEPEMONEYRAIN_EMOJI_ID=
 ```
 
 `GOOGLE_APPLICATION_CREDENTIALS` must point to a Google service-account JSON file. Store that file under `private/`; the directory is excluded from Git. Grant the service account's `client_email` Viewer access to the spreadsheet.
 
-Create `private/discord_settings.json` to configure payout command channels and the payout contact:
+Set `PEPEMONEYRAIN_EMOJI_ID` to the custom animated Discord emoji ID used beside the Claimable payout balance. Use the emoji ID available in the Discord server where the bot is running.
+
+Create `private/discord_settings.json` to configure payout command channels, guild schedule sources, and the payout contact:
 
 ```json
 {
@@ -29,7 +32,15 @@ Create `private/discord_settings.json` to configure payout command channels and 
     "guild-id": "channel-id"
   },
   "payoutToPingId": "discord-user-id",
-  "payoutToPingTag": "discord-user-tag"
+  "payoutToPingTag": "discord-user-tag",
+  "guildScheduleBotId": "schedule-bot-user-id",
+  "guildScheduleSourceByGuild": {
+    "guild-id": {
+      "categoryId": "schedule-category-id",
+      "allowedCommandChannelIds": ["optional-extra-command-channel-id"],
+      "excludedChannelIds": ["private-signup-channel-id"]
+    }
+  }
 }
 ```
 
@@ -43,11 +54,17 @@ Enable the **Server Members Intent** in the Discord Developer Portal for the bot
 
 `/payoutsummary` 📊 displays every non-zero Share Ready payout and its total for the calling server. Each row shows the Discord guild display name and its right-aligned zeny balance. It uses the Server Members Intent to resolve display names from the sheet's Discord tags. The optional `sort` parameter supports `Name` and `Share Ready amount`; the optional `direction` parameter supports `Ascending` and `Descending`. By default, payouts are sorted by Share Ready amount descending, with Name ascending as the tie-breaker.
 
+`/guildsched` 🗓️ lists active runs from the configured guild schedule category. It is available in that category's text channels and any configured `allowedCommandChannelIds`; anyone who can use those channels can run the command. The bot includes only signup channels the invoking member can view and read, uses the newest active schedule per channel, and orders results earliest to latest.
+
+Each schedule links to the run and its actual signup channel. The output groups runs where the member is signed up or reserve before runs where they are not signed up. `📝` marks a standard signup and `🪑` marks a reserve slot. The embed notes the category from which signup channels are shown and mentions the invoking member.
+
+Use `/guildsched public:true` to post the schedule embed for everyone in the current channel. Without the option, the response is private. Public output omits configured `excludedChannelIds`; private output can include them when the invoking member has access.
+
 Both payout commands are available only in the guild-to-channel mappings configured in `private/discord_settings.json`.
 
 Using a payout command elsewhere in an allowed server returns an ephemeral message with a link to its configured channel. The summary and individual payout embeds use the configured payout contact when a Share Ready payout is available.
 
-The bot registers payout commands separately in each permitted guild on startup and whenever it joins a guild. This avoids the delay associated with global command propagation. `/help` is registered globally; payout commands are not registered outside the allowlist.
+The bot registers payout and guild schedule commands separately in each permitted guild on startup and whenever it joins a guild. This avoids the delay associated with global command propagation. `/help` is registered globally; guild-specific commands are not registered outside their allowlists.
 
 After changing payout command options, run `npm run deploy-commands` to update the registered guild commands in Discord.
 
@@ -73,6 +90,7 @@ src/
 ├── deploy-commands.ts
 ├── commands/
 │   ├── help.command.ts
+│   ├── guildsched.command.ts
 │   ├── index.ts
 │   ├── payout.command.ts
 │   └── payout-summary.command.ts
@@ -80,11 +98,14 @@ src/
 │   └── index.ts
 ├── services/
 │   ├── google-sheets.service.ts
+│   ├── guild-schedule.service.ts
 │   └── payout.service.ts
 ├── templates/
+│   ├── guild-schedule.template.ts
 │   └── payout.template.ts
 ├── types/
 │   ├── command.ts
+│   ├── guild-schedule.ts
 │   ├── google-sheets.ts
 │   ├── interaction-context.ts
 │   └── payout.ts
@@ -102,11 +123,11 @@ src/
 - `npm run dev` runs the bot with `tsx watch`.
 - `npm run build` compiles TypeScript to `dist/`.
 - `npm start` runs the compiled bot.
-- `npm run deploy-commands` registers `/help` globally and payout commands in their configured guilds.
+- `npm run deploy-commands` registers `/help` globally and guild-specific payout and schedule commands in their configured guilds.
 - `npm test` runs the Jest unit tests.
 - `npm run test:coverage` runs Jest with coverage output for payout services and utilities.
 - `npm run docs` generates TypeDoc HTML reference pages in `docs/`.
-- On hosting, run `npm run build` once, then start the bot with `npm start`.
+- (On hosting) nohup /opt/cpanel/ea-nodejs22/bin/node index.js & disown
 
 Ensure `.env`, `private/discord_settings.json`, and the Google service-account JSON are present in `private/` before starting the bot.
 

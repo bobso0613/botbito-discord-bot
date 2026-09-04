@@ -1,4 +1,5 @@
 import { jest } from "@jest/globals";
+import { MessageFlags } from "discord.js";
 import type { PayoutDetails, PayoutSummary } from "../types/payout.js";
 
 const getPayoutDetails = jest.fn<() => Promise<PayoutDetails>>();
@@ -39,6 +40,7 @@ jest.unstable_mockModule("../utils/guild-members.js", () => ({
 const { payoutCommand } = await import("./payout.command.js");
 const { payoutSummaryCommand } = await import("./payout-summary.command.js");
 const { helpCommand } = await import("./help.command.js");
+const { guildSchedCommand } = await import("./guildsched.command.js");
 
 const allowedGuildId = "499171225046876170";
 const allowedChannelId = "1470361558893723710";
@@ -51,6 +53,9 @@ const createInteraction = (overrides: Record<string, unknown> = {}) => ({
   editReply: jest.fn(),
   options: {
     getString: jest.fn<(name: string) => string | null>().mockReturnValue(null),
+    getBoolean: jest
+      .fn<(name: string) => boolean | null>()
+      .mockReturnValue(null),
   },
   ...overrides,
 });
@@ -81,6 +86,188 @@ describe("command handlers", () => {
     expect(interaction.reply).toHaveBeenCalledWith(
       expect.objectContaining({ embeds: [expect.anything()] }),
     );
+  });
+
+  it("lists active schedules from bot embeds in the configured category", async () => {
+    const permittedMember = {
+      displayName: "Lucian Blight",
+    };
+    const accessibleChannelPermissions = {
+      has: jest.fn().mockReturnValue(true),
+    };
+    const activeSchedule = {
+      author: { id: "836060624911073291" },
+      createdTimestamp: 2,
+      embeds: [
+        {
+          title: "Endless Tower Wednesday",
+          description: "*Your Time: <t:4070905800:F>*",
+          fields: [],
+        },
+      ],
+    };
+    const previousSchedule = {
+      author: { id: "836060624911073291" },
+      createdTimestamp: 1,
+      embeds: [
+        {
+          title: "Previous Schedule",
+          description: "*Your Time: <t:4070905800:F>*",
+          fields: [],
+        },
+      ],
+    };
+    const earlierSchedule = {
+      author: { id: "836060624911073291" },
+      createdTimestamp: 3,
+      embeds: [
+        {
+          title: "Earlier Schedule",
+          description: "*Your Time: <t:3470905800:F>*",
+          fields: [],
+        },
+      ],
+    };
+    const interaction = createInteraction({
+      user: { id: "user-id" },
+      channel: {
+        type: 0,
+        parentId: "1481977001811247245",
+      },
+      guild: {
+        id: allowedGuildId,
+        members: {
+          fetch: jest.fn().mockResolvedValue(permittedMember as never),
+        },
+        channels: {
+          cache: new Map([
+            [
+              "schedule-channel",
+              {
+                type: 0,
+                parentId: "1481977001811247245",
+                url: "https://discord.com/channels/499171225046876170/schedule-channel",
+                permissionsFor: jest
+                  .fn()
+                  .mockReturnValue(accessibleChannelPermissions),
+                messages: {
+                  fetch: jest.fn().mockResolvedValue(
+                    new Map([
+                      ["previous", previousSchedule],
+                      ["active", activeSchedule],
+                    ]) as never,
+                  ),
+                },
+              },
+            ],
+            [
+              "earlier-schedule-channel",
+              {
+                type: 0,
+                parentId: "1481977001811247245",
+                url: "https://discord.com/channels/499171225046876170/earlier-schedule-channel",
+                permissionsFor: jest
+                  .fn()
+                  .mockReturnValue(accessibleChannelPermissions),
+                messages: {
+                  fetch: jest
+                    .fn()
+                    .mockResolvedValue(
+                      new Map([["earlier", earlierSchedule]]) as never,
+                    ),
+                },
+              },
+            ],
+            [
+              "inaccessible-schedule-channel",
+              {
+                type: 0,
+                parentId: "1481977001811247245",
+                url: "https://discord.com/channels/499171225046876170/inaccessible-schedule-channel",
+                permissionsFor: jest.fn().mockReturnValue({
+                  has: jest.fn().mockReturnValue(false),
+                }),
+                messages: {
+                  fetch: jest.fn(),
+                },
+              },
+            ],
+          ]),
+        },
+      },
+    });
+
+    await guildSchedCommand.execute(interaction as never);
+
+    expect(interaction.deferReply).toHaveBeenCalledWith({
+      flags: MessageFlags.Ephemeral,
+    });
+    const reply = (interaction.editReply as jest.Mock).mock.calls[0][0] as {
+      embeds: Array<{ data: { description: string } }>;
+    };
+    expect(reply.embeds[0].data.description).toContain(
+      "Endless Tower Wednesday",
+    );
+    expect(reply.embeds[0].data.description).not.toContain("Previous Schedule");
+    expect(reply.embeds[0].data.description).toContain(
+      "[Endless Tower Wednesday](https://discord.com/channels/499171225046876170/schedule-channel)",
+    );
+    expect(
+      reply.embeds[0].data.description.indexOf("Earlier Schedule"),
+    ).toBeLessThan(
+      reply.embeds[0].data.description.indexOf("Endless Tower Wednesday"),
+    );
+  });
+
+  it("makes guild schedules public when requested", async () => {
+    const interaction = createInteraction({
+      options: {
+        getString: jest
+          .fn<(name: string) => string | null>()
+          .mockReturnValue(null),
+        getBoolean: jest
+          .fn<(name: string) => boolean | null>()
+          .mockReturnValue(true),
+      },
+      user: { id: "user-id" },
+      channel: { type: 0, parentId: "1481977001811247245" },
+      guild: {
+        id: allowedGuildId,
+        members: {
+          fetch: jest.fn().mockResolvedValue({
+            displayName: "Lucian Blight",
+          } as never),
+        },
+        channels: { cache: new Map() },
+      },
+    });
+
+    await guildSchedCommand.execute(interaction as never);
+
+    expect(interaction.deferReply).toHaveBeenCalledWith({});
+  });
+
+  it("allows guild schedules in a configured exception channel", async () => {
+    const interaction = createInteraction({
+      user: { id: "user-id" },
+      channelId: "499171225046876172",
+      channel: { type: 0, parentId: "another-category" },
+      guild: {
+        id: allowedGuildId,
+        members: {
+          fetch: jest
+            .fn()
+            .mockResolvedValue({ displayName: "Lucian Blight" } as never),
+        },
+        channels: { cache: new Map() },
+      },
+    });
+
+    await guildSchedCommand.execute(interaction as never);
+
+    expect(interaction.deferReply).toHaveBeenCalledWith({
+      flags: MessageFlags.Ephemeral,
+    });
   });
 
   it("denies payout commands outside the allowed server or channel", async () => {
