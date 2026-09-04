@@ -22,6 +22,9 @@ const isAllowedScheduleCommandChannel = (
   (interaction.channel.parentId === categoryId ||
     allowedChannelIds.includes(interaction.channelId));
 
+export const isAllowedGuildScheduleCommandChannel =
+  isAllowedScheduleCommandChannel;
+
 /** Displays active, accessible guild run schedules for the invoking member. */
 export const guildSchedCommand: Command = {
   data: new SlashCommandBuilder()

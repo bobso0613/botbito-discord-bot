@@ -1,6 +1,9 @@
-import { describe, expect, it } from "@jest/globals";
+import { describe, expect, it, jest } from "@jest/globals";
 import type { InteractionContext } from "../types/interaction-context.js";
-import { buildGuildScheduleEmbed } from "./guild-schedule.template.js";
+import {
+  buildGuildScheduleEmbed,
+  buildMyScheduleEmbed,
+} from "./guild-schedule.template.js";
 
 const context: InteractionContext = {
   userId: "user-id",
@@ -80,5 +83,104 @@ describe("buildGuildScheduleEmbed", () => {
     expect(
       buildGuildScheduleEmbed([], context, "Run Signups").data.description,
     ).toBe("No active schedules found.");
+  });
+});
+
+describe("buildMyScheduleEmbed", () => {
+  const personalSchedules = [
+    {
+      title: "Wolfchev",
+      timestamp: "<t:4070909400:F>",
+      channelName: "wolfchev-signup",
+      channelUrl: "https://discord.com/channels/guild/wolfchev",
+      isSignedUp: true,
+      isReserve: false,
+      guildName: "Fate Stay Night",
+      guildIcon: "<:guildIcon_499171225046876170:1545375525017755699>",
+    },
+    {
+      title: "Endless Tower Wednesday",
+      timestamp: "<t:4070905800:F>",
+      channelName: "endless-tower-signup",
+      channelUrl: "https://discord.com/channels/guild/channel",
+      isSignedUp: false,
+      isReserve: true,
+      charNote: "backup priest",
+      guildName: "Ragnarok M",
+      guildIcon: "<:guildIcon_92073842977030144:1545375402833215548>",
+    },
+  ];
+
+  it("builds a personal schedule embed grouped by date by default", () => {
+    const embed = buildMyScheduleEmbed(personalSchedules, context);
+
+    expect(embed.data).toMatchObject({
+      title: "Your upcoming schedules",
+      thumbnail: { url: context.userAvatarUrl },
+    });
+    expect(embed.data.description).toContain(
+      "**__📝 Signed Up / 🪑 Reserve__: **",
+    );
+    expect(embed.data.description).toContain(
+      "<:guildIcon_499171225046876170:1545375525017755699> - Fate Stay Night\n🗓️ **[Wolfchev]",
+    );
+    expect(embed.data.description).toContain(
+      "<:guildIcon_92073842977030144:1545375402833215548> - Ragnarok M\n🗓️ **[Endless Tower Wednesday]",
+    );
+    expect(embed.data.description).toContain("🪑 - backup priest");
+  });
+
+  it("builds a personal schedule embed grouped by guild", () => {
+    const embed = buildMyScheduleEmbed(personalSchedules, context, "guild");
+
+    expect(embed.data.description).toContain(
+      "### <:guildIcon_499171225046876170:1545375525017755699> - Fate Stay Night\n🗓️ **[Wolfchev]",
+    );
+    expect(embed.data.description).toContain(
+      "### <:guildIcon_92073842977030144:1545375402833215548> - Ragnarok M\n🗓️ **[Endless Tower Wednesday]",
+    );
+  });
+
+  it("builds a personal empty-state embed when no schedules are active", () => {
+    expect(buildMyScheduleEmbed([], context).data.description).toBe(
+      "No active schedules found.",
+    );
+  });
+
+  it("uses a custom personal schedule title when provided", () => {
+    expect(
+      buildMyScheduleEmbed(
+        personalSchedules,
+        context,
+        "date",
+        "Your Schedule - 31 Aug to 06 Sept",
+      ).data.title,
+    ).toBe("Your Schedule - 31 Aug to 06 Sept");
+  });
+
+  it("uses a check mark for schedule titles that are already in the past", () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-09-04T12:00:00Z"));
+
+    try {
+      const embed = buildMyScheduleEmbed(
+        [
+          {
+            title: "Finished Run",
+            timestamp: "<t:1788343200:F>",
+            channelName: "finished-run",
+            channelUrl: "https://discord.com/channels/guild/finished-run",
+            isSignedUp: true,
+            isReserve: false,
+            guildName: "Fate Stay Night",
+            guildIcon: "<:guildIcon_499171225046876170:1545375525017755699>",
+          },
+        ],
+        context,
+      );
+
+      expect(embed.data.description).toContain("✅ **[Finished Run]");
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

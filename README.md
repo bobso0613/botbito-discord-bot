@@ -34,6 +34,14 @@ Create `private/discord_settings.json` to configure payout command channels, gui
   "payoutToPingId": "discord-user-id",
   "payoutToPingTag": "discord-user-tag",
   "guildScheduleBotId": "schedule-bot-user-id",
+  "guildIcons": {
+    "PROD": {
+      "guild-id": "<:guildIcon_name:emoji-id>"
+    },
+    "DEV": {
+      "guild-id": "<:guildIcon_name:emoji-id>"
+    }
+  },
   "guildScheduleSourceByGuild": {
     "guild-id": {
       "categoryId": "schedule-category-id",
@@ -63,6 +71,12 @@ Each schedule links to the run and its actual signup channel. The output groups 
 
 Use `/guildsched public:true` to post the schedule embed for everyone in the current channel. Without the option, the response is private.
 
+`/mysched` ⌚ sends the invoking user a DM with their upcoming signed-up and reserve schedules across all configured schedule guilds the bot and user can access. It can be used in any server channel where the bot can see the command, or directly in a DM with the bot after global command registration is deployed.
+
+The command only includes schedules where the member is signed up or listed as reserve. Each entry shows the configured guild icon, guild name, linked schedule title, time, source channel, and signup/reserve indicator. Future schedule titles use `🗓️`; completed schedule titles use `✅`. The optional `grouping` parameter supports `By Date` and `By Guild`; `By Date` is the default, while `By Guild` uses larger guild headings and lists that guild's schedules underneath.
+
+Use `/mysched thisweekonly:true` to include completed signed-up/reserve runs from the current schedule week and hide runs outside that week. Schedule weeks start every Monday at `06:00 GMT` (`T06:00:00Z`) and run through Sunday. When this option is enabled, the DM embed title changes to the covered date range, for example `Your Schedule - 31 Aug to 06 Sept`.
+
 **Public output behavior:**
 
 - When invoked in a role-restricted channel: Only displays that channel's schedules if the user has the required role. Otherwise, displays only non-restricted channels.
@@ -73,9 +87,9 @@ Both payout commands are available only in the guild-to-channel mappings configu
 
 Using a payout command elsewhere in an allowed server returns an ephemeral message with a link to its configured channel. The summary and individual payout embeds use the configured payout contact when a Share Ready payout is available.
 
-The bot registers payout and guild schedule commands separately in each permitted guild on startup and whenever it joins a guild. This avoids the delay associated with global command propagation. `/help` is registered globally; guild-specific commands are not registered outside their allowlists.
+The bot registers payout and guild schedule commands separately in each permitted guild on startup and whenever it joins a guild. This avoids the delay associated with global command propagation for guild-only commands. `/help` and `/mysched` are registered globally; `/mysched` is also explicitly enabled for bot DMs, so Discord may take time to show it after deployment.
 
-After changing payout command options, run `npm run deploy-commands` to update the registered guild commands in Discord.
+After changing command options, run `npm run deploy-commands` to update the registered commands in Discord. Changes to global commands such as `/mysched` may take longer to appear than guild-scoped command changes.
 
 ## Payout Sheet 📊
 
@@ -151,6 +165,7 @@ src/
 │   ├── help.command.ts
 │   ├── guildsched.command.ts
 │   ├── index.ts
+│   ├── mysched.command.ts
 │   ├── payout.command.ts
 │   └── payout-summary.command.ts
 ├── constants/
@@ -171,6 +186,7 @@ src/
 └── utils/
     ├── format-zeny.ts
     ├── guild-members.ts
+  ├── guild-schedule.ts
     ├── interaction-context.ts
     ├── payout-embed.ts
     ├── payout-sheet.ts
@@ -182,7 +198,7 @@ src/
 - `npm run dev` runs the bot with `tsx watch`.
 - `npm run build` compiles TypeScript to `dist/`.
 - `npm start` runs the compiled bot.
-- `npm run deploy-commands` registers `/help` globally and guild-specific payout and schedule commands in their configured guilds.
+- `npm run deploy-commands` registers `/help` and `/mysched` globally and guild-specific payout and schedule commands in their configured guilds.
 - `npm test` runs the Jest unit tests.
 - `npm run test:coverage` runs Jest with coverage output for payout services and utilities.
 - `npm run docs` generates TypeDoc HTML reference pages in `docs/`.
@@ -196,13 +212,13 @@ Husky installs a pre-commit check when dependencies are installed. Every commit 
 
 ## Testing 🧪
 
-Jest unit tests are co-located with the modules they cover. The current suite verifies command permission and reply flows, zeny formatting, payout-sheet parsing and tag matching, guild-member display-name resolution, interaction context extraction, embed footer construction, payout service mapping, character note extraction from schedule entries, schedule embed formatting with character notes, and role-based channel access control for public guild schedules. Google Sheets and Discord API boundaries are mocked, so tests do not read credentials or make external API calls.
+Jest unit tests are co-located with the modules they cover. The current suite verifies command permission and reply flows, zeny formatting, payout-sheet parsing and tag matching, guild-member display-name resolution, interaction context extraction, embed footer construction, payout service mapping, character note extraction from schedule entries, schedule embed formatting with character notes, personal schedule DM formatting and grouping, schedule week utility behavior, `/mysched` direct-DM command metadata, and role-based channel access control for public guild schedules. Google Sheets and Discord API boundaries are mocked, so tests do not read credentials or make external API calls.
 
 `npm run test:coverage` enforces at least 80% global branch, function, line, and statement coverage.
 
 ## Documentation 📚
 
-Public bot services, interaction helpers, and payout embed builders use JSDoc-style comments. Generate the browsable TypeScript reference with:
+Public bot services, interaction helpers, schedule helpers, and embed builders use JSDoc-style comments. Generate the browsable TypeScript reference with:
 
 ```bash
 npm run docs

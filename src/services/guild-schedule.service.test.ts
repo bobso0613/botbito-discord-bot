@@ -1,7 +1,13 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import { ChannelType } from "discord.js";
 import { DISCORD_SETTINGS } from "../config/discord-settings.js";
-import { getActiveGuildSchedules } from "./guild-schedule.service.js";
+import {
+  getActiveGuildSchedules,
+  type GuildScheduleTimeWindow,
+} from "./guild-schedule.service.js";
+
+const getDiscordTimestamp = (date: string): string =>
+  `<t:${Math.floor(new Date(date).getTime() / 1_000)}:F>`;
 
 describe("getActiveGuildSchedules", () => {
   it("returns the newest accessible schedule from each channel, ordered by time", async () => {
@@ -186,5 +192,85 @@ describe("getActiveGuildSchedules", () => {
 
     expect(schedulesWithNote).toHaveLength(1);
     expect(schedulesWithNote[0]?.charNote).toBe("_Mango Bay_");
+  });
+
+  it("includes finished schedules inside a provided schedule week window", async () => {
+    const member = { displayName: "Lucian Blight" };
+    const accessiblePermissions = { has: jest.fn().mockReturnValue(true) };
+    const createMessage = (title: string, timestamp: string) => ({
+      author: { id: DISCORD_SETTINGS.guildScheduleBotId },
+      createdTimestamp: 1,
+      embeds: [
+        {
+          title,
+          description: `- **Lucian Blight**\nYour Time: ${timestamp}`,
+          fields: [],
+        },
+      ],
+    });
+    const createAccessibleChannel = (
+      id: string,
+      messages: Map<string, ReturnType<typeof createMessage>>,
+    ) => ({
+      type: ChannelType.GuildText,
+      id,
+      parentId: "schedule-category",
+      name: id,
+      url: `https://discord.com/channels/guild/${id}`,
+      permissionsFor: jest.fn().mockReturnValue(accessiblePermissions),
+      messages: { fetch: jest.fn().mockResolvedValue(messages as never) },
+    });
+    const timeWindow: GuildScheduleTimeWindow = {
+      start: new Date("2026-08-31T06:00:00Z"),
+      end: new Date("2026-09-07T06:00:00Z"),
+    };
+    const guild = {
+      channels: {
+        cache: new Map([
+          [
+            "finished-this-week",
+            createAccessibleChannel(
+              "finished-this-week",
+              new Map([
+                [
+                  "schedule",
+                  createMessage(
+                    "Finished this week",
+                    getDiscordTimestamp("2026-09-01T08:00:00Z"),
+                  ),
+                ],
+              ]),
+            ),
+          ],
+          [
+            "outside-this-week",
+            createAccessibleChannel(
+              "outside-this-week",
+              new Map([
+                [
+                  "schedule",
+                  createMessage(
+                    "Outside this week",
+                    getDiscordTimestamp("2026-09-08T08:00:00Z"),
+                  ),
+                ],
+              ]),
+            ),
+          ],
+        ]),
+      },
+    };
+
+    const schedules = await getActiveGuildSchedules(
+      guild as never,
+      member as never,
+      "schedule-category",
+      [],
+      timeWindow,
+    );
+
+    expect(schedules.map((schedule) => schedule.title)).toEqual([
+      "Finished this week",
+    ]);
   });
 });

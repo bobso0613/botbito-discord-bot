@@ -12,6 +12,7 @@ if (
   !settings.payoutToPingId ||
   !settings.payoutToPingTag ||
   !settings.guildScheduleBotId ||
+  !settings.guildIcons ||
   !settings.guildScheduleSourceByGuild
 ) {
   throw new Error("private/discord_settings.json is missing required settings");
@@ -22,6 +23,7 @@ export const DISCORD_SETTINGS: DiscordSettings = {
   payoutToPingId: settings.payoutToPingId,
   payoutToPingTag: settings.payoutToPingTag,
   guildScheduleBotId: settings.guildScheduleBotId,
+  guildIcons: settings.guildIcons,
   guildScheduleSourceByGuild: settings.guildScheduleSourceByGuild,
 };
 

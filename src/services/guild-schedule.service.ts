@@ -7,7 +7,10 @@ import {
   type TextChannel,
 } from "discord.js";
 import { DISCORD_SETTINGS } from "../config/discord-settings.js";
-import type { GuildSchedule } from "../types/guild-schedule.js";
+import type {
+  GuildSchedule,
+  GuildScheduleTimeWindow,
+} from "../types/guild-schedule.js";
 
 const scheduleTimestampPattern = /Your\s+Time:\s*(<t:(\d+):F>)/i;
 
@@ -24,17 +27,26 @@ const getEmbedText = (embed: Embed): string =>
     .filter((value): value is string => Boolean(value))
     .join("\n");
 
-/** Returns a future Discord timestamp from a schedule embed. */
-const getActiveScheduleTimestamp = (embedText: string): string | undefined => {
+/** Returns a Discord timestamp when it is active or inside the requested window. */
+const getActiveScheduleTimestamp = (
+  embedText: string,
+  timeWindow?: GuildScheduleTimeWindow,
+): string | undefined => {
   const match = embedText.match(scheduleTimestampPattern);
   if (!match) return undefined;
 
   const [, timestamp, unixSeconds] = match;
   const timestampMilliseconds = Number(unixSeconds) * 1_000;
-  return Number.isNaN(timestampMilliseconds) ||
-    timestampMilliseconds < Date.now()
-    ? undefined
-    : timestamp;
+  if (Number.isNaN(timestampMilliseconds)) return undefined;
+
+  if (timeWindow) {
+    return timestampMilliseconds >= timeWindow.start.getTime() &&
+      timestampMilliseconds < timeWindow.end.getTime()
+      ? timestamp
+      : undefined;
+  }
+
+  return timestampMilliseconds < Date.now() ? undefined : timestamp;
 };
 
 /** Checks for a non-reserve roster entry matching the invoking member. */
@@ -92,6 +104,7 @@ const isAccessibleScheduleChannel = (
 const getNewestChannelSchedule = async (
   channel: TextChannel,
   member: GuildMember,
+  timeWindow?: GuildScheduleTimeWindow,
 ): Promise<GuildSchedule | undefined> => {
   const messages = await channel.messages.fetch({ limit: 100 });
   const displayNamePattern = escapeRegularExpression(member.displayName);
@@ -103,7 +116,7 @@ const getNewestChannelSchedule = async (
         ? []
         : message.embeds.flatMap((embed) => {
             const embedText = getEmbedText(embed);
-            const timestamp = getActiveScheduleTimestamp(embedText);
+            const timestamp = getActiveScheduleTimestamp(embedText, timeWindow);
             const isReserve = isMemberReserve(embedText, displayNamePattern);
             return timestamp && embed.title
               ? [
@@ -127,12 +140,15 @@ const getNewestChannelSchedule = async (
 /**
  * Lists accessible active schedules, keeping the newest message per channel.
  * Results are ordered from earliest to latest scheduled time.
+ * When a time window is provided, schedules inside that window are included even
+ * when their scheduled time has already passed.
  */
 export const getActiveGuildSchedules = async (
   guild: Guild,
   member: GuildMember,
   categoryId: string,
   excludedChannelIds: readonly string[] = [],
+  timeWindow?: GuildScheduleTimeWindow,
 ): Promise<GuildSchedule[]> => {
   const scheduleChannels = Array.from(guild.channels.cache.values()).filter(
     (channel): channel is TextChannel =>
@@ -142,7 +158,7 @@ export const getActiveGuildSchedules = async (
   );
   const schedules = await Promise.all(
     scheduleChannels.map((channel) =>
-      getNewestChannelSchedule(channel, member),
+      getNewestChannelSchedule(channel, member, timeWindow),
     ),
   );
 

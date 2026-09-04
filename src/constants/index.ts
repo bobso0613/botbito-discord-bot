@@ -6,6 +6,8 @@ export const PAYOUT_HEADERS = [
   "Share Ready",
   "Distributed",
 ] as const;
+export const SCHEDULE_WEEK_START_HOUR_UTC = 6;
+export const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1_000;
 
 export const COMMAND_GUIDE: ReadonlyArray<{
   name: string;
@@ -48,6 +50,26 @@ export const COMMAND_GUIDE: ReadonlyArray<{
       {
         name: "public",
         description: "Show your schedules to everyone in this channel",
+        required: false,
+      },
+    ],
+  },
+  {
+    name: "/mysched",
+    description:
+      "DM your signed-up and reserve schedules across accessible guilds",
+    emoji: "⌚",
+    parameters: [
+      {
+        name: "thisweekonly",
+        description:
+          "Include completed runs from this schedule week, Monday 06:00 GMT through Sunday",
+        required: false,
+      },
+      {
+        name: "grouping",
+        description:
+          "Group schedules by date or guild (By Date default, By Guild)",
         required: false,
       },
     ],
