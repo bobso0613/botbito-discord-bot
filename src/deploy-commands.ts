@@ -16,12 +16,24 @@ const globalCommandBody = commands
 const guildIds = [
   ...new Set(commands.flatMap((command) => command.guildIds ?? [])),
 ];
+const excludedGuildIdsByClientId: Record<string, ReadonlySet<string>> = {
+  "901721382214328350": new Set(["1115484031455346718"]),
+};
+const excludedGuildIds =
+  excludedGuildIdsByClientId[clientId] ?? new Set<string>();
 
 await rest.put(Routes.applicationCommands(clientId), {
   body: globalCommandBody,
 });
 
 for (const guildId of guildIds) {
+  if (excludedGuildIds.has(guildId)) {
+    console.warn(
+      `Skipping guild ${guildId}: command deployment is excluded for application ${clientId}.`,
+    );
+    continue;
+  }
+
   const guildCommandBody = commands
     .filter(
       (command) => !command.guildIds || command.guildIds.includes(guildId),
