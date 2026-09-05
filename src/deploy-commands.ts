@@ -35,9 +35,7 @@ for (const guildId of guildIds) {
   }
 
   const guildCommandBody = commands
-    .filter(
-      (command) => !command.guildIds || command.guildIds.includes(guildId),
-    )
+    .filter((command) => command.guildIds?.includes(guildId))
     .map((command) => command.data.toJSON());
 
   await rest.put(Routes.applicationGuildCommands(clientId, guildId), {

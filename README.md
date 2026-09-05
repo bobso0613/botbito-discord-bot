@@ -101,7 +101,7 @@ Both payout commands are available only in the guild-to-channel mappings configu
 
 Using a payout command elsewhere in an allowed server returns an ephemeral message with a link to its configured channel. The summary and individual payout embeds use the configured payout contact when a Share Ready payout is available.
 
-The bot registers payout and guild schedule commands separately in each permitted guild on startup and whenever it joins a guild. This avoids the delay associated with global command propagation for guild-only commands. `/help`, `/mysched`, and `/mycooldowns` are registered globally; `/mysched` and `/mycooldowns` are also explicitly enabled for bot DMs, so Discord may take time to show them after deployment.
+The bot registers payout and guild schedule commands separately in each permitted guild on startup and whenever it joins a guild. This avoids the delay associated with global command propagation for guild-only commands. `/help`, `/mysched`, and `/mycooldowns` are registered only globally, so they are not duplicated by guild-specific registration. `/mysched` and `/mycooldowns` are also explicitly enabled for bot DMs, so Discord may take time to show them after deployment.
 
 After changing command options, run `npm run deploy-commands` to update the registered commands in Discord. Changes to global commands such as `/mysched` may take longer to appear than guild-scoped command changes.
 
@@ -212,11 +212,12 @@ src/
 - `npm run dev` runs the bot with `tsx watch`.
 - `npm run build` compiles TypeScript to `dist/`.
 - `npm start` runs the compiled bot.
-- `npm run deploy-commands` registers `/help` and `/mysched` globally and guild-specific payout and schedule commands in their configured guilds.
+- `npm run deploy-commands` registers `/help`, `/mysched`, and `/mycooldowns` globally and guild-specific payout and schedule commands in their configured guilds.
 - `npm test` runs the Jest unit tests.
 - `npm run test:coverage` runs Jest with coverage output for payout services and utilities.
 - `npm run docs` generates TypeDoc HTML reference pages in `docs/`.
-- (On hosting) nohup /opt/cpanel/ea-nodejs22/bin/node index.js & disown
+- (On hosting before running script) `/opt/cpanel/ea-nodejs22/bin/node deploy-commands.js`
+- (On hosting) `nohup /opt/cpanel/ea-nodejs22/bin/node index.js & disown`
 
 Ensure `.env`, `private/discord_settings.json`, and the Google service-account JSON are present in `private/` before starting the bot.
 

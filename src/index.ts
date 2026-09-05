@@ -50,9 +50,7 @@ const registerGuildSlashCommands = async (guildId: string): Promise<void> => {
   }
 
   const commandBody = commands
-    .filter(
-      (command) => !command.guildIds || command.guildIds.includes(guildId),
-    )
+    .filter((command) => command.guildIds?.includes(guildId))
     .map((command) => command.data.toJSON());
   const rest = new REST().setToken(botToken);
   await rest.put(Routes.applicationGuildCommands(clientId, guildId), {
