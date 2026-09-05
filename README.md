@@ -69,7 +69,7 @@ Enable the **Server Members Intent** in the Discord Developer Portal for the bot
 
 Each schedule links to the run and its actual signup channel. The output groups runs where the member is signed up or reserve before runs where they are not signed up. `📝` marks a standard signup and `🪑` marks a reserve slot. Character notes from signup entries (e.g., "alt character", "reserve slot") are displayed next to the status indicator when present. The embed notes the category from which signup channels are shown and mentions the invoking member.
 
-Use `/guildsched public:true` to post the schedule embed for everyone in the current channel. Without the option, the response is private.
+Use `/guildsched public:true` to post the schedule embed for everyone in the current channel. Without the option, the response is private. Add `forannouncementonly:true` with `public:true` to create a neutral announcement: it omits the Signed Up / Reserve and Not Signed Up headings, status indicators, and character notes while retaining each run's title, time, and channel link. `forannouncementonly` has no effect unless `public:true` is also set.
 
 `/mysched` ⌚ sends the invoking user a DM with their upcoming signed-up and reserve schedules across all configured schedule guilds the bot and user can access. It can be used in any server channel where the bot can see the command, or directly in a DM with the bot after global command registration is deployed.
 

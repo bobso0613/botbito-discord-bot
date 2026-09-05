@@ -52,6 +52,12 @@ export const COMMAND_GUIDE: ReadonlyArray<{
         description: "Show your schedules to everyone in this channel",
         required: false,
       },
+      {
+        name: "forannouncementonly",
+        description:
+          "With public, hide signup, reserve, and character-note details",
+        required: false,
+      },
     ],
   },
   {

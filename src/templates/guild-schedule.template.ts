@@ -34,7 +34,10 @@ const getGuildHeading = (
 /** Formats a single schedule row with title, timestamp, channel, and status. */
 const formatGuildSchedule = (
   schedule: GuildSchedule,
-  { showGuildHeading = true }: { showGuildHeading?: boolean } = {},
+  {
+    showGuildHeading = true,
+    showPersonalDetails = true,
+  }: { showGuildHeading?: boolean; showPersonalDetails?: boolean } = {},
 ): string => {
   const relativeTimestamp = schedule.timestamp.replace(":F>", ":R>");
   const guildHeading = showGuildHeading ? getGuildHeading(schedule) : undefined;
@@ -44,7 +47,7 @@ const formatGuildSchedule = (
     guildHeading ?? scheduleTitleLine,
     guildHeading ? scheduleTitleLine : undefined,
     `${schedule.timestamp} (${relativeTimestamp})`,
-    `↪ [#${schedule.channelName}](${schedule.channelUrl})${getScheduleStatusWithNote(schedule)}`,
+    `↪ [#${schedule.channelName}](${schedule.channelUrl})${showPersonalDetails ? getScheduleStatusWithNote(schedule) : ""}`,
   ]
     .filter((line): line is string => Boolean(line))
     .join("\n");
@@ -151,11 +154,20 @@ const formatGuildSchedules = (schedules: GuildSchedule[]): string => {
     .join("\n\n");
 };
 
+const formatAnnouncementSchedules = (schedules: GuildSchedule[]): string =>
+  schedules
+    .slice(0, 25)
+    .map((schedule) =>
+      formatGuildSchedule(schedule, { showPersonalDetails: false }),
+    )
+    .join("\n\n");
+
 /** Builds the upcoming guild schedules embed for a command interaction. */
 export const buildGuildScheduleEmbed = (
   schedules: GuildSchedule[],
   context: InteractionContext,
   categoryName: string,
+  forAnnouncementOnly = false,
 ): EmbedBuilder => {
   const footer: { text: string; iconURL?: string } = getEmbedFooter(context);
   return new EmbedBuilder()
@@ -165,7 +177,9 @@ export const buildGuildScheduleEmbed = (
 
     .setDescription(
       schedules.length
-        ? formatGuildSchedules(schedules)
+        ? forAnnouncementOnly
+          ? formatAnnouncementSchedules(schedules)
+          : formatGuildSchedules(schedules)
         : "No active schedules found.",
     )
     .addFields({

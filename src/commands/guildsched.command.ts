@@ -34,6 +34,11 @@ export const guildSchedCommand: Command = {
       option
         .setName("public")
         .setDescription("Show your schedules to everyone in this channel"),
+    )
+    .addBooleanOption((option) =>
+      option
+        .setName("forannouncementonly")
+        .setDescription("Hide signup details in a public announcement"),
     ) as SlashCommandBuilder,
   guildIds: GUILD_SCHEDULE_GUILD_IDS,
   execute: async (interaction: ChatInputCommandInteraction) => {
@@ -60,6 +65,9 @@ export const guildSchedCommand: Command = {
 
     const member = await interaction.guild.members.fetch(interaction.user.id);
     const isPublic = interaction.options.getBoolean("public") ?? false;
+    const isForAnnouncementOnly =
+      isPublic &&
+      (interaction.options.getBoolean("forannouncementonly") ?? false);
 
     // Build excluded channels list based on role restrictions
     let excludedChannelsForPublic = source.excludedChannelIds ?? [];
@@ -104,7 +112,12 @@ export const guildSchedCommand: Command = {
     const categoryName =
       interaction.guild.channels.cache.get(source.categoryId)?.name ??
       "configured category";
-    const embed = buildGuildScheduleEmbed(schedules, context, categoryName);
+    const embed = buildGuildScheduleEmbed(
+      schedules,
+      context,
+      categoryName,
+      isForAnnouncementOnly,
+    );
 
     await interaction.editReply({ embeds: [embed] });
   },

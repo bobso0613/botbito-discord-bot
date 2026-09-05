@@ -79,6 +79,44 @@ describe("buildGuildScheduleEmbed", () => {
     expect(description).toContain("🪑 - reserve slot");
   });
 
+  it("omits signup headings and personal details for announcements", () => {
+    const embed = buildGuildScheduleEmbed(
+      [
+        {
+          title: "Endless Tower Wednesday",
+          timestamp: "<t:4070905800:F>",
+          channelName: "endless-tower-signup",
+          channelUrl: "https://discord.com/channels/guild/channel",
+          isSignedUp: true,
+          isReserve: false,
+          charNote: "alt character",
+        },
+        {
+          title: "Wolfchev",
+          timestamp: "<t:4070909400:F>",
+          channelName: "wolfchev-signup",
+          channelUrl: "https://discord.com/channels/guild/wolfchev",
+          isSignedUp: false,
+          isReserve: true,
+          charNote: "reserve slot",
+        },
+      ],
+      context,
+      "Run Signups",
+      true,
+    );
+
+    const description = embed.data.description ?? "";
+    expect(description).not.toContain("Signed Up / 🪑 Reserve");
+    expect(description).not.toContain("Not Signed Up");
+    expect(description).not.toContain("📝");
+    expect(description).not.toContain("🪑");
+    expect(description).not.toContain("alt character");
+    expect(description).not.toContain("reserve slot");
+    expect(description).toContain("[#endless-tower-signup]");
+    expect(description).toContain("[#wolfchev-signup]");
+  });
+
   it("builds an empty-state embed when no schedules are active", () => {
     expect(
       buildGuildScheduleEmbed([], context, "Run Signups").data.description,
