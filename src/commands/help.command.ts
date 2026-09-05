@@ -1,5 +1,7 @@
 import {
+  ApplicationIntegrationType,
   EmbedBuilder,
+  InteractionContextType,
   MessageFlags,
   SlashCommandBuilder,
   type ChatInputCommandInteraction,
@@ -10,8 +12,11 @@ import type { Command } from "../types/command.js";
 export const helpCommand: Command = {
   data: new SlashCommandBuilder()
     .setName("help")
-    .setDescription(
-      "Display a guide on available commands",
+    .setDescription("Display a guide on available commands")
+    .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
+    .setContexts(
+      InteractionContextType.Guild,
+      InteractionContextType.BotDM,
     ) as SlashCommandBuilder,
   execute: async (interaction: ChatInputCommandInteraction) => {
     const embed = new EmbedBuilder()

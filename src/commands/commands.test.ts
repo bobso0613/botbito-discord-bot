@@ -144,6 +144,13 @@ describe("command handlers", () => {
     );
   });
 
+  it("makes /help available in guilds and bot DMs", () => {
+    expect(helpCommand.data.toJSON()).toMatchObject({
+      integration_types: [ApplicationIntegrationType.GuildInstall],
+      contexts: [InteractionContextType.Guild, InteractionContextType.BotDM],
+    });
+  });
+
   it("makes /mysched available in guilds and bot DMs", () => {
     expect(mySchedCommand.data.toJSON()).toMatchObject({
       integration_types: [ApplicationIntegrationType.GuildInstall],
