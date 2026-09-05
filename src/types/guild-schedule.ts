@@ -29,4 +29,4 @@ export interface GuildScheduleTimeWindow {
 }
 
 /** Supported grouping modes for the personal schedule DM embed. */
-export type MyScheduleGrouping = "date" | "guild";
+export type MyScheduleGrouping = "date" | "guild" | "instance";

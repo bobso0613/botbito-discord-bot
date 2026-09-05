@@ -73,9 +73,23 @@ Use `/guildsched public:true` to post the schedule embed for everyone in the cur
 
 `/mysched` ⌚ sends the invoking user a DM with their upcoming signed-up and reserve schedules across all configured schedule guilds the bot and user can access. It can be used in any server channel where the bot can see the command, or directly in a DM with the bot after global command registration is deployed.
 
-The command only includes schedules where the member is signed up or listed as reserve. Each entry shows the configured guild icon, guild name, linked schedule title, time, source channel, and signup/reserve indicator. Future schedule titles use `🗓️`; completed schedule titles use `✅`. The optional `grouping` parameter supports `By Date` and `By Guild`; `By Date` is the default, while `By Guild` uses larger guild headings and lists that guild's schedules underneath.
+The command only includes schedules where the member is signed up or listed as reserve. Each entry shows the configured guild icon, guild name, linked schedule title, time, source channel, and signup/reserve indicator. Future schedule titles use `🗓️`; completed schedule titles use `✅`. The optional `grouping` parameter supports `By Date`, `By Guild`, and `By Instance Type`; `By Date` is the default, `By Guild` uses larger guild headings, and `By Instance Type` groups schedules by the detected instance keywords in their titles.
 
 Use `/mysched thisweekonly:true` to include completed signed-up/reserve runs from the current schedule week and hide runs outside that week. Schedule weeks start every Monday at `06:00 GMT` (`T06:00:00Z`) and run through Sunday. When this option is enabled, the DM embed title changes to the covered date range, for example `Your Schedule - 31 Aug to 06 Sept`.
+
+`/mycooldowns` 🔥 shows the invoking user's weekly cooldown status from signup sheets across all configured schedule guilds. The command counts each signup as an attempt toward cooldown limits for that instance type. Guild responses are private by default; use `/mycooldowns showinpublic:true` to display the result to everyone in the current channel. The command can also be used in a DM with the bot.
+
+The cooldown display groups runs by instance type with their current attempt count and maximum attempts. Instance types are identified by keywords in signup sheet titles (e.g., `ET` for Endless Tower, `EC` for Endless Cellar, `EB` for Eternal Bastion). When a signup sheet title contains multiple instance keywords (e.g., `ET EC speedrun`), it counts toward both instance types.
+
+Some instances support multipliers from the signup sheet title:
+
+- **Eternal Bastion (EB)**: Multiplier extracted from title (e.g., `EB 2x` counts as 2 attempts)
+- **Horror Toy Factory (HTF)**: Multiplier extracted from title (e.g., `HTF 3x` counts as 3 attempts)
+- **Sealed Shrine**: Multiplier extracted from title (e.g., `Sealed Shrine 4x`) or defaults to 4 attempts if title contains `(minimum 2-3 runs)`
+
+Other instances (Endless Tower, Endless Cellar, Wolfchev's Laboratory) count as 1 attempt each, regardless of title text. Unrecognized signup sheets are grouped under "Others."
+
+The embed title shows the covered schedule week date range (e.g., `Your Attempts - 04 Sep to 10 Sep`). A disclaimer notes which guild schedules were counted, reminding users that signups from outside those guilds cannot be included. Each instance type includes an emoji identifier for quick visual recognition.
 
 **Public output behavior:**
 
@@ -87,7 +101,7 @@ Both payout commands are available only in the guild-to-channel mappings configu
 
 Using a payout command elsewhere in an allowed server returns an ephemeral message with a link to its configured channel. The summary and individual payout embeds use the configured payout contact when a Share Ready payout is available.
 
-The bot registers payout and guild schedule commands separately in each permitted guild on startup and whenever it joins a guild. This avoids the delay associated with global command propagation for guild-only commands. `/help` and `/mysched` are registered globally; `/mysched` is also explicitly enabled for bot DMs, so Discord may take time to show it after deployment.
+The bot registers payout and guild schedule commands separately in each permitted guild on startup and whenever it joins a guild. This avoids the delay associated with global command propagation for guild-only commands. `/help`, `/mysched`, and `/mycooldowns` are registered globally; `/mysched` and `/mycooldowns` are also explicitly enabled for bot DMs, so Discord may take time to show them after deployment.
 
 After changing command options, run `npm run deploy-commands` to update the registered commands in Discord. Changes to global commands such as `/mysched` may take longer to appear than guild-scoped command changes.
 

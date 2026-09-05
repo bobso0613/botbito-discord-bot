@@ -3,6 +3,7 @@ import type {
   GuildSchedule,
   MyScheduleGrouping,
 } from "../types/guild-schedule.js";
+import { parseInstanceTypes } from "../utils/cooldowns.js";
 import type { InteractionContext } from "../types/interaction-context.js";
 import { getScheduleTitleIcon } from "../utils/guild-schedule.js";
 import { getEmbedFooter } from "../utils/payout-embed.js";
@@ -80,6 +81,32 @@ const formatGuildGroupedSchedules = (schedules: GuildSchedule[]): string => {
     .join("\n\n");
 };
 
+/** Formats personal schedules under their detected instance type headings. */
+const formatInstanceGroupedSchedules = (schedules: GuildSchedule[]): string => {
+  const schedulesByInstance = new Map<string, GuildSchedule[]>();
+
+  for (const schedule of schedules) {
+    const instanceNames = parseInstanceTypes(schedule.title).map(
+      (instanceType) => instanceType.name,
+    );
+    const instanceName = instanceNames.join(" / ") || "Others";
+    schedulesByInstance.set(instanceName, [
+      ...(schedulesByInstance.get(instanceName) ?? []),
+      schedule,
+    ]);
+  }
+
+  return Array.from(schedulesByInstance.entries())
+    .sort(([first], [second]) => first.localeCompare(second))
+    .map(
+      ([instanceName, instanceSchedules]) =>
+        `### ${instanceName}\n${instanceSchedules
+          .map((schedule) => formatGuildSchedule(schedule))
+          .join("\n\n")}`,
+    )
+    .join("\n\n");
+};
+
 /** Formats the personal schedule DM description in the requested grouping mode. */
 const formatMySchedules = (
   schedules: GuildSchedule[],
@@ -89,7 +116,11 @@ const formatMySchedules = (
     personalScheduleLegend,
     grouping === "guild"
       ? formatGuildGroupedSchedules(schedules)
-      : schedules.map((schedule) => formatGuildSchedule(schedule)).join("\n\n"),
+      : grouping === "instance"
+        ? formatInstanceGroupedSchedules(schedules)
+        : schedules
+            .map((schedule) => formatGuildSchedule(schedule))
+            .join("\n\n"),
   ].join("\n\n");
 
 const formatScheduleGroup = (

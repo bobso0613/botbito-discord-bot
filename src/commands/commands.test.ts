@@ -47,6 +47,7 @@ const { payoutSummaryCommand } = await import("./payout-summary.command.js");
 const { helpCommand } = await import("./help.command.js");
 const { guildSchedCommand } = await import("./guildsched.command.js");
 const { mySchedCommand } = await import("./mysched.command.js");
+const { myCooldowsCommand } = await import("./mycooldowns.command.js");
 const { getGuildIcon } = await import("../utils/guild-schedule.js");
 
 const allowedGuildId = "499171225046876170";
@@ -126,7 +127,17 @@ describe("command handlers", () => {
         expect.objectContaining({
           name: "Parameters",
           value: expect.stringContaining(
-            "**grouping** (optional): Group schedules by date or guild (By Date default, By Guild)",
+            "**grouping** (optional): Group schedules by date, guild, or instance type (By Date default)",
+          ),
+        }),
+        expect.objectContaining({
+          name: "🔥 `/mycooldowns`",
+          value: "View your weekly cooldown status across accessible guilds",
+        }),
+        expect.objectContaining({
+          name: "Parameters",
+          value: expect.stringContaining(
+            "**showinpublic** (optional): Show your cooldown status to everyone in this channel",
           ),
         }),
       ]),
@@ -140,6 +151,20 @@ describe("command handlers", () => {
       options: [
         expect.objectContaining({ name: "thisweekonly", type: 5 }),
         expect.objectContaining({ name: "grouping", type: 3 }),
+      ],
+    });
+  });
+
+  it("makes /mycooldowns private by default with an optional public response", () => {
+    expect(myCooldowsCommand.data.toJSON()).toMatchObject({
+      integration_types: [ApplicationIntegrationType.GuildInstall],
+      contexts: [InteractionContextType.Guild, InteractionContextType.BotDM],
+      options: [
+        expect.objectContaining({
+          name: "showinpublic",
+          type: 5,
+          description: "Show your cooldown status to everyone in this channel",
+        }),
       ],
     });
   });

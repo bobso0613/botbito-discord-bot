@@ -69,7 +69,19 @@ export const COMMAND_GUIDE: ReadonlyArray<{
       {
         name: "grouping",
         description:
-          "Group schedules by date or guild (By Date default, By Guild)",
+          "Group schedules by date, guild, or instance type (By Date default)",
+        required: false,
+      },
+    ],
+  },
+  {
+    name: "/mycooldowns",
+    description: "View your weekly cooldown status across accessible guilds",
+    emoji: "🔥",
+    parameters: [
+      {
+        name: "showinpublic",
+        description: "Show your cooldown status to everyone in this channel",
         required: false,
       },
     ],

@@ -141,6 +141,17 @@ describe("buildMyScheduleEmbed", () => {
     );
   });
 
+  it("builds a personal schedule embed grouped by instance type", () => {
+    const embed = buildMyScheduleEmbed(personalSchedules, context, "instance");
+
+    expect(embed.data.description).toContain(
+      "### Endless Tower\n<:guildIcon_92073842977030144:1545375402833215548> - Ragnarok M",
+    );
+    expect(embed.data.description).toContain(
+      "### Wolfchev's Laboratory\n<:guildIcon_499171225046876170:1545375525017755699> - Fate Stay Night",
+    );
+  });
+
   it("builds a personal empty-state embed when no schedules are active", () => {
     expect(buildMyScheduleEmbed([], context).data.description).toBe(
       "No active schedules found.",

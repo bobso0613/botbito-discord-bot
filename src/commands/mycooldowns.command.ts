@@ -12,20 +12,18 @@ import {
   GUILD_SCHEDULE_GUILD_IDS,
 } from "../config/discord-settings.js";
 import { getActiveGuildSchedules } from "../services/guild-schedule.service.js";
-import { buildMyScheduleEmbed } from "../templates/guild-schedule.template.js";
-import type {
-  GuildSchedule,
-  GuildScheduleTimeWindow,
-  MyScheduleGrouping,
-} from "../types/guild-schedule.js";
+import type { GuildSchedule } from "../types/guild-schedule.js";
 import type { Command } from "../types/command.js";
 import {
-  getGuildIcon,
-  getScheduleUnixSeconds,
   getScheduleWeekTitle,
   getScheduleWeekWindow,
 } from "../utils/guild-schedule.js";
+import { countCooldowns } from "../utils/cooldowns.js";
 import { getInteractionContext } from "../utils/interaction-context.js";
+import {
+  buildMyCooldownsEmbed,
+  formatCooldownEntry,
+} from "../templates/cooldowns.template.js";
 
 /**
  * Gets active schedules in a configured schedule guild that the member can see.
@@ -34,69 +32,51 @@ import { getInteractionContext } from "../utils/interaction-context.js";
 const getAccessibleGuildSchedules = async (
   guild: Guild,
   member: GuildMember,
-  timeWindow?: GuildScheduleTimeWindow,
-): Promise<GuildSchedule[]> => {
+): Promise<Array<GuildSchedule & { guildName: string }>> => {
   const source = DISCORD_SETTINGS.guildScheduleSourceByGuild[guild.id];
 
   if (!source) {
     return [];
   }
 
-  const guildIcon = getGuildIcon(guild.id);
   const schedules = await getActiveGuildSchedules(
     guild,
     member,
     source.categoryId,
     [],
-    timeWindow,
+    getScheduleWeekWindow(), // Always use this week only for cooldowns
   );
   return schedules
     .filter((schedule) => schedule.isSignedUp || schedule.isReserve)
     .map((schedule) => ({
       ...schedule,
       guildName: guild.name,
-      guildIcon,
     }));
 };
 
-/** Sends signed-up and reserve schedules across the member's guilds by DM. */
-export const mySchedCommand: Command = {
+/** Shows cooldown status for this week across the member's guilds. */
+export const myCooldowsCommand: Command = {
   data: new SlashCommandBuilder()
-    .setName("mysched")
-    .setDescription("DM your active schedules across accessible guilds")
+    .setName("mycooldowns")
+    .setDescription("View your weekly cooldown status across accessible guilds")
     .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
     .setContexts(InteractionContextType.Guild, InteractionContextType.BotDM)
     .addBooleanOption((option) =>
       option
-        .setName("thisweekonly")
+        .setName("showinpublic")
         .setDescription(
-          "Show signed-up and reserve schedules from this schedule week",
-        ),
-    )
-    .addStringOption((option) =>
-      option
-        .setName("grouping")
-        .setDescription("Choose how your schedules are grouped")
-        .addChoices(
-          { name: "By Date", value: "date" },
-          { name: "By Guild", value: "guild" },
-          { name: "By Instance Type", value: "instance" },
+          "Show your cooldown status to everyone in this channel",
         ),
     ) as SlashCommandBuilder,
   execute: async (interaction: ChatInputCommandInteraction) => {
     const isGuildInvocation = Boolean(interaction.guildId);
-    const thisWeekOnly =
-      interaction.options.getBoolean("thisweekonly") ?? false;
-    const scheduleWeekWindow = thisWeekOnly
-      ? getScheduleWeekWindow()
-      : undefined;
-    const grouping =
-      (interaction.options.getString(
-        "grouping",
-      ) as MyScheduleGrouping | null) ?? "date";
+    const showInPublic =
+      interaction.options.getBoolean("showinpublic") ?? false;
 
     await interaction.deferReply(
-      isGuildInvocation ? { flags: MessageFlags.Ephemeral } : {},
+      isGuildInvocation && !showInPublic
+        ? { flags: MessageFlags.Ephemeral }
+        : {},
     );
 
     const schedulesByGuild = await Promise.all(
@@ -106,33 +86,50 @@ export const mySchedCommand: Command = {
 
         try {
           const member = await guild.members.fetch(interaction.user.id);
-          return getAccessibleGuildSchedules(guild, member, scheduleWeekWindow);
+          return getAccessibleGuildSchedules(guild, member);
         } catch {
           return [];
         }
       }),
     );
-    const schedules = schedulesByGuild
-      .flat()
-      .sort(
-        (first, second) =>
-          getScheduleUnixSeconds(first) - getScheduleUnixSeconds(second),
-      );
-    const context = getInteractionContext(interaction);
-    const embed = buildMyScheduleEmbed(
-      schedules,
-      context,
-      grouping,
-      scheduleWeekWindow ? getScheduleWeekTitle(scheduleWeekWindow) : undefined,
+
+    const allSchedules = schedulesByGuild.flat();
+    const cooldownMap = countCooldowns(allSchedules);
+
+    // Get list of unique guild names with signups
+    const guildsWithSignups = Array.from(
+      new Set(allSchedules.map((s) => s.guildName)),
+    ).sort();
+
+    // Sort by instance type name, with Others at the end
+    const sortedCooldowns = Array.from(cooldownMap.entries()).sort(
+      ([keyA], [keyB]) => {
+        const aIsOthers = keyA === "Others";
+        const bIsOthers = keyB === "Others";
+        if (aIsOthers && !bIsOthers) return 1;
+        if (!aIsOthers && bIsOthers) return -1;
+        return keyA.localeCompare(keyB);
+      },
     );
 
-    try {
-      await interaction.user.send({ embeds: [embed] });
-      await interaction.editReply({ content: "Scheduled sent to your DM" });
-    } catch {
-      await interaction.editReply({
-        content: "I couldn't send your schedules by DM.",
-      });
-    }
+    // Get week title for date range
+    const weekWindow = getScheduleWeekWindow();
+    const weekTitle = getScheduleWeekTitle(weekWindow);
+    // Extract just the date part ("04 Sep to 10 Sep")
+    const dateRange = weekTitle.split(" - ")[1];
+
+    const cooldownText = sortedCooldowns
+      .map(([, { type, count }]) => formatCooldownEntry(type, count))
+      .join("\n");
+
+    const context = getInteractionContext(interaction);
+    const embed = buildMyCooldownsEmbed(
+      cooldownText,
+      dateRange,
+      guildsWithSignups,
+      context,
+    );
+
+    await interaction.editReply({ embeds: [embed] });
   },
 };
