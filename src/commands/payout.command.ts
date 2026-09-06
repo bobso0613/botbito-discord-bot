@@ -15,10 +15,17 @@ import {
 import type { Command } from "../types/command.js";
 import { getInteractionContext } from "../utils/interaction-context.js";
 
+/** Gets the invoking member's payout details, publicly by default. */
 export const payoutCommand: Command = {
   data: new SlashCommandBuilder()
     .setName("payout")
-    .setDescription("Get your payout details") as SlashCommandBuilder,
+    .setDescription("Get your payout details")
+    .addBooleanOption((option) =>
+      option
+        .setName("sendprivately")
+        .setDescription("Send the payout details privately")
+        .setRequired(false),
+    ) as SlashCommandBuilder,
   guildIds: PAYOUT_GUILD_IDS,
   execute: async (interaction: ChatInputCommandInteraction) => {
     if (
@@ -46,7 +53,11 @@ export const payoutCommand: Command = {
       return;
     }
 
-    await interaction.deferReply();
+    const sendPrivately =
+      interaction.options.getBoolean("sendprivately") ?? false;
+    await interaction.deferReply(
+      sendPrivately ? { flags: MessageFlags.Ephemeral } : {},
+    );
 
     const guildId = interaction.guildId;
     const context = getInteractionContext(interaction);

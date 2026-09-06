@@ -46,19 +46,42 @@ describe("payout service", () => {
 
   it("returns non-zero Share Ready payouts and their total for a guild", async () => {
     await expect(getPayoutSummary("guild-a")).resolves.toEqual({
-      shareReadyPayouts: [
+      amount: "shareReady",
+      payouts: [
         { displayName: "@bob", discordTag: "@bob", amount: 500 },
         { displayName: "@alice", discordTag: "@alice", amount: 200 },
       ],
-      totalShareReady: 700,
+      total: 700,
       currency: "z",
     });
   });
 
+  it.each([
+    ["pending", 100, 0, 100],
+    ["distributed", 300, 0, 300],
+  ] as const)(
+    "selects the %s column",
+    async (amount, aliceAmount, bobAmount, total) => {
+      await expect(getPayoutSummary("guild-a", amount)).resolves.toEqual({
+        amount,
+        payouts: [
+          { displayName: "@alice", discordTag: "@alice", amount: aliceAmount },
+          ...(bobAmount
+            ? [{ displayName: "@bob", discordTag: "@bob", amount: bobAmount }]
+            : []),
+        ],
+        total,
+        currency: "z",
+      });
+    },
+  );
+
   it("sorts payouts by name in ascending order when requested", async () => {
-    await expect(getPayoutSummary("guild-a", "name", "asc")).resolves.toEqual(
+    await expect(
+      getPayoutSummary("guild-a", "shareReady", "name", "asc"),
+    ).resolves.toEqual(
       expect.objectContaining({
-        shareReadyPayouts: [
+        payouts: [
           { displayName: "@alice", discordTag: "@alice", amount: 200 },
           { displayName: "@bob", discordTag: "@bob", amount: 500 },
         ],

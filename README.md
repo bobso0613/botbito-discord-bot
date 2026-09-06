@@ -61,9 +61,9 @@ Enable the **Server Members Intent** in the Discord Developer Portal for the bot
 
 `/help` ℹ️ displays a private guide to available commands with descriptions, parameters, and usage for each command. Each command is labeled with its associated emoji for quick recognition.
 
-`/payout` 💰 displays the command user's Pending, Share Ready, and Distributed balances in zeny (`z`). When the user has no non-zero payout balance, it instead displays a message that they are not on the list.
+`/payout` 💰 displays the command user's Pending, Share Ready, and Distributed balances in zeny (`z`). When the user has no non-zero payout balance, it instead displays a message that they are not on the list. The optional `sendprivately` parameter sends the response ephemerally; it is public by default.
 
-`/payoutsummary` 📄 displays every non-zero Share Ready payout and its total for the calling server. Each row shows the Discord guild display name and its right-aligned zeny balance. It uses the Server Members Intent to resolve display names from the sheet's Discord tags. The optional `sort` parameter supports `Name` and `Share Ready amount`; the optional `direction` parameter supports `Ascending` and `Descending`. By default, payouts are sorted by Share Ready amount descending, with Name ascending as the tie-breaker.
+`/payoutsummary` 📄 displays every non-zero payout and its total for the calling server. The optional `amount` parameter selects `Share Ready` (default), `Pending`, or `Distributed`. The optional `sendprivately` parameter sends the response ephemerally; it is public by default. Each row shows the Discord guild display name and its right-aligned zeny balance. It uses the Server Members Intent to resolve display names from the sheet's Discord tags. The optional `sort` parameter supports `Name` and `Amount`; the optional `direction` parameter supports `Ascending` and `Descending`. By default, payouts are sorted by the selected amount descending, with Name ascending as the tie-breaker. Share Ready summaries include the release description and distribution contact; Pending summaries use `Currently vending:` and Distributed summaries omit the description and distribution contact. When the configured payout contact invokes either payout command, the claim message adds `Oh wait, that's me! lol`.
 
 `/guildsched` 🗓️ lists active runs from the configured guild schedule category. It is available in that category's text channels and any configured `allowedCommandChannelIds`; anyone who can use those channels can run the command. The bot includes only signup channels the invoking member can view and read, uses the newest active schedule per channel, and orders results earliest to latest.
 
@@ -99,7 +99,7 @@ The embed title shows the covered schedule week date range (e.g., `Your Attempts
 
 Both payout commands are available only in the guild-to-channel mappings configured in `private/discord_settings.json`.
 
-Using a payout command elsewhere in an allowed server returns an ephemeral message with a link to its configured channel. The summary and individual payout embeds use the configured payout contact when a Share Ready payout is available.
+Using a payout command elsewhere in an allowed server returns an ephemeral message with a link to its configured channel. Both payout commands are public by default and support `sendprivately:true` for an ephemeral response. The summary and individual payout embeds use the configured payout contact when a Share Ready payout is available.
 
 The bot registers payout and guild schedule commands separately in each permitted guild on startup and whenever it joins a guild. This avoids the delay associated with global command propagation for guild-only commands. `/help`, `/mysched`, and `/mycooldowns` are registered only globally, so they are not duplicated by guild-specific registration. `/mysched` and `/mycooldowns` are also explicitly enabled for bot DMs, so Discord may take time to show them after deployment.
 
@@ -115,7 +115,7 @@ Payout data is read from the `Combined` sheet over the `A:ZZ` range.
 
 For `/payout`, the bot finds the matching Discord tag in column A, selects the status columns belonging to the server where the command was run, and displays those three values. Empty or invalid cells are treated as `0 z`.
 
-For `/payoutsummary`, the bot selects that guild's `Share Ready` column, includes every non-zero row, calculates the displayed total, and applies the requested sorting options.
+For `/payoutsummary`, the bot selects that guild's `Pending`, `Share Ready`, or `Distributed` column according to the `amount` parameter, includes every non-zero row, calculates the displayed total, and applies the requested sorting options.
 
 ## Guild Schedule Format 📅
 

@@ -4,7 +4,7 @@ import type {
   ShareReadyPayout,
 } from "../types/payout.js";
 
-export const sortShareReadyPayouts = (
+export const sortPayouts = (
   payouts: ShareReadyPayout[],
   sortBy: PayoutSort = "amount",
   direction: PayoutSortDirection = "desc",

@@ -1,4 +1,4 @@
-import { sortShareReadyPayouts } from "./payout-summary.js";
+import { sortPayouts } from "./payout-summary.js";
 
 const payouts = [
   { displayName: "Charlie", discordTag: "@charlie", amount: 200 },
@@ -6,17 +6,13 @@ const payouts = [
   { displayName: "Bob", discordTag: "@bob", amount: 500 },
 ];
 
-describe("sortShareReadyPayouts", () => {
+describe("sortPayouts", () => {
   it("sorts by amount descending and name ascending by default", () => {
-    expect(sortShareReadyPayouts(payouts)).toEqual([
-      payouts[1],
-      payouts[2],
-      payouts[0],
-    ]);
+    expect(sortPayouts(payouts)).toEqual([payouts[1], payouts[2], payouts[0]]);
   });
 
   it("sorts by amount ascending when requested", () => {
-    expect(sortShareReadyPayouts(payouts, "amount", "asc")).toEqual([
+    expect(sortPayouts(payouts, "amount", "asc")).toEqual([
       payouts[0],
       payouts[1],
       payouts[2],
@@ -24,12 +20,12 @@ describe("sortShareReadyPayouts", () => {
   });
 
   it("sorts by name in both directions when requested", () => {
-    expect(sortShareReadyPayouts(payouts, "name", "asc")).toEqual([
+    expect(sortPayouts(payouts, "name", "asc")).toEqual([
       payouts[1],
       payouts[2],
       payouts[0],
     ]);
-    expect(sortShareReadyPayouts(payouts, "name", "desc")).toEqual([
+    expect(sortPayouts(payouts, "name", "desc")).toEqual([
       payouts[0],
       payouts[2],
       payouts[1],
@@ -39,7 +35,7 @@ describe("sortShareReadyPayouts", () => {
   it("does not mutate the original payout list", () => {
     const original = [...payouts];
 
-    sortShareReadyPayouts(payouts);
+    sortPayouts(payouts);
 
     expect(payouts).toEqual(original);
   });

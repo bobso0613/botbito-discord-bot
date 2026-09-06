@@ -10,26 +10,48 @@ import {
 import { getPayoutSummary } from "../services/payout.service.js";
 import { buildPayoutSummaryEmbed } from "../templates/payout.template.js";
 import type { Command } from "../types/command.js";
-import type { PayoutSort, PayoutSortDirection } from "../types/payout.js";
+import type {
+  PayoutAmount,
+  PayoutSort,
+  PayoutSortDirection,
+} from "../types/payout.js";
 import {
   getDisplayNameByDiscordTag,
   resolvePayoutDisplayName,
 } from "../utils/guild-members.js";
 import { getInteractionContext } from "../utils/interaction-context.js";
-import { sortShareReadyPayouts } from "../utils/payout-summary.js";
+import { sortPayouts } from "../utils/payout-summary.js";
 
+/** Lists the guild payout summary, publicly by default. */
 export const payoutSummaryCommand: Command = {
   data: new SlashCommandBuilder()
     .setName("payoutsummary")
-    .setDescription("View the server's Share Ready payout summary")
+    .setDescription("View the server's payout summary")
+    .addStringOption((option) =>
+      option
+        .setName("amount")
+        .setDescription("Choose which payout amount to show")
+        .setRequired(false)
+        .addChoices(
+          { name: "Share Ready", value: "shareReady" },
+          { name: "Pending", value: "pending" },
+          { name: "Distributed", value: "distributed" },
+        ),
+    )
+    .addBooleanOption((option) =>
+      option
+        .setName("sendprivately")
+        .setDescription("Send the payout summary privately")
+        .setRequired(false),
+    )
     .addStringOption((option) =>
       option
         .setName("sort")
-        .setDescription("Sort payouts by name or Share Ready amount")
+        .setDescription("Sort payouts by name or amount")
         .setRequired(false)
         .addChoices(
           { name: "Name", value: "name" },
-          { name: "Share Ready amount", value: "amount" },
+          { name: "Amount", value: "amount" },
         ),
     )
     .addStringOption((option) =>
@@ -70,15 +92,22 @@ export const payoutSummaryCommand: Command = {
       return;
     }
 
-    await interaction.deferReply();
+    const sendPrivately =
+      interaction.options.getBoolean("sendprivately") ?? false;
+    await interaction.deferReply(
+      sendPrivately ? { flags: MessageFlags.Ephemeral } : {},
+    );
 
     const context = getInteractionContext(interaction);
+    const amount = (interaction.options.getString("amount") ??
+      "shareReady") as PayoutAmount;
     const sortBy = (interaction.options.getString("sort") ??
       "amount") as PayoutSort;
     const direction = (interaction.options.getString("direction") ??
       "desc") as PayoutSortDirection;
     const summary = await getPayoutSummary(
       interaction.guildId,
+      amount,
       sortBy,
       direction,
     );
@@ -87,8 +116,8 @@ export const payoutSummaryCommand: Command = {
     );
     const summaryWithDisplayNames = {
       ...summary,
-      shareReadyPayouts: sortShareReadyPayouts(
-        summary.shareReadyPayouts.map((payout) => ({
+      payouts: sortPayouts(
+        summary.payouts.map((payout) => ({
           ...payout,
           displayName: resolvePayoutDisplayName(
             payout.discordTag,

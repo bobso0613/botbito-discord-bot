@@ -90,10 +90,9 @@ describe("command handlers", () => {
       currency: "z",
     });
     getPayoutSummary.mockResolvedValue({
-      shareReadyPayouts: [
-        { displayName: "@alice", discordTag: "@alice", amount: 100 },
-      ],
-      totalShareReady: 100,
+      amount: "shareReady",
+      payouts: [{ displayName: "@alice", discordTag: "@alice", amount: 100 }],
+      total: 100,
       currency: "z",
     });
   });
@@ -149,6 +148,15 @@ describe("command handlers", () => {
       integration_types: [ApplicationIntegrationType.GuildInstall],
       contexts: [InteractionContextType.Guild, InteractionContextType.BotDM],
     });
+  });
+
+  it("exposes public-by-default private response options for payout commands", () => {
+    expect(payoutCommand.data.toJSON().options).toEqual([
+      expect.objectContaining({ name: "sendprivately", type: 5 }),
+    ]);
+    expect(
+      payoutSummaryCommand.data.toJSON().options?.map(({ name }) => name),
+    ).toEqual(["amount", "sendprivately", "sort", "direction"]);
   });
 
   it("makes /mysched available in guilds and bot DMs", () => {
@@ -884,6 +892,23 @@ describe("command handlers", () => {
     expect(buildPayoutEmbedNotJoined).toHaveBeenCalled();
   });
 
+  it("defers payout privately when requested", async () => {
+    const interaction = createInteraction({
+      options: {
+        getString: jest.fn().mockReturnValue(null),
+        getBoolean: jest.fn((name: string) =>
+          name === "sendprivately" ? true : null,
+        ),
+      },
+    });
+
+    await payoutCommand.execute(interaction as never);
+
+    expect(interaction.deferReply).toHaveBeenCalledWith({
+      flags: MessageFlags.Ephemeral,
+    });
+  });
+
   it("applies the same permissions and renders an enriched payout summary", async () => {
     const blocked = createInteraction({ channelId: "other" });
     await payoutSummaryCommand.execute(blocked as never);
@@ -900,23 +925,45 @@ describe("command handlers", () => {
     });
     expect(getPayoutSummary).toHaveBeenCalledWith(
       allowedGuildId,
+      "shareReady",
       "amount",
       "desc",
     );
 
     const sortedInteraction = createInteraction({
       options: {
-        getString: jest.fn((name: string) =>
-          name === "sort" ? "name" : "asc",
-        ),
+        getString: jest.fn((name: string) => {
+          if (name === "amount") return "pending";
+          if (name === "sort") return "name";
+          return "asc";
+        }),
+        getBoolean: jest.fn().mockReturnValue(null),
       },
     });
     await payoutSummaryCommand.execute(sortedInteraction as never);
 
     expect(getPayoutSummary).toHaveBeenLastCalledWith(
       allowedGuildId,
+      "pending",
       "name",
       "asc",
     );
+  });
+
+  it("defers the payout summary privately when requested", async () => {
+    const interaction = createInteraction({
+      options: {
+        getString: jest.fn().mockReturnValue(null),
+        getBoolean: jest.fn((name: string) =>
+          name === "sendprivately" ? true : null,
+        ),
+      },
+    });
+
+    await payoutSummaryCommand.execute(interaction as never);
+
+    expect(interaction.deferReply).toHaveBeenCalledWith({
+      flags: MessageFlags.Ephemeral,
+    });
   });
 });

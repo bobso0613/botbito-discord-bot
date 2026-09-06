@@ -7,6 +7,13 @@ import { DISCORD_SETTINGS } from "../config/discord-settings.js";
 
 const pepeMoneyRainEmojiId = process.env.PEPEMONEYRAIN_EMOJI_ID;
 
+const getClaimMessage = (context: InteractionContext): string =>
+  `Please ping <@${DISCORD_SETTINGS.payoutToPingId}> (@${DISCORD_SETTINGS.payoutToPingTag}) if you want to claim.${
+    DISCORD_SETTINGS.payoutToPingId === context.userId
+      ? " Oh wait, that's me! lol"
+      : ""
+  }`;
+
 /** Builds the standard payout-status embed for a member. */
 export const buildPayoutEmbed = (
   details: PayoutDetails,
@@ -35,9 +42,7 @@ export const buildPayoutEmbed = (
       {
         name: "✅ Distributed",
         value: `${formatZeny(details.distributed)}${
-          details.shareReady > 0
-            ? `\n\nPlease ping <@${DISCORD_SETTINGS.payoutToPingId}> (@${DISCORD_SETTINGS.payoutToPingTag}) if you want to claim.`
-            : ""
+          details.shareReady > 0 ? `\n\n${getClaimMessage(context)}` : ""
         }`,
         inline: false,
       },
@@ -68,7 +73,7 @@ export const buildPayoutEmbedNotJoined = (
     .setTimestamp();
 };
 
-/** Builds the guild-wide Share Ready payout summary embed. */
+/** Builds the guild-wide payout summary embed for the selected amount. */
 export const buildPayoutSummaryEmbed = (
   summary: PayoutSummary,
   context: InteractionContext,
@@ -76,36 +81,54 @@ export const buildPayoutSummaryEmbed = (
   const footer = getEmbedFooter(context);
   const nameColumnWidth = 16;
   const amountColumnWidth = 16;
-  const shareReadyHeader = `${"Name".padEnd(nameColumnWidth)} ${"Share Ready".padStart(amountColumnWidth)}`;
-  const shareReadyDivider = `${"-".repeat(nameColumnWidth)} ${"-".repeat(amountColumnWidth)}`;
-  const shareReadyList = summary.shareReadyPayouts.length
-    ? summary.shareReadyPayouts
+  const amountLabel =
+    summary.amount === "shareReady"
+      ? "Share Ready"
+      : summary.amount[0].toUpperCase() + summary.amount.slice(1);
+  const payoutHeader = `${"Name".padEnd(nameColumnWidth)} ${amountLabel.padStart(amountColumnWidth)}`;
+  const payoutDivider = `${"-".repeat(nameColumnWidth)} ${"-".repeat(amountColumnWidth)}`;
+  const payoutList = summary.payouts.length
+    ? summary.payouts
         .map((payout) => {
           const amount = `${payout.amount.toLocaleString()} z`;
           return `${payout.displayName.padEnd(nameColumnWidth)} ${amount.padStart(amountColumnWidth)}`;
         })
         .join("\n")
-    : "No Share Ready payouts.";
+    : `No ${amountLabel} payouts.`;
 
-  return new EmbedBuilder()
+  const description =
+    summary.amount === "shareReady"
+      ? "Available for release:"
+      : summary.amount === "pending"
+        ? "Currently vending:"
+        : "";
+  const embed = new EmbedBuilder()
     .setTitle("Payout Summary")
-    .setDescription(
-      `Available for release:\n\`\`\`\n${shareReadyHeader}\n${shareReadyDivider}\n${shareReadyList}\n\`\`\``,
-    )
-    .addFields(
-      {
-        name: "Total",
-        value: formatZeny(summary.totalShareReady),
-        inline: false,
-      },
-      {
-        name: "Distribution",
-        value: `Please ping <@${DISCORD_SETTINGS.payoutToPingId}> (@${DISCORD_SETTINGS.payoutToPingTag}) if you want to claim.`,
-        inline: false,
-      },
-    )
     .setThumbnail(context.guildIconUrl)
     .setColor("#fff194")
     .setFooter(footer)
     .setTimestamp();
+
+  if (description !== undefined) {
+    embed.setDescription(
+      `${description ? `${description}\n` : ""}\`\`\`\n${payoutHeader}\n${payoutDivider}\n${payoutList}\n\`\`\``,
+    );
+  }
+
+  return embed.addFields(
+    {
+      name: "Total",
+      value: formatZeny(summary.total),
+      inline: false,
+    },
+    ...(summary.amount === "shareReady"
+      ? [
+          {
+            name: "Distribution",
+            value: getClaimMessage(context),
+            inline: false,
+          },
+        ]
+      : []),
+  );
 };

@@ -8,19 +8,34 @@ import {
   REST,
   Routes,
   ActivityType,
+  type ChatInputCommandInteraction,
 } from "discord.js";
 import { commands } from "./commands/index.js";
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.DISCORD_CLIENT_ID;
+const processId = process.pid;
 
 if (!token) {
   throw new Error("DISCORD_TOKEN must be set");
 }
 
 const botToken = token;
+const getServerTimestamp = (): string =>
+  new Date().toLocaleString("en-PH", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+    timeZoneName: "short",
+  });
 
-console.log(`Bot process started with PID ${process.pid}.`);
+console.log(
+  `[${getServerTimestamp()}] Bot process started with PID ${processId}.`,
+);
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
@@ -29,22 +44,20 @@ const commandsByName = new Collection(
   commands.map((command) => [command.data.name, command]),
 );
 
-const getServerTimestamp = (): string =>
-  new Date().toLocaleString("en-CA", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-    timeZoneName: "short",
-  });
+const getCommandLogContext = (
+  interaction: ChatInputCommandInteraction,
+): string => {
+  return [
+    `guildName=${JSON.stringify(interaction.guild?.name ?? "direct-message")}`,
+    `username=${JSON.stringify(interaction.user.username)}`,
+    `parameters=${JSON.stringify(interaction.options.data)}`,
+  ].join(" ");
+};
 
 const registerGuildSlashCommands = async (guildId: string): Promise<void> => {
   if (!clientId) {
     console.warn(
-      "DISCORD_CLIENT_ID is not set; skipping slash command registration.",
+      `${processId} - [${getServerTimestamp()}] DISCORD_CLIENT_ID is not set; skipping slash command registration.`,
     );
     return;
   }
@@ -57,7 +70,7 @@ const registerGuildSlashCommands = async (guildId: string): Promise<void> => {
     body: commandBody,
   });
   console.log(
-    `Registered ${commandBody.length} slash command(s) for guild ${guildId}.`,
+    `${processId} - [${getServerTimestamp()}] Registered ${commandBody.length} slash command(s) for guild ${guildId}.`,
   );
 };
 
@@ -74,7 +87,9 @@ client.once(Events.ClientReady, async (readyClient) => {
   for (const guildId of readyClient.guilds.cache.keys()) {
     await registerGuildSlashCommands(guildId);
   }
-  console.log(`Logged in as ${readyClient.user.tag}`);
+  console.log(
+    `${processId} - [${getServerTimestamp()}] Logged in as ${readyClient.user.tag}`,
+  );
 });
 
 client.on(Events.GuildCreate, async (guild) => {
@@ -90,11 +105,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
   try {
     await command.execute(interaction);
     console.log(
-      `[${getServerTimestamp()}] command=/${interaction.commandName} status=success guildId=${interaction.guildId ?? "direct-message"} userId=${interaction.user.id}`,
+      `${processId} - [${getServerTimestamp()}] command=/${interaction.commandName} status=success guildId=${interaction.guildId ?? "direct-message"} userId=${interaction.user.id} ${getCommandLogContext(interaction)}`,
     );
   } catch (error) {
     console.error(
-      `[${getServerTimestamp()}] command=/${interaction.commandName} status=fail guildId=${interaction.guildId ?? "direct-message"} userId=${interaction.user.id}`,
+      `${processId} - [${getServerTimestamp()}] command=/${interaction.commandName} status=fail guildId=${interaction.guildId ?? "direct-message"} userId=${interaction.user.id} ${getCommandLogContext(interaction)}`,
       error,
     );
 
@@ -111,13 +126,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
         });
       }
     } catch (replyError) {
-      console.error("Failed to send command error response:", replyError);
+      console.error(
+        `${processId} - [${getServerTimestamp()}] Failed to send command error response:`,
+        replyError,
+      );
     }
   }
 });
 
 client.on(Events.Error, (error) => {
-  console.error("Discord client error:", error);
+  console.error(
+    `${processId} - [${getServerTimestamp()}] Discord client error:`,
+    error,
+  );
 });
 
 client.login(botToken);

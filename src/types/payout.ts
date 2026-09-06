@@ -16,11 +16,13 @@ export interface ShareReadyPayout {
   amount: number;
 }
 
+export type PayoutAmount = "shareReady" | "pending" | "distributed";
 export type PayoutSort = "name" | "amount";
 export type PayoutSortDirection = "asc" | "desc";
 
 export interface PayoutSummary {
-  shareReadyPayouts: ShareReadyPayout[];
-  totalShareReady: number;
+  amount: PayoutAmount;
+  payouts: ShareReadyPayout[];
+  total: number;
   currency: "z";
 }

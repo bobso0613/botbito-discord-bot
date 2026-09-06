@@ -1,5 +1,6 @@
 import { PAYOUT_HEADERS } from "../constants/index.js";
 import type {
+  PayoutAmount,
   PayoutDetails,
   PayoutLookup,
   PayoutSort,
@@ -11,10 +12,11 @@ import {
   findPayoutRow,
   parseZeny,
 } from "../utils/payout-sheet.js";
-import { sortShareReadyPayouts } from "../utils/payout-summary.js";
+import { sortPayouts } from "../utils/payout-summary.js";
 import { readCombinedPayoutSheetRows } from "./google-sheets.service.js";
 
 export type {
+  PayoutAmount,
   PayoutDetails,
   PayoutLookup,
   PayoutSummary,
@@ -53,29 +55,41 @@ export const getPayoutDetails = async (
 };
 
 /**
- * Lists all non-zero Share Ready payouts for a guild and calculates their total.
+ * Lists all non-zero payouts for a guild for the selected amount and calculates their total.
  * @param guildId - The Discord guild ID that identifies the payout column group.
+ * @param amount - The payout amount to list.
+ * @param sortBy - The field used to sort payouts.
+ * @param direction - The sort direction.
  */
 export const getPayoutSummary = async (
   guildId: string,
+  amount: PayoutAmount = "shareReady",
   sortBy: PayoutSort = "amount",
   direction: PayoutSortDirection = "desc",
 ): Promise<PayoutSummary> => {
   const rows = await readCombinedPayoutSheetRows();
   const [guildRow = [], statusRow = [], ...playerRows] = rows;
   const guildStartColumn = findGuildStartColumn(guildRow, guildId);
-  const shareReadyColumn = statusRow.findIndex(
+  const payoutColumn = statusRow.findIndex(
     (value, index) =>
-      index >= guildStartColumn && value.trim() === "Share Ready",
+      index >= guildStartColumn &&
+      value.trim() ===
+        (
+          {
+            pending: "Pending",
+            shareReady: "Share Ready",
+            distributed: "Distributed",
+          } satisfies Record<PayoutAmount, string>
+        )[amount],
   );
-  const shareReadyPayouts =
-    shareReadyColumn === -1
+  const payouts =
+    payoutColumn === -1
       ? []
       : playerRows
           .map((row) => ({
             displayName: row[0]?.trim(),
             discordTag: row[0]?.trim(),
-            amount: parseZeny(row[shareReadyColumn]),
+            amount: parseZeny(row[payoutColumn]),
           }))
           .filter(
             (
@@ -87,18 +101,12 @@ export const getPayoutSummary = async (
             } => Boolean(payout.discordTag) && payout.amount !== 0,
           );
 
-  const sortedPayouts = sortShareReadyPayouts(
-    shareReadyPayouts,
-    sortBy,
-    direction,
-  );
+  const sortedPayouts = sortPayouts(payouts, sortBy, direction);
 
   return {
-    shareReadyPayouts: sortedPayouts,
-    totalShareReady: shareReadyPayouts.reduce(
-      (total, payout) => total + payout.amount,
-      0,
-    ),
+    amount,
+    payouts: sortedPayouts,
+    total: payouts.reduce((total, payout) => total + payout.amount, 0),
     currency: "z",
   };
 };

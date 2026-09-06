@@ -59,6 +59,18 @@ describe("payout embed builders", () => {
     expect(distributedField?.value).toBe("`2,000 z`");
   });
 
+  it("adds the self-aware claim message when the payout contact invokes payout", () => {
+    const embed = buildPayoutEmbed(
+      { pending: 500, shareReady: 1_000, distributed: 2_000, currency: "z" },
+      { ...context, userId: DISCORD_SETTINGS.payoutToPingId },
+    );
+    const distributedField = embed.data.fields?.find(
+      (field) => field.name === "✅ Distributed",
+    );
+
+    expect(distributedField?.value).toContain("Oh wait, that's me! lol");
+  });
+
   it("builds the not-joined payout status message", () => {
     const embed = buildPayoutEmbedNotJoined(context);
 
@@ -73,10 +85,9 @@ describe("payout embed builders", () => {
   it("builds a payout summary with payout rows and distribution contact", () => {
     const embed = buildPayoutSummaryEmbed(
       {
-        shareReadyPayouts: [
-          { displayName: "Alice", discordTag: "alice", amount: 1_000 },
-        ],
-        totalShareReady: 1_000,
+        amount: "shareReady",
+        payouts: [{ displayName: "Alice", discordTag: "alice", amount: 1_000 }],
+        total: 1_000,
         currency: "z",
       },
       context,
@@ -100,12 +111,63 @@ describe("payout embed builders", () => {
     );
   });
 
+  it("adds the self-aware claim message to a Share Ready summary", () => {
+    const embed = buildPayoutSummaryEmbed(
+      {
+        amount: "shareReady",
+        payouts: [{ displayName: "Alice", discordTag: "alice", amount: 1_000 }],
+        total: 1_000,
+        currency: "z",
+      },
+      { ...context, userId: DISCORD_SETTINGS.payoutToPingId },
+    );
+    const distributionField = embed.data.fields?.find(
+      (field) => field.name === "Distribution",
+    );
+
+    expect(distributionField?.value).toContain("Oh wait, that's me! lol");
+  });
+
   it("renders the empty summary state when no payouts are share ready", () => {
     const embed = buildPayoutSummaryEmbed(
-      { shareReadyPayouts: [], totalShareReady: 0, currency: "z" },
+      { amount: "shareReady", payouts: [], total: 0, currency: "z" },
       context,
     );
 
     expect(embed.data.description).toContain("No Share Ready payouts.");
+  });
+
+  it("renders Pending without the distribution field", () => {
+    const embed = buildPayoutSummaryEmbed(
+      {
+        amount: "pending",
+        payouts: [{ displayName: "Alice", discordTag: "alice", amount: 500 }],
+        total: 500,
+        currency: "z",
+      },
+      context,
+    );
+
+    expect(embed.data.description).toContain("Currently vending:");
+    expect(embed.data.fields).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "Distribution" }),
+      ]),
+    );
+  });
+
+  it("renders Distributed without a description label or distribution field", () => {
+    const embed = buildPayoutSummaryEmbed(
+      { amount: "distributed", payouts: [], total: 0, currency: "z" },
+      context,
+    );
+
+    expect(embed.data.description).not.toContain("Available for release:");
+    expect(embed.data.description).toContain("Distributed");
+    expect(embed.data.fields).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "Distribution" }),
+      ]),
+    );
   });
 });

@@ -23,16 +23,33 @@ export const COMMAND_GUIDE: ReadonlyArray<{
     name: "/payout",
     description: "Get your payout details",
     emoji: "💰",
+    parameters: [
+      {
+        name: "sendprivately",
+        description: "Send the payout details privately (default: public)",
+        required: false,
+      },
+    ],
   },
   {
     name: "/payoutsummary",
-    description: "View the server's Share Ready payout summary",
+    description: "View the server's payout summary",
     emoji: "📄",
     parameters: [
       {
-        name: "sort",
+        name: "amount",
         description:
-          "Sort payouts by name or Share Ready amount (Name, Share Ready amount)",
+          "Choose which payout amount to show (Share Ready, Pending, Distributed)",
+        required: false,
+      },
+      {
+        name: "sendprivately",
+        description: "Send the payout summary privately (default: public)",
+        required: false,
+      },
+      {
+        name: "sort",
+        description: "Sort payouts by name or amount (Name, Amount)",
         required: false,
       },
       {
