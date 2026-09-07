@@ -1,7 +1,7 @@
 /** Runtime Discord settings loaded from private/discord_settings.json. */
 export interface DiscordSettings {
-  /** Maps guild IDs to the text channel where payout commands are allowed. */
-  payoutChannelByGuild: Readonly<Record<string, string>>;
+  /** Guild IDs where payout commands are registered. */
+  payoutGuildIds: readonly string[];
   /** Discord user ID mentioned as the payout contact. */
   payoutToPingId: string;
   /** Display tag for the payout contact. */
@@ -15,8 +15,7 @@ export interface DiscordSettings {
     Record<
       string,
       {
-        categoryId: string;
-        allowedCommandChannelIds?: string[];
+        categoryIds: string[];
         excludedChannelIds?: string[];
         roleRestrictedChannels?: Readonly<Record<string, string>>;
       }

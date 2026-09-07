@@ -67,7 +67,7 @@ const isMemberReserve = (
   displayNamePattern: string,
 ): boolean => {
   const reservePattern = new RegExp(
-    `(?:^|\\n)[^\\n]*\\bReserve\\s*-\\s*\\*\\*${displayNamePattern}\\*\\*`,
+    `(?:^|\\n)[^\\n]*\\bReserve[^-]*-\\s*\\*\\*${displayNamePattern}\\*\\*`,
     "im",
   );
   return reservePattern.test(embedText);
@@ -90,9 +90,9 @@ const getMemberCharNote = (
 const isAccessibleScheduleChannel = (
   channel: TextChannel,
   member: GuildMember,
-  categoryId: string,
+  categoryIds: string[],
 ): boolean =>
-  channel.parentId === categoryId &&
+  categoryIds.includes(channel.parentId ?? "") &&
   channel
     .permissionsFor(member)
     ?.has([
@@ -105,6 +105,7 @@ const getNewestChannelSchedule = async (
   channel: TextChannel,
   member: GuildMember,
   timeWindow?: GuildScheduleTimeWindow,
+  isRoleRestricted?: boolean,
 ): Promise<GuildSchedule | undefined> => {
   const messages = await channel.messages.fetch({ limit: 100 });
   const displayNamePattern = escapeRegularExpression(member.displayName);
@@ -130,6 +131,7 @@ const getNewestChannelSchedule = async (
                       isMemberSignedUp(embedText, displayNamePattern),
                     isReserve,
                     charNote: getMemberCharNote(embedText, displayNamePattern),
+                    isRoleRestricted,
                   },
                 ]
               : [];
@@ -142,24 +144,40 @@ const getNewestChannelSchedule = async (
  * Results are ordered from earliest to latest scheduled time.
  * When a time window is provided, schedules inside that window are included even
  * when their scheduled time has already passed.
+ * @param guild The guild to search for schedules
+ * @param member The member requesting schedules (used for permission checks)
+ * @param categoryIds Array of category IDs to search within
+ * @param excludedChannelIds Channels to exclude from results
+ * @param timeWindow Optional time window for filtering schedules
+ * @param roleRestrictedChannels Map of channel IDs to their required role IDs
+ * @returns Array of accessible schedules ordered by time, with isRoleRestricted flag set appropriately
  */
 export const getActiveGuildSchedules = async (
   guild: Guild,
   member: GuildMember,
-  categoryId: string,
+  categoryIds: string[],
   excludedChannelIds: readonly string[] = [],
   timeWindow?: GuildScheduleTimeWindow,
+  roleRestrictedChannels?: Readonly<Record<string, string>>,
 ): Promise<GuildSchedule[]> => {
   const scheduleChannels = Array.from(guild.channels.cache.values()).filter(
     (channel): channel is TextChannel =>
       channel.type === ChannelType.GuildText &&
       !excludedChannelIds.includes(channel.id) &&
-      isAccessibleScheduleChannel(channel, member, categoryId),
+      isAccessibleScheduleChannel(channel, member, categoryIds),
   );
   const schedules = await Promise.all(
-    scheduleChannels.map((channel) =>
-      getNewestChannelSchedule(channel, member, timeWindow),
-    ),
+    scheduleChannels.map((channel) => {
+      const isRoleRestricted = Boolean(
+        roleRestrictedChannels && channel.id in roleRestrictedChannels,
+      );
+      return getNewestChannelSchedule(
+        channel,
+        member,
+        timeWindow,
+        isRoleRestricted,
+      );
+    }),
   );
 
   return schedules

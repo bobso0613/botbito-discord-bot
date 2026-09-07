@@ -8,7 +8,7 @@ const settings = JSON.parse(
 ) as Partial<DiscordSettings>;
 
 if (
-  !settings.payoutChannelByGuild ||
+  !settings.payoutGuildIds ||
   !settings.payoutToPingId ||
   !settings.payoutToPingTag ||
   !settings.guildScheduleBotId ||
@@ -19,7 +19,7 @@ if (
 }
 
 export const DISCORD_SETTINGS: DiscordSettings = {
-  payoutChannelByGuild: settings.payoutChannelByGuild,
+  payoutGuildIds: settings.payoutGuildIds,
   payoutToPingId: settings.payoutToPingId,
   payoutToPingTag: settings.payoutToPingTag,
   guildScheduleBotId: settings.guildScheduleBotId,
@@ -27,9 +27,7 @@ export const DISCORD_SETTINGS: DiscordSettings = {
   guildScheduleSourceByGuild: settings.guildScheduleSourceByGuild,
 };
 
-export const PAYOUT_GUILD_IDS = Object.keys(
-  DISCORD_SETTINGS.payoutChannelByGuild,
-);
+export const PAYOUT_GUILD_IDS = DISCORD_SETTINGS.payoutGuildIds;
 export const GUILD_SCHEDULE_GUILD_IDS = Object.keys(
   DISCORD_SETTINGS.guildScheduleSourceByGuild,
 );

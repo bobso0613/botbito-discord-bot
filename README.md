@@ -24,13 +24,11 @@ PEPEMONEYRAIN_EMOJI_ID=
 
 Set `PEPEMONEYRAIN_EMOJI_ID` to the custom animated Discord emoji ID used beside the Claimable payout balance. Use the emoji ID available in the Discord server where the bot is running.
 
-Create `private/discord_settings.json` to configure payout command channels, guild schedule sources, and the payout contact:
+Create `private/discord_settings.json` to configure the payout guilds, guild schedule sources, and the payout contact:
 
 ```json
 {
-  "payoutChannelByGuild": {
-    "guild-id": "channel-id"
-  },
+  "payoutGuildIds": ["guild-id"],
   "payoutToPingId": "discord-user-id",
   "payoutToPingTag": "discord-user-tag",
   "guildScheduleBotId": "schedule-bot-user-id",
@@ -44,8 +42,7 @@ Create `private/discord_settings.json` to configure payout command channels, gui
   },
   "guildScheduleSourceByGuild": {
     "guild-id": {
-      "categoryId": "schedule-category-id",
-      "allowedCommandChannelIds": ["optional-extra-command-channel-id"],
+      "categoryIds": ["schedule-category-id", "other-category-id"],
       "excludedChannelIds": ["private-signup-channel-id"],
       "roleRestrictedChannels": {
         "restricted-channel-id": "required-role-id"
@@ -61,15 +58,15 @@ Enable the **Server Members Intent** in the Discord Developer Portal for the bot
 
 `/help` ℹ️ displays a private guide to available commands with descriptions, parameters, and usage for each command. Each command is labeled with its associated emoji for quick recognition.
 
-`/payout` 💰 displays the command user's Pending, Share Ready, and Distributed balances in zeny (`z`). When the user has no non-zero payout balance, it instead displays a message that they are not on the list. The optional `sendprivately` parameter sends the response ephemerally; it is public by default.
+`/payout` 💰 displays the command user's Pending, Share Ready, and Distributed balances in zeny (`z`). It is available in every channel of configured payout guilds. When the user has no non-zero payout balance, it instead displays a message that they are not on the list. The optional `sendprivately` parameter sends the response ephemerally; it is public by default.
 
-`/payoutsummary` 📄 displays every non-zero payout and its total for the calling server. The optional `amount` parameter selects `Share Ready` (default), `Pending`, or `Distributed`. The optional `sendprivately` parameter sends the response ephemerally; it is public by default. Each row shows the Discord guild display name and its right-aligned zeny balance. It uses the Server Members Intent to resolve display names from the sheet's Discord tags. The optional `sort` parameter supports `Name` and `Amount`; the optional `direction` parameter supports `Ascending` and `Descending`. By default, payouts are sorted by the selected amount descending, with Name ascending as the tie-breaker. Share Ready summaries include the release description and distribution contact; Pending summaries use `Currently vending:` and Distributed summaries omit the description and distribution contact. When the configured payout contact invokes either payout command, the claim message adds `Oh wait, that's me! lol`.
+`/payoutsummary` 📄 displays every non-zero payout and its total for the calling server. It is available in every channel of configured payout guilds. The optional `amount` parameter selects `Share Ready` (default), `Pending`, or `Distributed`. The optional `sendprivately` parameter sends the response ephemerally; it is public by default. Each row shows the Discord guild display name and its right-aligned zeny balance. It uses the Server Members Intent to resolve display names from the sheet's Discord tags. The optional `sort` parameter supports `Name` and `Amount`; the optional `direction` parameter supports `Ascending` and `Descending`. By default, payouts are sorted by the selected amount descending, with Name ascending as the tie-breaker. Share Ready summaries include the release description and distribution contact; Pending summaries use `Currently vending:` and Distributed summaries omit the description and distribution contact. When the configured payout contact invokes either payout command, the claim message adds `Oh wait, that's me! lol`.
 
-`/guildsched` 🗓️ lists active runs from the configured guild schedule category. It is available in that category's text channels and any configured `allowedCommandChannelIds`; anyone who can use those channels can run the command. The bot includes only signup channels the invoking member can view and read, uses the newest active schedule per channel, and orders results earliest to latest.
+`/guildsched` 🗓️ lists active runs from the configured guild schedule categories. It is available to all members of the guild. The bot includes only signup channels the invoking member can view and read, uses the newest active schedule per channel, and orders results earliest to latest.
 
 Each schedule links to the run and its actual signup channel. The output groups runs where the member is signed up or reserve before runs where they are not signed up. `📝` marks a standard signup and `🪑` marks a reserve slot. Character notes from signup entries (e.g., "alt character", "reserve slot") are displayed next to the status indicator when present. The embed notes the category from which signup channels are shown and mentions the invoking member.
 
-Use `/guildsched public:true` to post the schedule embed for everyone in the current channel. Without the option, the response is private. Add `forannouncementonly:true` with `public:true` to create a neutral announcement: it omits the Signed Up / Reserve and Not Signed Up headings, status indicators, and character notes while retaining each run's title, time, and channel link. `forannouncementonly` has no effect unless `public:true` is also set.
+Use `/guildsched public:true` to post the schedule embed for everyone in the current channel. Without the option, the response is private. When posting publicly, role-restricted channels are displayed with a "(Private run)" label in the run title instead of a direct link, omitting the channel name. Add `forannouncementonly:true` with `public:true` to create a neutral announcement: it omits the Signed Up / Reserve and Not Signed Up headings, status indicators, and character notes while retaining each run's title and time. `forannouncementonly` has no effect unless `public:true` is also set.
 
 `/mysched` ⌚ sends the invoking user a DM with their upcoming signed-up and reserve schedules across all configured schedule guilds the bot and user can access. It can be used in any server channel where the bot can see the command, or directly in a DM with the bot after global command registration is deployed.
 
@@ -97,9 +94,7 @@ The embed title shows the covered schedule week date range (e.g., `Your Attempts
 - When invoked in a non-restricted channel: Displays only non-restricted channels (all role-restricted channels are excluded).
 - Private output can include all accessible channels regardless of role restrictions.
 
-Both payout commands are available only in the guild-to-channel mappings configured in `private/discord_settings.json`.
-
-Using a payout command elsewhere in an allowed server returns an ephemeral message with a link to its configured channel. Both payout commands are public by default and support `sendprivately:true` for an ephemeral response. The summary and individual payout embeds use the configured payout contact when a Share Ready payout is available.
+Both payout commands are available in every channel of the guilds listed in `payoutGuildIds` in `private/discord_settings.json`. Both payout commands are public by default and support `sendprivately:true` for an ephemeral response. The summary and individual payout embeds use the configured payout contact when a Share Ready payout is available.
 
 The bot registers payout and guild schedule commands separately in each permitted guild on startup and whenever it joins a guild. This avoids the delay associated with global command propagation for guild-only commands. `/help`, `/mysched`, and `/mycooldowns` are registered only globally, so they are not duplicated by guild-specific registration. `/mysched` and `/mycooldowns` are also explicitly enabled for bot DMs, so Discord may take time to show them after deployment.
 
@@ -133,6 +128,8 @@ Reserve entries use this format:
 Reserve - **DisplayName** (character note)
 ```
 
+Any text between `Reserve` and the dash is supported, for example `Reserve (late signup) - **DisplayName**`.
+
 The character note is optional and displayed in parentheses. Examples:
 
 - `- **PlayerName** (alt)` → displays as "📝 - alt"
@@ -143,14 +140,16 @@ The bot extracts the note text and displays it alongside the status indicator (�
 
 ## Role-Restricted Guild Schedule Channels 🔐
 
-Certain schedule channels can be restricted to users with specific Discord roles. This is useful for private or elite signup channels that should only be visible to authorized members when posting publicly.
+Certain schedule channels can be restricted to users with specific Discord roles. This is useful for private or elite signup channels.
+
+When a member views a role-restricted channel privately, they only see it if they have the required role. When posting publicly with `/guildsched public:true`, role-restricted channels are displayed with a "(Private run)" label in the run title instead of a direct link, allowing authorized members to see private runs while others can see they exist without accessing their details.
 
 Configure role-restricted channels in `private/discord_settings.json`:
 
 ```json
 "guildScheduleSourceByGuild": {
   "guild-id": {
-    "categoryId": "schedule-category-id",
+    "categoryIds": ["schedule-category-id"],
     "roleRestrictedChannels": {
       "restricted-channel-id": "required-role-id",
       "another-restricted-channel-id": "another-required-role-id"
@@ -161,11 +160,10 @@ Configure role-restricted channels in `private/discord_settings.json`:
 
 **Access Control Behavior:**
 
-- **Private schedules** (`/guildsched` without `public:true`): All accessible channels are shown, including role-restricted ones if the user can view them in Discord.
-- **Public schedules** (`/guildsched public:true`):
-  - If invoked in a role-restricted channel by a user with the required role: That channel's schedules are displayed along with non-restricted channels.
-  - If invoked in a role-restricted channel by a user WITHOUT the required role: Only non-restricted channels are displayed.
-  - If invoked in a non-restricted channel: Only non-restricted channels are displayed (all role-restricted channels are excluded).
+- **Private schedules** (`/guildsched` without `public:true`): All accessible channels are shown. Role-restricted channels only appear if the user has permission to view them in Discord.
+- **Public schedules** (`/guildsched public:true`): All accessible channels are shown with these differences for role-restricted channels:
+  - Role-restricted schedules you have access to are displayed with a **(Private run)** label in the title (no clickable link to the channel).
+  - Role-restricted schedules you cannot access are not shown.
 
 ## Project Layout 🧱
 

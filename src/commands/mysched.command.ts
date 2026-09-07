@@ -46,7 +46,7 @@ const getAccessibleGuildSchedules = async (
   const schedules = await getActiveGuildSchedules(
     guild,
     member,
-    source.categoryId,
+    source.categoryIds,
     [],
     timeWindow,
   );

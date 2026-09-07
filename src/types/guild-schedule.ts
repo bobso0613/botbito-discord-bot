@@ -18,6 +18,8 @@ export interface GuildSchedule {
   guildName?: string;
   /** Configured custom guild emoji shown in cross-guild personal schedule output. */
   guildIcon?: string;
+  /** Whether the channel is role-restricted. */
+  isRoleRestricted?: boolean;
 }
 
 /** Inclusive start and exclusive end bounds for schedule timestamps. */

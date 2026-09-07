@@ -31,30 +31,54 @@ const getGuildHeading = (
     ? `${isLarge ? "### " : ""}${schedule.guildIcon ? `${schedule.guildIcon} - ` : ""}${schedule.guildName}`
     : undefined;
 
-/** Formats a single schedule row with title, timestamp, channel, and status. */
+/**
+ * Formats a single schedule row with title, timestamp, channel, and status.
+ * When isPublic is true and the schedule is role-restricted, shows "(Private run)" label without a link.
+ * @param schedule The schedule to format
+ * @param showGuildHeading Whether to show the guild name heading
+ * @param showPersonalDetails Whether to show signup status and character notes
+ * @param isPublic Whether this is for public display (affects role-restricted display)
+ */
 const formatGuildSchedule = (
   schedule: GuildSchedule,
   {
     showGuildHeading = true,
     showPersonalDetails = true,
-  }: { showGuildHeading?: boolean; showPersonalDetails?: boolean } = {},
+    isPublic = false,
+  }: {
+    showGuildHeading?: boolean;
+    showPersonalDetails?: boolean;
+    isPublic?: boolean;
+  } = {},
 ): string => {
   const relativeTimestamp = schedule.timestamp.replace(":F>", ":R>");
   const guildHeading = showGuildHeading ? getGuildHeading(schedule) : undefined;
-  const scheduleTitle = `**[${schedule.title}](${schedule.channelUrl})**`;
+
+  // Check if this is a role-restricted channel in public mode
+  const isPrivateRun = isPublic && schedule.isRoleRestricted;
+
+  const scheduleTitle = isPrivateRun
+    ? `**${schedule.title} (Private run)**`
+    : `**[${schedule.title}](${schedule.channelUrl})**`;
   const scheduleTitleLine = `${getScheduleTitleIcon(schedule)} ${scheduleTitle}`;
+
   return [
     guildHeading ?? scheduleTitleLine,
     guildHeading ? scheduleTitleLine : undefined,
     `${schedule.timestamp} (${relativeTimestamp})`,
-    `↪ [#${schedule.channelName}](${schedule.channelUrl})${showPersonalDetails ? getScheduleStatusWithNote(schedule) : ""}`,
+    !isPrivateRun
+      ? `↪ [#${schedule.channelName}](${schedule.channelUrl})${showPersonalDetails ? getScheduleStatusWithNote(schedule) : ""}`
+      : undefined,
   ]
     .filter((line): line is string => Boolean(line))
     .join("\n");
 };
 
 /** Formats personal schedules under larger guild headings. */
-const formatGuildGroupedSchedules = (schedules: GuildSchedule[]): string => {
+const formatGuildGroupedSchedules = (
+  schedules: GuildSchedule[],
+  isPublic = false,
+): string => {
   const schedulesByGuild = new Map<string, GuildSchedule[]>();
 
   for (const schedule of schedules) {
@@ -74,7 +98,10 @@ const formatGuildGroupedSchedules = (schedules: GuildSchedule[]): string => {
           : undefined,
         guildSchedules
           .map((schedule) =>
-            formatGuildSchedule(schedule, { showGuildHeading: false }),
+            formatGuildSchedule(schedule, {
+              showGuildHeading: false,
+              isPublic,
+            }),
           )
           .join("\n\n"),
       ]
@@ -85,7 +112,10 @@ const formatGuildGroupedSchedules = (schedules: GuildSchedule[]): string => {
 };
 
 /** Formats personal schedules under their detected instance type headings. */
-const formatInstanceGroupedSchedules = (schedules: GuildSchedule[]): string => {
+const formatInstanceGroupedSchedules = (
+  schedules: GuildSchedule[],
+  isPublic = false,
+): string => {
   const schedulesByInstance = new Map<string, GuildSchedule[]>();
 
   for (const schedule of schedules) {
@@ -104,7 +134,7 @@ const formatInstanceGroupedSchedules = (schedules: GuildSchedule[]): string => {
     .map(
       ([instanceName, instanceSchedules]) =>
         `### ${instanceName}\n${instanceSchedules
-          .map((schedule) => formatGuildSchedule(schedule))
+          .map((schedule) => formatGuildSchedule(schedule, { isPublic }))
           .join("\n\n")}`,
     )
     .join("\n\n");
@@ -114,27 +144,32 @@ const formatInstanceGroupedSchedules = (schedules: GuildSchedule[]): string => {
 const formatMySchedules = (
   schedules: GuildSchedule[],
   grouping: MyScheduleGrouping,
+  isPublic = false,
 ): string =>
   [
     personalScheduleLegend,
     grouping === "guild"
-      ? formatGuildGroupedSchedules(schedules)
+      ? formatGuildGroupedSchedules(schedules, isPublic)
       : grouping === "instance"
-        ? formatInstanceGroupedSchedules(schedules)
+        ? formatInstanceGroupedSchedules(schedules, isPublic)
         : schedules
-            .map((schedule) => formatGuildSchedule(schedule))
+            .map((schedule) => formatGuildSchedule(schedule, { isPublic }))
             .join("\n\n"),
   ].join("\n\n");
 
 const formatScheduleGroup = (
   heading: string,
   schedules: GuildSchedule[],
+  isPublic = false,
 ): string | undefined =>
   schedules.length
-    ? `**${heading}**\n${schedules.map((schedule) => formatGuildSchedule(schedule)).join("\n\n")}`
+    ? `**${heading}**\n${schedules.map((schedule) => formatGuildSchedule(schedule, { isPublic })).join("\n\n")}`
     : undefined;
 
-const formatGuildSchedules = (schedules: GuildSchedule[]): string => {
+const formatGuildSchedules = (
+  schedules: GuildSchedule[],
+  isPublic = false,
+): string => {
   const visibleSchedules = schedules.slice(0, 25);
   const signedUpSchedules = visibleSchedules.filter(
     (schedule) => schedule.isSignedUp || schedule.isReserve,
@@ -144,32 +179,54 @@ const formatGuildSchedules = (schedules: GuildSchedule[]): string => {
   );
 
   return [
-    formatScheduleGroup("__📝 Signed Up / 🪑 Reserve__:\n", signedUpSchedules),
+    formatScheduleGroup(
+      "__📝 Signed Up / 🪑 Reserve__:\n",
+      signedUpSchedules,
+      isPublic,
+    ),
     formatScheduleGroup(
       "------------------------------\n__Not Signed Up__:\n",
       notSignedUpSchedules,
+      isPublic,
     ),
   ]
     .filter((group): group is string => Boolean(group))
     .join("\n\n");
 };
 
-const formatAnnouncementSchedules = (schedules: GuildSchedule[]): string =>
+const formatAnnouncementSchedules = (
+  schedules: GuildSchedule[],
+  isPublic = false,
+): string =>
   schedules
     .slice(0, 25)
     .map((schedule) =>
-      formatGuildSchedule(schedule, { showPersonalDetails: false }),
+      formatGuildSchedule(schedule, { showPersonalDetails: false, isPublic }),
     )
     .join("\n\n");
 
-/** Builds the upcoming guild schedules embed for a command interaction. */
+/**
+ * Builds the upcoming guild schedules embed for a command interaction.
+ * Displays schedules from configured category channels.
+ * When isPublic is true, role-restricted channels display with a "(Private run)" label.
+ * @param schedules The active guild schedules to display
+ * @param context The interaction context for the requesting member
+ * @param categoryNames Array of names of the schedule categories
+ * @param forAnnouncementOnly If true, omits signup headings and personal details
+ * @param isPublic If true, displays role-restricted runs with "(Private run)" label instead of links
+ */
 export const buildGuildScheduleEmbed = (
   schedules: GuildSchedule[],
   context: InteractionContext,
-  categoryName: string,
+  categoryNames: string[],
   forAnnouncementOnly = false,
+  isPublic = false,
 ): EmbedBuilder => {
   const footer: { text: string; iconURL?: string } = getEmbedFooter(context);
+  const categoryText =
+    categoryNames.length === 1
+      ? `Only showing signup channels within __${categoryNames[0]}__ category.`
+      : `Only showing signup channels within __${categoryNames.join("__, __")}__ categories.`;
   return new EmbedBuilder()
     .setTitle(`Upcoming Runs of ${context.guildName}`)
     .setColor("#d1b500")
@@ -178,13 +235,13 @@ export const buildGuildScheduleEmbed = (
     .setDescription(
       schedules.length
         ? forAnnouncementOnly
-          ? formatAnnouncementSchedules(schedules)
-          : formatGuildSchedules(schedules)
+          ? formatAnnouncementSchedules(schedules, isPublic)
+          : formatGuildSchedules(schedules, isPublic)
         : "No active schedules found.",
     )
     .addFields({
       name: "\u200b",
-      value: `Only showing signup channels within __${categoryName}__ category.\ncommand invoked by <@${context.userId}>`,
+      value: `${categoryText}\ncommand invoked by <@${context.userId}>`,
     })
     .setTimestamp()
     .setFooter(footer);

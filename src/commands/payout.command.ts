@@ -3,10 +3,7 @@ import {
   SlashCommandBuilder,
   type ChatInputCommandInteraction,
 } from "discord.js";
-import {
-  DISCORD_SETTINGS,
-  PAYOUT_GUILD_IDS,
-} from "../config/discord-settings.js";
+import { PAYOUT_GUILD_IDS } from "../config/discord-settings.js";
 import { getPayoutDetails } from "../services/payout.service.js";
 import {
   buildPayoutEmbed,
@@ -15,7 +12,7 @@ import {
 import type { Command } from "../types/command.js";
 import { getInteractionContext } from "../utils/interaction-context.js";
 
-/** Gets the invoking member's payout details, publicly by default. */
+/** Gets the invoking member's payout details from any channel in a supported guild. */
 export const payoutCommand: Command = {
   data: new SlashCommandBuilder()
     .setName("payout")
@@ -34,20 +31,7 @@ export const payoutCommand: Command = {
     ) {
       await interaction.reply({
         content:
-          "This command is not available in this server because it has no permitted payout channel.",
-        flags: MessageFlags.Ephemeral,
-      });
-      return;
-    }
-
-    if (
-      interaction.channelId !==
-      DISCORD_SETTINGS.payoutChannelByGuild[interaction.guildId]
-    ) {
-      const allowedChannelId =
-        DISCORD_SETTINGS.payoutChannelByGuild[interaction.guildId];
-      await interaction.reply({
-        content: `This command is not allowed in this channel. Use it in <#${allowedChannelId}>.`,
+          "This command is not available in this server because it has no configured payout data.",
         flags: MessageFlags.Ephemeral,
       });
       return;

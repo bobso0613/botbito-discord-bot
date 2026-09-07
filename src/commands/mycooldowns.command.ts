@@ -42,7 +42,7 @@ const getAccessibleGuildSchedules = async (
   const schedules = await getActiveGuildSchedules(
     guild,
     member,
-    source.categoryId,
+    source.categoryIds,
     [],
     getScheduleWeekWindow(), // Always use this week only for cooldowns
   );

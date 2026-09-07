@@ -21,7 +21,7 @@ export const COMMAND_GUIDE: ReadonlyArray<{
 }> = [
   {
     name: "/payout",
-    description: "Get your payout details",
+    description: "Get your payout details in this server",
     emoji: "💰",
     parameters: [
       {
@@ -33,7 +33,7 @@ export const COMMAND_GUIDE: ReadonlyArray<{
   },
   {
     name: "/payoutsummary",
-    description: "View the server's payout summary",
+    description: "View this server's payout summary",
     emoji: "📄",
     parameters: [
       {
@@ -61,12 +61,13 @@ export const COMMAND_GUIDE: ReadonlyArray<{
   },
   {
     name: "/guildsched",
-    description: "View active schedules for this guild",
+    description:
+      "View active schedules from this guild's configured categories",
     emoji: "🗓️",
     parameters: [
       {
         name: "public",
-        description: "Show your schedules to everyone in this channel",
+        description: "Show the schedules to everyone in this channel",
         required: false,
       },
       {

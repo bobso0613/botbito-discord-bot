@@ -118,6 +118,14 @@ describe("command handlers", () => {
             "DM your signed-up and reserve schedules across accessible guilds",
         }),
         expect.objectContaining({
+          name: "💰 `/payout`",
+          value: "Get your payout details in this server",
+        }),
+        expect.objectContaining({
+          name: "📄 `/payoutsummary`",
+          value: "View this server's payout summary",
+        }),
+        expect.objectContaining({
           name: "Parameters",
           value: expect.stringContaining(
             "**thisweekonly** (optional): Include completed runs from this schedule week, Monday 06:00 GMT through Sunday",
@@ -347,11 +355,11 @@ describe("command handlers", () => {
     expect(interaction.deferReply).toHaveBeenCalledWith({});
   });
 
-  it("allows guild schedules in a configured exception channel", async () => {
+  it("allows guild schedules in any channel in the configured guild", async () => {
     const interaction = createInteraction({
       user: { id: "user-id" },
-      channelId: "499171225046876172",
-      channel: { type: 0, parentId: "another-category" },
+      channelId: "any-channel-id",
+      channel: { type: 0, parentId: "any-category" },
       guild: {
         id: allowedGuildId,
         members: {
@@ -371,7 +379,10 @@ describe("command handlers", () => {
     });
   });
 
-  it("denies public guild schedules to users without the required role", async () => {
+  it("shows role-restricted runs with (Private run) label when posted publicly", async () => {
+    const roleCache = new Map([
+      ["1545320299220963458", { id: "1545320299220963458" }],
+    ]);
     const interaction = createInteraction({
       options: {
         getString: jest
@@ -382,14 +393,13 @@ describe("command handlers", () => {
           .mockReturnValue(true),
       },
       user: { id: "user-id" },
-      channelId: "1542541803914403840", // Role-restricted channel without user having the role
       channel: { type: 0, parentId: "1481977001811247245" },
       guild: {
         id: allowedGuildId,
         members: {
           fetch: jest.fn().mockResolvedValue({
             displayName: "Lucian Blight",
-            roles: { cache: new Map() }, // User has no roles
+            roles: { cache: roleCache },
           } as never),
         },
         channels: { cache: new Map() },
@@ -398,7 +408,6 @@ describe("command handlers", () => {
 
     await guildSchedCommand.execute(interaction as never);
 
-    // Should still defer (public reply), but the role-restricted channel should be excluded
     expect(interaction.deferReply).toHaveBeenCalledWith({});
   });
 
@@ -851,7 +860,7 @@ describe("command handlers", () => {
     expect(embed.description).not.toContain("Outside This Week");
   });
 
-  it("denies payout commands outside the allowed server or channel", async () => {
+  it("allows payout commands in every channel of a supported guild", async () => {
     const outsideServer = createInteraction({ guildId: "other" });
     const outsideChannel = createInteraction({ channelId: "other" });
 
@@ -863,11 +872,12 @@ describe("command handlers", () => {
         content: expect.stringContaining("not available"),
       }),
     );
-    expect(outsideChannel.reply).toHaveBeenCalledWith(
-      expect.objectContaining({
-        content: expect.stringContaining("<#1470361558893723710>"),
-      }),
-    );
+    expect(outsideChannel.reply).not.toHaveBeenCalled();
+    expect(outsideChannel.deferReply).toHaveBeenCalled();
+    expect(getPayoutDetails).toHaveBeenCalledWith({
+      guildId: allowedGuildId,
+      discordTag: "alice",
+    });
   });
 
   it("defers payout, then renders the matching payout or missing-member embed", async () => {
@@ -909,10 +919,11 @@ describe("command handlers", () => {
     });
   });
 
-  it("applies the same permissions and renders an enriched payout summary", async () => {
-    const blocked = createInteraction({ channelId: "other" });
-    await payoutSummaryCommand.execute(blocked as never);
-    expect(blocked.reply).toHaveBeenCalled();
+  it("renders an enriched payout summary from any channel in a supported guild", async () => {
+    const otherChannel = createInteraction({ channelId: "other" });
+    await payoutSummaryCommand.execute(otherChannel as never);
+    expect(otherChannel.reply).not.toHaveBeenCalled();
+    expect(otherChannel.deferReply).toHaveBeenCalled();
 
     const interaction = createInteraction();
     await payoutSummaryCommand.execute(interaction as never);

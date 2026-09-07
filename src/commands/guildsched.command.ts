@@ -1,5 +1,4 @@
 import {
-  ChannelType,
   MessageFlags,
   SlashCommandBuilder,
   type ChatInputCommandInteraction,
@@ -13,19 +12,11 @@ import { buildGuildScheduleEmbed } from "../templates/guild-schedule.template.js
 import type { Command } from "../types/command.js";
 import { getInteractionContext } from "../utils/interaction-context.js";
 
-const isAllowedScheduleCommandChannel = (
-  interaction: ChatInputCommandInteraction,
-  categoryId: string,
-  allowedChannelIds: readonly string[] = [],
-): boolean =>
-  interaction.channel?.type === ChannelType.GuildText &&
-  (interaction.channel.parentId === categoryId ||
-    allowedChannelIds.includes(interaction.channelId));
-
-export const isAllowedGuildScheduleCommandChannel =
-  isAllowedScheduleCommandChannel;
-
-/** Displays active, accessible guild run schedules for the invoking member. */
+/**
+ * Displays active, accessible guild run schedules for the invoking member.
+ * Available to all members of the guild.
+ * When public=true, role-restricted channels are shown with a "(Private run)" label instead of direct links.
+ */
 export const guildSchedCommand: Command = {
   data: new SlashCommandBuilder()
     .setName("guildsched")
@@ -46,77 +37,50 @@ export const guildSchedCommand: Command = {
       ? DISCORD_SETTINGS.guildScheduleSourceByGuild[interaction.guildId]
       : undefined;
 
-    if (
-      !source ||
-      !interaction.guild ||
-      !isAllowedScheduleCommandChannel(
-        interaction,
-        source.categoryId,
-        source.allowedCommandChannelIds,
-      )
-    ) {
+    if (!source || !interaction.guild) {
       await interaction.reply({
-        content:
-          "This command is only available in the configured schedule channels.",
+        content: "This command is not available for this guild.",
         flags: MessageFlags.Ephemeral,
       });
       return;
     }
 
-    const member = await interaction.guild.members.fetch(interaction.user.id);
+    const guild = interaction.guild;
+    const member = await guild.members.fetch(interaction.user.id);
     const isPublic = interaction.options.getBoolean("public") ?? false;
     const isForAnnouncementOnly =
       isPublic &&
       (interaction.options.getBoolean("forannouncementonly") ?? false);
 
-    // Build excluded channels list based on role restrictions
-    let excludedChannelsForPublic = source.excludedChannelIds ?? [];
-    if (isPublic && source.roleRestrictedChannels) {
-      // Check if the current channel is role-restricted
-      const currentChannelRequiredRole =
-        source.roleRestrictedChannels[interaction.channelId];
-      if (currentChannelRequiredRole) {
-        // User is invoking in a role-restricted channel
-        if (member.roles.cache.has(currentChannelRequiredRole)) {
-          // User has the required role, allow this channel (remove from excluded if present)
-          excludedChannelsForPublic = excludedChannelsForPublic.filter(
-            (channelId) => channelId !== interaction.channelId,
-          );
-        } else {
-          // User doesn't have the required role, exclude this channel
-          excludedChannelsForPublic = [
-            ...excludedChannelsForPublic,
-            interaction.channelId,
-          ];
-        }
-      } else {
-        // Current channel is not role-restricted, so exclude all role-restricted channels
-        excludedChannelsForPublic = [
-          ...excludedChannelsForPublic,
-          ...Object.keys(source.roleRestrictedChannels),
-        ];
-      }
-    }
-
     await interaction.deferReply(
       isPublic ? {} : { flags: MessageFlags.Ephemeral },
     );
 
+    // Build excluded channels list - only truly excluded channels, not role-restricted ones
+    const excludedChannels = (source.excludedChannelIds ?? []).filter(
+      (channelId) =>
+        !source.roleRestrictedChannels ||
+        !(channelId in source.roleRestrictedChannels),
+    );
+
     const schedules = await getActiveGuildSchedules(
-      interaction.guild,
+      guild,
       member,
-      source.categoryId,
-      isPublic ? excludedChannelsForPublic : undefined,
+      source.categoryIds,
+      excludedChannels,
+      undefined,
+      source.roleRestrictedChannels,
     );
     const context = getInteractionContext(interaction);
-    const categoryName =
-      interaction.guild.channels.cache.get(source.categoryId)?.name ??
-      "configured category";
+    const categoryNames = source.categoryIds
+      .map((id) => guild.channels.cache.get(id)?.name)
+      .filter((name): name is string => Boolean(name));
     const embed = buildGuildScheduleEmbed(
       schedules,
       context,
-      categoryName,
+      categoryNames.length > 0 ? categoryNames : ["configured categories"],
       isForAnnouncementOnly,
+      isPublic,
     );
 
     await interaction.editReply({ embeds: [embed] });

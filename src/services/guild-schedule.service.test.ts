@@ -1,10 +1,8 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import { ChannelType } from "discord.js";
 import { DISCORD_SETTINGS } from "../config/discord-settings.js";
-import {
-  getActiveGuildSchedules,
-  type GuildScheduleTimeWindow,
-} from "./guild-schedule.service.js";
+import { getActiveGuildSchedules } from "./guild-schedule.service.js";
+import type { GuildScheduleTimeWindow } from "../types/guild-schedule.js";
 
 const getDiscordTimestamp = (date: string): string =>
   `<t:${Math.floor(new Date(date).getTime() / 1_000)}:F>`;
@@ -105,7 +103,7 @@ describe("getActiveGuildSchedules", () => {
     const schedules = await getActiveGuildSchedules(
       guild as never,
       member as never,
-      "schedule-category",
+      ["schedule-category"],
     );
 
     expect(schedules).toEqual([
@@ -117,6 +115,7 @@ describe("getActiveGuildSchedules", () => {
         isSignedUp: false,
         isReserve: false,
         charNote: undefined,
+        isRoleRestricted: false,
       },
       {
         title: "New schedule",
@@ -126,6 +125,7 @@ describe("getActiveGuildSchedules", () => {
         isSignedUp: false,
         isReserve: true,
         charNote: "_give link_",
+        isRoleRestricted: false,
       },
     ]);
     expect(inaccessibleFetch).not.toHaveBeenCalled();
@@ -133,7 +133,7 @@ describe("getActiveGuildSchedules", () => {
     const publicSchedules = await getActiveGuildSchedules(
       guild as never,
       member as never,
-      "schedule-category",
+      ["schedule-category"],
       ["schedule-channel"],
     );
     expect(publicSchedules).toHaveLength(1);
@@ -187,7 +187,7 @@ describe("getActiveGuildSchedules", () => {
     const schedulesWithNote = await getActiveGuildSchedules(
       guildWithCharNote as never,
       member as never,
-      "schedule-category",
+      ["schedule-category"],
     );
 
     expect(schedulesWithNote).toHaveLength(1);
@@ -264,7 +264,7 @@ describe("getActiveGuildSchedules", () => {
     const schedules = await getActiveGuildSchedules(
       guild as never,
       member as never,
-      "schedule-category",
+      ["schedule-category"],
       [],
       timeWindow,
     );

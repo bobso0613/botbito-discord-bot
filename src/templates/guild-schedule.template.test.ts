@@ -38,7 +38,7 @@ describe("buildGuildScheduleEmbed", () => {
         },
       ],
       context,
-      "Run Signups",
+      ["Run Signups"],
     );
 
     expect(embed.data).toMatchObject({
@@ -71,7 +71,7 @@ describe("buildGuildScheduleEmbed", () => {
         },
       ],
       context,
-      "Run Signups",
+      ["Run Signups"],
     );
 
     const description = embed.data.description;
@@ -102,7 +102,7 @@ describe("buildGuildScheduleEmbed", () => {
         },
       ],
       context,
-      "Run Signups",
+      ["Run Signups"],
       true,
     );
 
@@ -119,7 +119,7 @@ describe("buildGuildScheduleEmbed", () => {
 
   it("builds an empty-state embed when no schedules are active", () => {
     expect(
-      buildGuildScheduleEmbed([], context, "Run Signups").data.description,
+      buildGuildScheduleEmbed([], context, ["Run Signups"]).data.description,
     ).toBe("No active schedules found.");
   });
 });
