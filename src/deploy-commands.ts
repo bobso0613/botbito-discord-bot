@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { REST, Routes } from "discord.js";
 import { commands } from "./commands/index.js";
+import { logger } from "./utils/logger.js";
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.DISCORD_CLIENT_ID;
@@ -28,7 +29,7 @@ await rest.put(Routes.applicationCommands(clientId), {
 
 for (const guildId of guildIds) {
   if (excludedGuildIds.has(guildId)) {
-    console.warn(
+    logger.warn(
       `Skipping guild ${guildId}: command deployment is excluded for application ${clientId}.`,
     );
     continue;
@@ -43,6 +44,6 @@ for (const guildId of guildIds) {
   });
 }
 
-console.log(
+logger.log(
   `Registered ${globalCommandBody.length} global and guild-specific slash command(s) for ${guildIds.length} guild(s).`,
 );

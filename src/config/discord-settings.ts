@@ -13,7 +13,10 @@ if (
   !settings.payoutToPingTag ||
   !settings.guildScheduleBotId ||
   !settings.guildIcons ||
-  !settings.guildScheduleSourceByGuild
+  !settings.guildScheduleSourceByGuild ||
+  Object.values(settings.guildScheduleSourceByGuild).some(
+    (source) => !source.scheduleTextChannelIds,
+  )
 ) {
   throw new Error("private/discord_settings.json is missing required settings");
 }

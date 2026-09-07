@@ -273,4 +273,170 @@ describe("getActiveGuildSchedules", () => {
       "Finished this week",
     ]);
   });
+
+  it("includes past schedules when requested for an announcement refresh", async () => {
+    const member = { displayName: "Lucian Blight" };
+    const channel = {
+      type: ChannelType.GuildText,
+      id: "moved-schedule",
+      parentId: "schedule-category",
+      name: "moved-schedule",
+      url: "https://discord.com/channels/guild/moved-schedule",
+      permissionsFor: jest.fn().mockReturnValue({
+        has: jest.fn().mockReturnValue(true),
+      }),
+      messages: {
+        fetch: jest.fn().mockResolvedValue(
+          new Map([
+            [
+              "schedule",
+              {
+                author: { id: DISCORD_SETTINGS.guildScheduleBotId },
+                createdTimestamp: 1,
+                embeds: [
+                  {
+                    title: "Moved schedule",
+                    description: "Your Time: <t:1:F>",
+                    fields: [],
+                  },
+                ],
+              },
+            ],
+          ]) as never,
+        ),
+      },
+    };
+    const guild = { channels: { cache: new Map([[channel.id, channel]]) } };
+
+    const schedules = await getActiveGuildSchedules(
+      guild as never,
+      member as never,
+      ["schedule-category"],
+      [],
+      undefined,
+      undefined,
+      true,
+    );
+
+    expect(schedules.map((schedule) => schedule.title)).toEqual([
+      "Moved schedule",
+    ]);
+  });
+
+  it("does not reuse an older schedule when the newest embed is TBD", async () => {
+    const member = { displayName: "Lucian Blight" };
+    const channel = {
+      type: ChannelType.GuildText,
+      id: "cleared-schedule",
+      parentId: "schedule-category",
+      name: "cleared-schedule",
+      url: "https://discord.com/channels/guild/cleared-schedule",
+      permissionsFor: jest.fn().mockReturnValue({
+        has: jest.fn().mockReturnValue(true),
+      }),
+      messages: {
+        fetch: jest.fn().mockResolvedValue(
+          new Map([
+            [
+              "older",
+              {
+                author: { id: DISCORD_SETTINGS.guildScheduleBotId },
+                createdTimestamp: 1,
+                embeds: [
+                  {
+                    title: "Old schedule",
+                    description: "Your Time: <t:4102444800:F>",
+                    fields: [],
+                  },
+                ],
+              },
+            ],
+            [
+              "cleared",
+              {
+                author: { id: DISCORD_SETTINGS.guildScheduleBotId },
+                createdTimestamp: 2,
+                embeds: [
+                  {
+                    title: "Cleared schedule",
+                    description: "Your Time: TBD",
+                    fields: [],
+                  },
+                ],
+              },
+            ],
+          ]) as never,
+        ),
+      },
+    };
+    const guild = { channels: { cache: new Map([[channel.id, channel]]) } };
+
+    const schedules = await getActiveGuildSchedules(
+      guild as never,
+      member as never,
+      ["schedule-category"],
+      [],
+      undefined,
+      undefined,
+      true,
+    );
+
+    expect(schedules).toEqual([]);
+  });
+
+  it("does not reuse an older schedule after a newer postpone response", async () => {
+    const member = { displayName: "Lucian Blight" };
+    const channel = {
+      type: ChannelType.GuildText,
+      id: "postponed-schedule",
+      parentId: "schedule-category",
+      name: "postponed-schedule",
+      url: "https://discord.com/channels/guild/postponed-schedule",
+      permissionsFor: jest.fn().mockReturnValue({
+        has: jest.fn().mockReturnValue(true),
+      }),
+      messages: {
+        fetch: jest.fn().mockResolvedValue(
+          new Map([
+            [
+              "older",
+              {
+                author: { id: DISCORD_SETTINGS.guildScheduleBotId },
+                createdTimestamp: 1,
+                embeds: [
+                  {
+                    title: "Old schedule",
+                    description: "Your Time: <t:4102444800:F>",
+                    fields: [],
+                  },
+                ],
+              },
+            ],
+            [
+              "postponed",
+              {
+                author: { id: DISCORD_SETTINGS.guildScheduleBotId },
+                createdTimestamp: 2,
+                embeds: [],
+                content: "Schedule postponed",
+              },
+            ],
+          ]) as never,
+        ),
+      },
+    };
+    const guild = { channels: { cache: new Map([[channel.id, channel]]) } };
+
+    const schedules = await getActiveGuildSchedules(
+      guild as never,
+      member as never,
+      ["schedule-category"],
+      [],
+      undefined,
+      undefined,
+      true,
+    );
+
+    expect(schedules).toEqual([]);
+  });
 });

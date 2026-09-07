@@ -213,7 +213,9 @@ const formatAnnouncementSchedules = (
  * @param context The interaction context for the requesting member
  * @param categoryNames Array of names of the schedule categories
  * @param forAnnouncementOnly If true, omits signup headings and personal details
- * @param isPublic If true, displays role-restricted runs with "(Private run)" label instead of links
+ * @param isPublic If true, displays role-restricted runs with a "(Private run)" label instead of links
+ * @param updatedScheduleTitle Title of the schedule that triggered an automatic announcement refresh
+ * @remarks Automatic announcements identify the latest updated schedule title instead of a command invoker.
  */
 export const buildGuildScheduleEmbed = (
   schedules: GuildSchedule[],
@@ -221,6 +223,7 @@ export const buildGuildScheduleEmbed = (
   categoryNames: string[],
   forAnnouncementOnly = false,
   isPublic = false,
+  updatedScheduleTitle?: string,
 ): EmbedBuilder => {
   const footer: { text: string; iconURL?: string } = getEmbedFooter(context);
   const categoryText =
@@ -241,7 +244,11 @@ export const buildGuildScheduleEmbed = (
     )
     .addFields({
       name: "\u200b",
-      value: `${categoryText}\ncommand invoked by <@${context.userId}>`,
+      value: `${categoryText}\n${
+        forAnnouncementOnly && updatedScheduleTitle
+          ? `schedule automatically updated because of changes in:\n\_\_${updatedScheduleTitle}\_\_`
+          : `command invoked by <@${context.userId}>`
+      }`,
     })
     .setTimestamp()
     .setFooter(footer);

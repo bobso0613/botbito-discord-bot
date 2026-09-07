@@ -16,6 +16,7 @@ export interface DiscordSettings {
       string,
       {
         categoryIds: string[];
+        scheduleTextChannelIds: string[];
         excludedChannelIds?: string[];
         roleRestrictedChannels?: Readonly<Record<string, string>>;
       }

@@ -122,6 +122,31 @@ describe("buildGuildScheduleEmbed", () => {
       buildGuildScheduleEmbed([], context, ["Run Signups"]).data.description,
     ).toBe("No active schedules found.");
   });
+
+  it("identifies the source channel for automatic announcements", () => {
+    const embed = buildGuildScheduleEmbed(
+      [
+        {
+          title: "Endless Tower Wednesday",
+          timestamp: "<t:4070905800:F>",
+          channelName: "endless-tower-signup",
+          channelUrl: "https://discord.com/channels/guild/channel",
+          isSignedUp: false,
+          isReserve: false,
+        },
+      ],
+      context,
+      ["Run Signups"],
+      true,
+      true,
+      "Endless Tower Wednesday",
+    );
+
+    expect(embed.data.fields?.[0]?.value).toContain(
+      "schedule automatically updated because of changes in:\n\_\_Endless Tower Wednesday\_\_",
+    );
+    expect(embed.data.fields?.[0]?.value).not.toContain("command invoked by");
+  });
 });
 
 describe("buildMyScheduleEmbed", () => {

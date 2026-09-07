@@ -43,6 +43,7 @@ Create `private/discord_settings.json` to configure the payout guilds, guild sch
   "guildScheduleSourceByGuild": {
     "guild-id": {
       "categoryIds": ["schedule-category-id", "other-category-id"],
+      "scheduleTextChannelIds": ["public-schedule-channel-id"],
       "excludedChannelIds": ["private-signup-channel-id"],
       "roleRestrictedChannels": {
         "restricted-channel-id": "required-role-id"
@@ -52,7 +53,7 @@ Create `private/discord_settings.json` to configure the payout guilds, guild sch
 }
 ```
 
-Enable the **Server Members Intent** in the Discord Developer Portal for the bot application. `/payoutsummary` uses it to resolve Discord display names from the sheet's Discord tags.
+Enable the **Server Members Intent** and **Message Content Intent** in the Discord Developer Portal for the bot application. `/payoutsummary` uses the Server Members Intent to resolve Discord display names from the sheet's Discord tags. The Message Content Intent allows automatic schedule announcements to read schedule embeds from guild message events.
 
 ## Commands 💬
 
@@ -63,6 +64,17 @@ Enable the **Server Members Intent** in the Discord Developer Portal for the bot
 `/payoutsummary` 📄 displays every non-zero payout and its total for the calling server. It is available in every channel of configured payout guilds. The optional `amount` parameter selects `Share Ready` (default), `Pending`, or `Distributed`. The optional `sendprivately` parameter sends the response ephemerally; it is public by default. Each row shows the Discord guild display name and its right-aligned zeny balance. It uses the Server Members Intent to resolve display names from the sheet's Discord tags. The optional `sort` parameter supports `Name` and `Amount`; the optional `direction` parameter supports `Ascending` and `Descending`. By default, payouts are sorted by the selected amount descending, with Name ascending as the tie-breaker. Share Ready summaries include the release description and distribution contact; Pending summaries use `Currently vending:` and Distributed summaries omit the description and distribution contact. When the configured payout contact invokes either payout command, the claim message adds `Oh wait, that's me! lol`.
 
 `/guildsched` 🗓️ lists active runs from the configured guild schedule categories. It is available to all members of the guild. The bot includes only signup channels the invoking member can view and read, uses the newest active schedule per channel, and orders results earliest to latest.
+
+When a configured schedule bot posts or updates a schedule response in one of the configured `categoryIds` channels, the bot automatically refreshes every `scheduleTextChannelIds` channel. It deletes the existing announcement messages and posts a public announcement equivalent to `/guildsched public:true forannouncementonly:true`. The listener compares the newest schedule-bot response with the previous response, including `Your Time: TBD` and plain postpone responses, so new schedule-changing commands do not require code changes.
+
+Automatic announcements identify the latest updated run with the following format:
+
+```text
+schedule automatically updated from the latest update in:
+<run-title>
+```
+
+Manually invoked `/guildsched` announcements continue to identify the command user.
 
 Each schedule links to the run and its actual signup channel. The output groups runs where the member is signed up or reserve before runs where they are not signed up. `📝` marks a standard signup and `🪑` marks a reserve slot. Character notes from signup entries (e.g., "alt character", "reserve slot") are displayed next to the status indicator when present. The embed notes the category from which signup channels are shown and mentions the invoking member.
 
@@ -150,6 +162,7 @@ Configure role-restricted channels in `private/discord_settings.json`:
 "guildScheduleSourceByGuild": {
   "guild-id": {
     "categoryIds": ["schedule-category-id"],
+    "scheduleTextChannelIds": ["public-schedule-channel-id"],
     "roleRestrictedChannels": {
       "restricted-channel-id": "required-role-id",
       "another-restricted-channel-id": "another-required-role-id"
@@ -198,8 +211,9 @@ src/
 └── utils/
     ├── format-zeny.ts
     ├── guild-members.ts
-  ├── guild-schedule.ts
+    ├── guild-schedule.ts
     ├── interaction-context.ts
+    ├── logger.ts
     ├── payout-embed.ts
     ├── payout-sheet.ts
     └── payout-summary.ts
@@ -231,7 +245,7 @@ Jest unit tests are co-located with the modules they cover. The current suite ve
 
 ## Documentation 📚
 
-Public bot services, interaction helpers, schedule helpers, and embed builders use JSDoc-style comments. Generate the browsable TypeScript reference with:
+Public bot services, interaction helpers, schedule helpers, logging utilities, and embed builders use JSDoc-style comments. The shared logger adds the process ID and server timestamp to informational, warning, and error messages while preserving additional error arguments. Generate the browsable TypeScript reference with:
 
 ```bash
 npm run docs

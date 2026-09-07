@@ -31,6 +31,7 @@ const getEmbedText = (embed: Embed): string =>
 const getActiveScheduleTimestamp = (
   embedText: string,
   timeWindow?: GuildScheduleTimeWindow,
+  includePast = false,
 ): string | undefined => {
   const match = embedText.match(scheduleTimestampPattern);
   if (!match) return undefined;
@@ -46,7 +47,9 @@ const getActiveScheduleTimestamp = (
       : undefined;
   }
 
-  return timestampMilliseconds < Date.now() ? undefined : timestamp;
+  return includePast || timestampMilliseconds >= Date.now()
+    ? timestamp
+    : undefined;
 };
 
 /** Checks for a non-reserve roster entry matching the invoking member. */
@@ -106,37 +109,42 @@ const getNewestChannelSchedule = async (
   member: GuildMember,
   timeWindow?: GuildScheduleTimeWindow,
   isRoleRestricted?: boolean,
+  includePast = false,
 ): Promise<GuildSchedule | undefined> => {
   const messages = await channel.messages.fetch({ limit: 100 });
   const displayNamePattern = escapeRegularExpression(member.displayName);
-
-  return Array.from(messages.values())
+  const newestScheduleMessage = Array.from(messages.values())
     .sort((first, second) => second.createdTimestamp - first.createdTimestamp)
-    .flatMap((message) =>
-      message.author.id !== DISCORD_SETTINGS.guildScheduleBotId
-        ? []
-        : message.embeds.flatMap((embed) => {
-            const embedText = getEmbedText(embed);
-            const timestamp = getActiveScheduleTimestamp(embedText, timeWindow);
-            const isReserve = isMemberReserve(embedText, displayNamePattern);
-            return timestamp && embed.title
-              ? [
-                  {
-                    title: embed.title,
-                    timestamp,
-                    channelName: channel.name,
-                    channelUrl: channel.url,
-                    isSignedUp:
-                      !isReserve &&
-                      isMemberSignedUp(embedText, displayNamePattern),
-                    isReserve,
-                    charNote: getMemberCharNote(embedText, displayNamePattern),
-                    isRoleRestricted,
-                  },
-                ]
-              : [];
-          }),
-    )[0];
+    .find(
+      (message) => message.author.id === DISCORD_SETTINGS.guildScheduleBotId,
+    );
+
+  if (!newestScheduleMessage) return undefined;
+
+  return newestScheduleMessage.embeds.flatMap((embed) => {
+    const embedText = getEmbedText(embed);
+    const timestamp = getActiveScheduleTimestamp(
+      embedText,
+      timeWindow,
+      includePast,
+    );
+    const isReserve = isMemberReserve(embedText, displayNamePattern);
+    return timestamp && embed.title
+      ? [
+          {
+            title: embed.title,
+            timestamp,
+            channelName: channel.name,
+            channelUrl: channel.url,
+            isSignedUp:
+              !isReserve && isMemberSignedUp(embedText, displayNamePattern),
+            isReserve,
+            charNote: getMemberCharNote(embedText, displayNamePattern),
+            isRoleRestricted,
+          },
+        ]
+      : [];
+  })[0];
 };
 
 /**
@@ -150,6 +158,7 @@ const getNewestChannelSchedule = async (
  * @param excludedChannelIds Channels to exclude from results
  * @param timeWindow Optional time window for filtering schedules
  * @param roleRestrictedChannels Map of channel IDs to their required role IDs
+ * @param includePast If true, includes schedules whose timestamp has passed
  * @returns Array of accessible schedules ordered by time, with isRoleRestricted flag set appropriately
  */
 export const getActiveGuildSchedules = async (
@@ -159,6 +168,7 @@ export const getActiveGuildSchedules = async (
   excludedChannelIds: readonly string[] = [],
   timeWindow?: GuildScheduleTimeWindow,
   roleRestrictedChannels?: Readonly<Record<string, string>>,
+  includePast = false,
 ): Promise<GuildSchedule[]> => {
   const scheduleChannels = Array.from(guild.channels.cache.values()).filter(
     (channel): channel is TextChannel =>
@@ -176,6 +186,7 @@ export const getActiveGuildSchedules = async (
         member,
         timeWindow,
         isRoleRestricted,
+        includePast,
       );
     }),
   );
