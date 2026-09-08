@@ -10,7 +10,7 @@ import {
 import { getActiveGuildSchedules } from "../services/guild-schedule.service.js";
 import {
   buildGuildScheduleEmbed,
-  buildMyScheduleButtonRow,
+  buildScheduleActionRow,
 } from "../templates/guild-schedule.template.js";
 import type { Command } from "../types/command.js";
 import { getInteractionContext } from "../utils/interaction-context.js";
@@ -88,7 +88,7 @@ export const guildSchedCommand: Command = {
 
     await interaction.editReply({
       embeds: [embed],
-      components: [buildMyScheduleButtonRow()],
+      components: [buildScheduleActionRow()],
     });
   },
 };

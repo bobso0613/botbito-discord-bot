@@ -8,7 +8,7 @@ import { DISCORD_SETTINGS } from "../config/discord-settings.js";
 import { getActiveGuildSchedules } from "./guild-schedule.service.js";
 import {
   buildGuildScheduleEmbed,
-  buildMyScheduleButtonRow,
+  buildScheduleActionRow,
 } from "../templates/guild-schedule.template.js";
 import type { InteractionContext } from "../types/interaction-context.js";
 import { logger } from "../utils/logger.js";
@@ -224,7 +224,7 @@ const refreshGuildScheduleAnnouncement = async (
     await deleteChannelMessages(channel);
     await channel.send({
       embeds: [embed],
-      components: [buildMyScheduleButtonRow()],
+      components: [buildScheduleActionRow()],
     });
   }
 };

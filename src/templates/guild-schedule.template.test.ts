@@ -2,9 +2,9 @@ import { describe, expect, it, jest } from "@jest/globals";
 import { ButtonStyle } from "discord.js";
 import type { InteractionContext } from "../types/interaction-context.js";
 import {
-  buildMyScheduleButtonRow,
   buildGuildScheduleEmbed,
   buildMyScheduleEmbed,
+  buildScheduleActionRow,
 } from "./guild-schedule.template.js";
 
 const context: InteractionContext = {
@@ -19,12 +19,27 @@ const context: InteractionContext = {
 };
 
 describe("buildGuildScheduleEmbed", () => {
-  it("builds the labeled My Sched button used by button-click logs", () => {
-    expect(buildMyScheduleButtonRow().toJSON()).toMatchObject({
+  it("builds four labeled primary personal action buttons for schedule output", () => {
+    expect(buildScheduleActionRow().toJSON()).toMatchObject({
       components: [
         {
           custom_id: "my-sched",
           label: "My Sched",
+          style: ButtonStyle.Primary,
+        },
+        {
+          custom_id: "my-payout-status",
+          label: "My Payout Status",
+          style: ButtonStyle.Primary,
+        },
+        {
+          custom_id: "my-cooldowns",
+          label: "My Cooldowns",
+          style: ButtonStyle.Primary,
+        },
+        {
+          custom_id: "help",
+          label: "Help",
           style: ButtonStyle.Primary,
         },
       ],

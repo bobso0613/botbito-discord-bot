@@ -4,10 +4,46 @@ import {
   InteractionContextType,
   MessageFlags,
   SlashCommandBuilder,
+  type ButtonInteraction,
   type ChatInputCommandInteraction,
 } from "discord.js";
 import { COMMAND_GUIDE } from "../constants/index.js";
 import type { Command } from "../types/command.js";
+
+type HelpInteraction = ChatInputCommandInteraction | ButtonInteraction;
+
+/** Sends the private command guide for a slash-command or button interaction. */
+export const sendHelp = async (interaction: HelpInteraction): Promise<void> => {
+  const embed = new EmbedBuilder()
+    .setTitle("Command Guide")
+    .setColor(0x5865f2)
+    .addFields(
+      COMMAND_GUIDE.flatMap((command) => {
+        const fields = [
+          {
+            name: `${command.emoji} \`${command.name}\``,
+            value: command.description,
+          },
+        ];
+        if (command.parameters && command.parameters.length > 0) {
+          fields.push({
+            name: "Parameters",
+            value: command.parameters
+              .map(
+                (parameter) =>
+                  `• **${parameter.name}** ${parameter.required ? "(required)" : "(optional)"}: ${parameter.description}`,
+              )
+              .join("\n"),
+          });
+        }
+        return fields;
+      }),
+    )
+    .setThumbnail(interaction.client.user?.avatarURL() || null)
+    .setTimestamp();
+
+  await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+};
 
 export const helpCommand: Command = {
   data: new SlashCommandBuilder()
@@ -19,38 +55,6 @@ export const helpCommand: Command = {
       InteractionContextType.BotDM,
     ) as SlashCommandBuilder,
   execute: async (interaction: ChatInputCommandInteraction) => {
-    const embed = new EmbedBuilder()
-      .setTitle("Command Guide")
-      .setColor(0x5865f2)
-      .addFields(
-        COMMAND_GUIDE.flatMap((command) => {
-          const fields = [
-            {
-              name: `${command.emoji} \`${command.name}\``,
-              value: command.description,
-            },
-          ];
-          if (command.parameters && command.parameters.length > 0) {
-            const parameterText = command.parameters
-              .map(
-                (param) =>
-                  `• **${param.name}** ${param.required ? "(required)" : "(optional)"}: ${param.description}`,
-              )
-              .join("\n");
-            fields.push({
-              name: "Parameters",
-              value: parameterText,
-            });
-          }
-          return fields;
-        }),
-      )
-      .setThumbnail(interaction.client.user?.avatarURL() || null)
-      .setTimestamp();
-
-    await interaction.reply({
-      embeds: [embed],
-      flags: MessageFlags.Ephemeral,
-    });
+    await sendHelp(interaction);
   },
 };

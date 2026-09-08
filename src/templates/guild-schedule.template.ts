@@ -28,13 +28,28 @@ const getScheduleStatusWithNote = (schedule: GuildSchedule): string => {
 const personalScheduleLegend = "**__📝 Signed Up / 🪑 Reserve__: **";
 
 export const MY_SCHEDULE_BUTTON_ID = "my-sched";
+export const MY_PAYOUT_STATUS_BUTTON_ID = "my-payout-status";
+export const MY_COOLDOWNS_BUTTON_ID = "my-cooldowns";
+export const HELP_BUTTON_ID = "help";
 
-/** Builds the button that lets a member request their personal schedule by DM. */
-export const buildMyScheduleButtonRow = (): ActionRowBuilder<ButtonBuilder> =>
+/** Builds the four primary personal action buttons shown with guild schedule output. */
+export const buildScheduleActionRow = (): ActionRowBuilder<ButtonBuilder> =>
   new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId(MY_SCHEDULE_BUTTON_ID)
       .setLabel("My Sched")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId(MY_PAYOUT_STATUS_BUTTON_ID)
+      .setLabel("My Payout Status")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId(MY_COOLDOWNS_BUTTON_ID)
+      .setLabel("My Cooldowns")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId(HELP_BUTTON_ID)
+      .setLabel("Help")
       .setStyle(ButtonStyle.Primary),
   );
 

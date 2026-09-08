@@ -13,9 +13,17 @@ import {
   type ChatInputCommandInteraction,
 } from "discord.js";
 import { commands } from "./commands/index.js";
+import { sendHelp } from "./commands/help.command.js";
+import { sendMyCooldowns } from "./commands/mycooldowns.command.js";
 import { sendMySchedule } from "./commands/mysched.command.js";
+import { sendPayout } from "./commands/payout.command.js";
 import { registerGuildScheduleAnnouncementListener } from "./services/guild-schedule-announcement.service.js";
-import { MY_SCHEDULE_BUTTON_ID } from "./templates/guild-schedule.template.js";
+import {
+  HELP_BUTTON_ID,
+  MY_COOLDOWNS_BUTTON_ID,
+  MY_PAYOUT_STATUS_BUTTON_ID,
+  MY_SCHEDULE_BUTTON_ID,
+} from "./templates/guild-schedule.template.js";
 import { logger } from "./utils/logger.js";
 
 const token = process.env.DISCORD_TOKEN;
@@ -105,20 +113,32 @@ client.on(Events.GuildCreate, async (guild) => {
 });
 
 /**
- * Handles slash commands and the My Sched button.
+ * Handles slash commands and primary action buttons on guild schedule output.
  * Button logs include `button`, `buttonLabel`, status, and the standard guild,
  * user, and parameter context; button interactions have an empty parameter list.
  */
 client.on(Events.InteractionCreate, async (interaction) => {
   if (interaction.isButton()) {
-    if (interaction.customId !== MY_SCHEDULE_BUTTON_ID) return;
+    const buttonActions: Readonly<
+      Record<string, (buttonInteraction: ButtonInteraction) => Promise<void>>
+    > = {
+      [MY_SCHEDULE_BUTTON_ID]: (buttonInteraction) =>
+        sendMySchedule(buttonInteraction),
+      [MY_PAYOUT_STATUS_BUTTON_ID]: (buttonInteraction) =>
+        sendPayout(buttonInteraction, true),
+      [MY_COOLDOWNS_BUTTON_ID]: (buttonInteraction) =>
+        sendMyCooldowns(buttonInteraction),
+      [HELP_BUTTON_ID]: (buttonInteraction) => sendHelp(buttonInteraction),
+    };
+    const buttonAction = buttonActions[interaction.customId];
+    if (!buttonAction) return;
     const buttonLabel =
       "label" in interaction.component
         ? (interaction.component.label ?? null)
         : null;
 
     try {
-      await sendMySchedule(interaction);
+      await buttonAction(interaction);
       logger.log(
         `button=${interaction.customId} buttonLabel=${JSON.stringify(buttonLabel)} status=success guildId=${interaction.guildId ?? "direct-message"} userId=${interaction.user.id} ${getCommandLogContext(interaction)}`,
       );
