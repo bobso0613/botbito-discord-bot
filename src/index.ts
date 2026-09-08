@@ -5,6 +5,7 @@ import {
   Events,
   GatewayIntentBits,
   MessageFlags,
+  Partials,
   REST,
   Routes,
   ActivityType,
@@ -24,6 +25,11 @@ if (!token) {
 const botToken = token;
 logger.log("Bot process started.");
 
+const isDevelopmentEnvironment = process.env.MODE?.toUpperCase() === "DEV";
+const shouldRegisterGuildScheduleAnnouncementListener =
+  !isDevelopmentEnvironment ||
+  process.env.ENABLE_GUILD_SCHEDULE_ANNOUNCEMENTS === "true";
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -31,8 +37,14 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
   ],
+  // Uncached schedule messages need to be partial, or Discord.js drops their edit events entirely.
+  partials: [Partials.Message, Partials.Channel],
 });
-registerGuildScheduleAnnouncementListener(client);
+if (shouldRegisterGuildScheduleAnnouncementListener) {
+  registerGuildScheduleAnnouncementListener(client);
+} else {
+  logger.log("Guild schedule announcement listener is disabled in DEV mode.");
+}
 const commandsByName = new Collection(
   commands.map((command) => [command.data.name, command]),
 );

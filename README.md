@@ -18,11 +18,15 @@ DISCORD_CLIENT_ID=
 GOOGLE_APPLICATION_CREDENTIALS=./private/service-account.json
 GOOGLE_SHEETS_ID=
 PEPEMONEYRAIN_EMOJI_ID=
+MODE=DEV
+ENABLE_GUILD_SCHEDULE_ANNOUNCEMENTS=false
 ```
 
 `GOOGLE_APPLICATION_CREDENTIALS` must point to a Google service-account JSON file. Store that file under `private/`; the directory is excluded from Git. Grant the service account's `client_email` Viewer access to the spreadsheet.
 
 Set `PEPEMONEYRAIN_EMOJI_ID` to the custom animated Discord emoji ID used beside the Claimable payout balance. Use the emoji ID available in the Discord server where the bot is running.
+
+When running `npm run dev` with `MODE=DEV`, automatic guild schedule announcements are disabled unless `ENABLE_GUILD_SCHEDULE_ANNOUNCEMENTS=true` is set in `.env`. This toggle does not affect non-DEV environments, where the listener is always registered.
 
 Create `private/discord_settings.json` to configure the payout guilds, guild schedule sources, and the payout contact:
 
@@ -53,7 +57,7 @@ Create `private/discord_settings.json` to configure the payout guilds, guild sch
 }
 ```
 
-Enable the **Server Members Intent** and **Message Content Intent** in the Discord Developer Portal for the bot application. `/payoutsummary` uses the Server Members Intent to resolve Discord display names from the sheet's Discord tags. The Message Content Intent allows automatic schedule announcements to read schedule embeds from guild message events.
+Enable the **Server Members Intent** and **Message Content Intent** in the Discord Developer Portal for the bot application. `/payoutsummary` uses the Server Members Intent to resolve Discord display names from the sheet's Discord tags. The Message Content Intent allows automatic schedule announcements to read schedule embeds from guild message events. The client also enables the `Message` and `Channel` partials so edits to schedule messages still emit `messageUpdate` after they age out of the client's cache (e.g. following a bot restart); without these, discord.js silently drops update events for uncached messages.
 
 ## Commands 💬
 
@@ -66,6 +70,8 @@ Enable the **Server Members Intent** and **Message Content Intent** in the Disco
 `/guildsched` 🗓️ lists active runs from the configured guild schedule categories. It is available to all members of the guild. The bot includes only signup channels the invoking member can view and read, uses the newest active schedule per channel, and orders results earliest to latest.
 
 When a configured schedule bot posts or updates a schedule response in one of the configured `categoryIds` channels, the bot automatically refreshes every `scheduleTextChannelIds` channel. It deletes the existing announcement messages and posts a public announcement equivalent to `/guildsched public:true forannouncementonly:true`. The listener compares the newest schedule-bot response with the previous response, including `Your Time: TBD` and plain postpone responses, so new schedule-changing commands do not require code changes.
+
+The bot also refreshes announcements when a schedule response's run title (embed title) changes, or when a schedule source channel itself is renamed. Since these two triggers don't change the scheduled time, they only refresh the announcement when the run's previous title, or the channel's previous name, is currently present in the latest posted announcement; this avoids refreshing for runs that haven't been publicly announced yet. Title changes are detected on both edits and brand-new schedule-bot messages, since some schedule bots reply to a rename command with a new message instead of editing the previous one. Discord doesn't always cache a message's pre-edit content (e.g. after the bot restarts or the message ages out of cache), so when the previous title can't be read from the edit event, or there is no previous message at all, the bot instead compares the new title against the title currently announced for that schedule channel.
 
 Automatic announcements identify the latest updated run with the following format:
 

@@ -2,26 +2,34 @@ import { describe, expect, it, jest } from "@jest/globals";
 import type { Message } from "discord.js";
 import { DISCORD_SETTINGS } from "../config/discord-settings.js";
 import {
+  getAnnouncedTitleForChannel,
   getLatestSentScheduleTimestamp,
   getScheduleTimestamp,
   isClearedScheduleMessage,
   isGuildScheduleMessage,
   isGuildScheduleSourceMessage,
   isGuildScheduleTimestampChanged,
+  isIdentifierAnnounced,
+  isTitleChangeConfirmed,
 } from "./guild-schedule-announcement.service.js";
 
 const guildId = Object.keys(DISCORD_SETTINGS.guildScheduleSourceByGuild)[0];
 const categoryId =
   DISCORD_SETTINGS.guildScheduleSourceByGuild[guildId].categoryIds[0];
+const scheduleTextChannelId =
+  DISCORD_SETTINGS.guildScheduleSourceByGuild[guildId]
+    .scheduleTextChannelIds[0];
 
 const createMessage = ({
   authorId = DISCORD_SETTINGS.guildScheduleBotId,
   parentId = categoryId,
   timestamp = "1799177400",
+  title = "Monday Sealed Shrine",
 }: {
   authorId?: string;
   parentId?: string;
   timestamp?: string | null;
+  title?: string;
 } = {}): Message =>
   ({
     guildId,
@@ -32,7 +40,7 @@ const createMessage = ({
     },
     embeds: [
       {
-        title: "Monday Sealed Shrine",
+        title,
         description:
           timestamp === null
             ? "Your Time: TBD"
@@ -214,5 +222,179 @@ describe("isGuildScheduleChangeMessage", () => {
     await expect(getLatestSentScheduleTimestamp(sourceMessage)).resolves.toBe(
       undefined,
     );
+  });
+
+  it("finds the announced title for a channel from the live announcement", async () => {
+    const channelUrl = `https://discord.com/channels/${guildId}/source-channel-id`;
+    const guild = {
+      channels: {
+        fetch: jest.fn().mockResolvedValue({
+          type: 0,
+          messages: {
+            fetch: jest.fn().mockResolvedValue({
+              first: () => ({
+                embeds: [
+                  {
+                    description: `**[Monday Sealed Shrine](${channelUrl})**\n<t:1:F> (<t:1:R>)\n↪ [#source-channel](${channelUrl})`,
+                  },
+                ],
+              }),
+            } as never),
+          },
+        } as never),
+      },
+    } as unknown as NonNullable<Message["guild"]>;
+
+    await expect(
+      getAnnouncedTitleForChannel(guild, [scheduleTextChannelId], channelUrl),
+    ).resolves.toBe("Monday Sealed Shrine");
+  });
+
+  it("returns undefined when a channel has no entry in the live announcement", async () => {
+    const channelUrl = `https://discord.com/channels/${guildId}/source-channel-id`;
+    const guild = {
+      channels: {
+        fetch: jest.fn().mockResolvedValue({
+          type: 0,
+          messages: {
+            fetch: jest.fn().mockResolvedValue({
+              first: () => ({
+                embeds: [
+                  {
+                    description:
+                      "**[Other Run](https://discord.com/channels/other/other)**",
+                  },
+                ],
+              }),
+            } as never),
+          },
+        } as never),
+      },
+    } as unknown as NonNullable<Message["guild"]>;
+
+    await expect(
+      getAnnouncedTitleForChannel(guild, [scheduleTextChannelId], channelUrl),
+    ).resolves.toBeUndefined();
+  });
+
+  it("finds an identifier present in the latest announcement", async () => {
+    const guild = {
+      channels: {
+        fetch: jest.fn().mockResolvedValue({
+          type: 0,
+          messages: {
+            fetch: jest.fn().mockResolvedValue({
+              first: () => ({
+                embeds: [
+                  {
+                    description: "**[Monday Sealed Shrine](url)**",
+                    fields: [],
+                  },
+                ],
+              }),
+            } as never),
+          },
+        } as never),
+      },
+    } as unknown as NonNullable<Message["guild"]>;
+
+    await expect(
+      isIdentifierAnnounced(
+        guild,
+        [scheduleTextChannelId],
+        "Monday Sealed Shrine",
+      ),
+    ).resolves.toBe(true);
+  });
+
+  it("does not find an identifier absent from the latest announcement", async () => {
+    const guild = {
+      channels: {
+        fetch: jest.fn().mockResolvedValue({
+          type: 0,
+          messages: {
+            fetch: jest.fn().mockResolvedValue({
+              first: () => ({
+                embeds: [{ description: "**[Other Run](url)**", fields: [] }],
+              }),
+            } as never),
+          },
+        } as never),
+      },
+    } as unknown as NonNullable<Message["guild"]>;
+
+    await expect(
+      isIdentifierAnnounced(
+        guild,
+        [scheduleTextChannelId],
+        "Monday Sealed Shrine",
+      ),
+    ).resolves.toBe(false);
+  });
+
+  it("confirms a title change when the schedule bot posts a brand-new message instead of editing", async () => {
+    const channelUrl = `https://discord.com/channels/${guildId}/source-channel-id`;
+    const guild = {
+      channels: {
+        fetch: jest.fn().mockResolvedValue({
+          type: 0,
+          messages: {
+            fetch: jest.fn().mockResolvedValue({
+              first: () => ({
+                embeds: [
+                  {
+                    description: `**[Monday Sealed Shrine](${channelUrl})**\n<t:1:F> (<t:1:R>)\n↪ [#source-channel](${channelUrl})`,
+                  },
+                ],
+              }),
+            } as never),
+          },
+        } as never),
+      },
+    } as unknown as NonNullable<Message["guild"]>;
+    const newMessage = {
+      ...createMessage({ title: "Tuesday Sealed Shrine" }),
+      guild,
+      channel: {
+        isTextBased: () => true,
+        parentId: categoryId,
+        id: "source-channel-id",
+      },
+    } as unknown as Message;
+
+    await expect(isTitleChangeConfirmed(newMessage)).resolves.toBe(true);
+  });
+
+  it("does not confirm a title change for a channel with no live announcement entry", async () => {
+    const guild = {
+      channels: {
+        fetch: jest.fn().mockResolvedValue({
+          type: 0,
+          messages: {
+            fetch: jest.fn().mockResolvedValue({
+              first: () => ({
+                embeds: [
+                  {
+                    description:
+                      "**[Other Run](https://discord.com/channels/other/other)**",
+                  },
+                ],
+              }),
+            } as never),
+          },
+        } as never),
+      },
+    } as unknown as NonNullable<Message["guild"]>;
+    const newMessage = {
+      ...createMessage({ title: "Tuesday Sealed Shrine" }),
+      guild,
+      channel: {
+        isTextBased: () => true,
+        parentId: categoryId,
+        id: "source-channel-id",
+      },
+    } as unknown as Message;
+
+    await expect(isTitleChangeConfirmed(newMessage)).resolves.toBe(false);
   });
 });

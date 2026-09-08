@@ -23,7 +23,8 @@ const getEmbedText = (message: Message): string =>
     .filter((value): value is string => Boolean(value))
     .join("\n");
 
-const getScheduleTitle = (message: Message): string | undefined =>
+/** Returns the run title from a schedule response embed. */
+export const getScheduleTitle = (message: Message): string | undefined =>
   message.embeds.find((embed) => Boolean(embed.title))?.title ?? undefined;
 
 /** Returns the scheduled Unix timestamp from a schedule response embed. */
@@ -187,7 +188,118 @@ const refreshGuildScheduleAnnouncement = async (
   }
 };
 
-/** Registers automatic public schedule announcements for schedule changes. */
+/** Checks whether an identifier (run title or channel name) appears in the latest announcement. */
+export const isIdentifierAnnounced = async (
+  guild: NonNullable<Message["guild"]>,
+  scheduleTextChannelIds: readonly string[],
+  identifier: string,
+): Promise<boolean> => {
+  for (const channelId of scheduleTextChannelIds) {
+    const channel = await guild.channels.fetch(channelId).catch(() => null);
+    if (!channel || channel.type !== ChannelType.GuildText) continue;
+
+    const messages = await channel.messages.fetch({ limit: 1 });
+    const latestText = messages
+      .first()
+      ?.embeds.flatMap((embed) => [
+        embed.description,
+        ...embed.fields.flatMap((field) => [field.name, field.value]),
+      ])
+      .filter((value): value is string => Boolean(value))
+      .join("\n");
+
+    if (latestText?.includes(identifier)) return true;
+  }
+
+  return false;
+};
+
+/** Returns the run title currently announced for a specific schedule channel, if any. */
+export const getAnnouncedTitleForChannel = async (
+  guild: NonNullable<Message["guild"]>,
+  scheduleTextChannelIds: readonly string[],
+  channelUrl: string,
+): Promise<string | undefined> => {
+  for (const channelId of scheduleTextChannelIds) {
+    const channel = await guild.channels.fetch(channelId).catch(() => null);
+    if (!channel || channel.type !== ChannelType.GuildText) continue;
+
+    const messages = await channel.messages.fetch({ limit: 1 });
+    const description = messages.first()?.embeds[0]?.description;
+    const block = description
+      ?.split("\n\n")
+      .find((entry) => entry.includes(`(${channelUrl})`));
+    const title = block?.match(/\*\*\[(.+?)\]\(/)?.[1];
+    if (title) return title;
+  }
+
+  return undefined;
+};
+
+const getChannelUrl = (message: Message): string =>
+  `https://discord.com/channels/${message.guildId}/${message.channel.id}`;
+
+/**
+ * Determines whether a schedule response's run title changed in a way that should
+ * refresh the public announcement.
+ * The schedule bot may reply to a rename command with a brand-new message instead of
+ * editing the previous one, so this also runs for message creation (no previousMessage).
+ * Prefers comparing the previous message's cached title, falling back to comparing
+ * against the live announcement when there's no previous message or Discord didn't
+ * cache its pre-edit embed (e.g. the message aged out of the client's message cache).
+ * Either way, the change is only confirmed when the old title is currently announced.
+ */
+export const isTitleChangeConfirmed = async (
+  message: Message,
+  previousMessage?: Message,
+): Promise<boolean> => {
+  const currentTitle = getScheduleTitle(message);
+  if (!currentTitle || !message.guild || !message.guildId) return false;
+
+  const source = DISCORD_SETTINGS.guildScheduleSourceByGuild[message.guildId];
+  if (!source) return false;
+
+  const previousTitle = previousMessage
+    ? getScheduleTitle(previousMessage)
+    : undefined;
+  if (previousTitle) {
+    if (previousTitle === currentTitle) return false;
+    return isIdentifierAnnounced(
+      message.guild,
+      source.scheduleTextChannelIds,
+      previousTitle,
+    );
+  }
+
+  const announcedTitle = await getAnnouncedTitleForChannel(
+    message.guild,
+    source.scheduleTextChannelIds,
+    getChannelUrl(message),
+  );
+  return Boolean(announcedTitle && announcedTitle !== currentTitle);
+};
+
+/** Gets the newest schedule-bot message posted in a channel, if any. */
+const getNewestGuildScheduleMessage = async (
+  channel: TextChannel,
+): Promise<Message | undefined> => {
+  const messages = await channel.messages.fetch({ limit: 100 });
+  return Array.from(messages.values())
+    .filter(
+      (candidate) =>
+        candidate.author.id === DISCORD_SETTINGS.guildScheduleBotId,
+    )
+    .sort(
+      (first, second) => second.createdTimestamp - first.createdTimestamp,
+    )[0];
+};
+
+/**
+ * Registers automatic public schedule announcements for schedule changes.
+ * Refreshes announcements on scheduled-time changes, run title changes, and
+ * schedule channel renames, gating title/rename triggers on the old title or
+ * channel name currently being present in the announcement.
+ */
 export const registerGuildScheduleAnnouncementListener = (
   client: Client,
 ): void => {
@@ -195,8 +307,9 @@ export const registerGuildScheduleAnnouncementListener = (
     message: Message,
     previousMessage?: Message,
   ): Promise<void> => {
-    const timestamp = getScheduleTimestamp(message);
     if (!isGuildScheduleSourceMessage(message)) return;
+
+    const timestamp = getScheduleTimestamp(message);
     if (!timestamp && !previousMessage && !isClearedScheduleMessage(message)) {
       return;
     }
@@ -204,12 +317,44 @@ export const registerGuildScheduleAnnouncementListener = (
     const previousTimestamp = previousMessage
       ? getScheduleTimestamp(previousMessage)
       : await getLatestSentScheduleTimestamp(message);
-    if (previousTimestamp === timestamp && !isClearedScheduleMessage(message)) {
-      return;
-    }
+    const timestampChanged =
+      previousTimestamp !== timestamp || isClearedScheduleMessage(message);
+
+    const titleChanged = !timestampChanged
+      ? await isTitleChangeConfirmed(message, previousMessage)
+      : false;
+
+    if (!timestampChanged && !titleChanged) return;
 
     try {
       await refreshGuildScheduleAnnouncement(message);
+    } catch (error) {
+      logger.error("Failed to refresh guild schedule announcement:", error);
+    }
+  };
+
+  const handleChannelRename = async (
+    oldChannel: TextChannel,
+    newChannel: TextChannel,
+  ): Promise<void> => {
+    if (oldChannel.name === newChannel.name || !newChannel.guildId) return;
+
+    const source =
+      DISCORD_SETTINGS.guildScheduleSourceByGuild[newChannel.guildId];
+    if (!source?.categoryIds.includes(newChannel.parentId ?? "")) return;
+
+    const wasAnnounced = await isIdentifierAnnounced(
+      newChannel.guild,
+      source.scheduleTextChannelIds,
+      oldChannel.name,
+    );
+    if (!wasAnnounced) return;
+
+    const scheduleMessage = await getNewestGuildScheduleMessage(newChannel);
+    if (!scheduleMessage) return;
+
+    try {
+      await refreshGuildScheduleAnnouncement(scheduleMessage);
     } catch (error) {
       logger.error("Failed to refresh guild schedule announcement:", error);
     }
@@ -220,5 +365,14 @@ export const registerGuildScheduleAnnouncementListener = (
     const previousMessage = oldMessage as Message;
     const updatedMessage = newMessage as Message;
     void handleMessage(updatedMessage, previousMessage);
+  });
+  client.on("channelUpdate", (oldChannel, newChannel) => {
+    if (
+      oldChannel.type !== ChannelType.GuildText ||
+      newChannel.type !== ChannelType.GuildText
+    ) {
+      return;
+    }
+    void handleChannelRename(oldChannel, newChannel);
   });
 };
