@@ -2,7 +2,9 @@ import { describe, expect, it, jest } from "@jest/globals";
 import type { Message } from "discord.js";
 import { DISCORD_SETTINGS } from "../config/discord-settings.js";
 import {
+  buildGuildScheduleRefreshLogMessage,
   getAnnouncedTitleForChannel,
+  getGuildScheduleRefreshTrigger,
   getLatestSentScheduleTimestamp,
   getScheduleTimestamp,
   isClearedScheduleMessage,
@@ -23,11 +25,13 @@ const scheduleTextChannelId =
 const createMessage = ({
   authorId = DISCORD_SETTINGS.guildScheduleBotId,
   parentId = categoryId,
+  channelId = "source-channel-id",
   timestamp = "1799177400",
   title = "Monday Sealed Shrine",
 }: {
   authorId?: string;
   parentId?: string;
+  channelId?: string;
   timestamp?: string | null;
   title?: string;
 } = {}): Message =>
@@ -37,6 +41,7 @@ const createMessage = ({
     channel: {
       isTextBased: () => true,
       parentId,
+      id: channelId,
     },
     embeds: [
       {
@@ -63,10 +68,49 @@ describe("isGuildScheduleChangeMessage", () => {
     ).toBe(false);
   });
 
+  it("ignores responses in configured announcement channels", () => {
+    expect(
+      isGuildScheduleMessage(
+        createMessage({ channelId: scheduleTextChannelId }),
+      ),
+    ).toBe(false);
+  });
+
   it("ignores schedule-shaped messages from other authors", () => {
     expect(
       isGuildScheduleMessage(createMessage({ authorId: "another-bot" })),
     ).toBe(false);
+  });
+
+  it("identifies a timestamp change as the refresh trigger", async () => {
+    await expect(
+      getGuildScheduleRefreshTrigger(
+        createMessage({ timestamp: "1799181000" }),
+        createMessage({ timestamp: "1799177400" }),
+      ),
+    ).resolves.toEqual({ type: "timestamp-change" });
+  });
+
+  it("does not trigger a refresh from a partial old message", async () => {
+    await expect(
+      getGuildScheduleRefreshTrigger(
+        createMessage({ timestamp: "1799181000" }),
+        { ...createMessage(), embeds: [] } as unknown as Message,
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it("includes trigger details in the schedule refresh log", () => {
+    expect(
+      buildGuildScheduleRefreshLogMessage(
+        createMessage(),
+        { type: "channel-rename", previousChannelName: "old-shrine" },
+        ["schedule"],
+        [{ channelName: "new-shrine", timestamp: "<t:1:F>" }],
+      ),
+    ).toContain(
+      'triggerReason="channel-rename" triggerChannel="source-channel-id" triggerRunTitle="Monday Sealed Shrine" previousChannelName="old-shrine"',
+    );
   });
 
   it("extracts the timestamp from a schedule response", () => {
@@ -91,7 +135,7 @@ describe("isGuildScheduleChangeMessage", () => {
     ).toBe(false);
   });
 
-  it("ignores an edited schedule response with no cached old embed", () => {
+  it("does not refresh a timestamp when an update has no cached old embed", () => {
     expect(
       isGuildScheduleTimestampChanged(
         { ...createMessage(), embeds: [] } as unknown as Message,

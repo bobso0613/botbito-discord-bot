@@ -37,7 +37,10 @@ export const getScheduleTimestamp = (message: Message): string | undefined => {
 export const isClearedScheduleMessage = (message: Message): boolean =>
   clearedSchedulePattern.test(getEmbedText(message));
 
-/** Returns whether a message is from the configured schedule bot in a source category. */
+/**
+ * Returns whether a message is from the configured schedule bot in a source category.
+ * Configured announcement channels are excluded even when placed in a source category.
+ */
 export const isGuildScheduleSourceMessage = (message: Message): boolean => {
   if (
     !message.guildId ||
@@ -49,7 +52,10 @@ export const isGuildScheduleSourceMessage = (message: Message): boolean => {
   }
 
   const source = DISCORD_SETTINGS.guildScheduleSourceByGuild[message.guildId];
-  return Boolean(source?.categoryIds.includes(message.channel.parentId ?? ""));
+  return Boolean(
+    source?.categoryIds.includes(message.channel.parentId ?? "") &&
+    !source.scheduleTextChannelIds.includes(message.channel.id),
+  );
 };
 
 /** Returns whether a message is a schedule response with a timestamp. */
@@ -60,7 +66,11 @@ export const isGuildScheduleMessage = (message: Message): boolean =>
 /** Maintains compatibility with callers using the previous predicate name. */
 export const isGuildScheduleChangeMessage = isGuildScheduleMessage;
 
-/** Returns whether an edited schedule response changed its scheduled time. */
+/**
+ * Returns whether an edited schedule response changed its scheduled time.
+ * Returns false when the old message has no cached timestamp, avoiding false
+ * refreshes from partial Discord update payloads.
+ */
 export const isGuildScheduleTimestampChanged = (
   oldMessage: Message,
   newMessage: Message,
@@ -125,8 +135,36 @@ const deleteChannelMessages = async (channel: TextChannel): Promise<void> => {
   }
 };
 
+export type GuildScheduleRefreshTrigger =
+  | { type: "timestamp-change" }
+  | { type: "title-change" }
+  | { type: "channel-rename"; previousChannelName: string };
+
+/** Builds the log message emitted when an automatic schedule refresh starts. */
+export const buildGuildScheduleRefreshLogMessage = (
+  message: Message,
+  trigger: GuildScheduleRefreshTrigger,
+  scheduleChannels: readonly string[],
+  newTimes: ReadonlyArray<{ channelName: string; timestamp: string }>,
+): string =>
+  [
+    "guild schedule change hit",
+    `triggerReason=${JSON.stringify(trigger.type)}`,
+    `triggerChannel=${JSON.stringify(
+      "name" in message.channel ? message.channel.name : message.channel.id,
+    )}`,
+    `triggerRunTitle=${JSON.stringify(getScheduleTitle(message) ?? null)}`,
+    `previousChannelName=${JSON.stringify(
+      trigger.type === "channel-rename" ? trigger.previousChannelName : null,
+    )}`,
+    `guildName=${JSON.stringify(message.guild?.name ?? null)}`,
+    `scheduleChannels=${JSON.stringify(scheduleChannels)}`,
+    `newTimes=${JSON.stringify(newTimes)}`,
+  ].join(" ");
+
 const refreshGuildScheduleAnnouncement = async (
   message: Message,
+  trigger: GuildScheduleRefreshTrigger,
 ): Promise<void> => {
   if (!message.guild || !message.guildId) return;
 
@@ -168,18 +206,15 @@ const refreshGuildScheduleAnnouncement = async (
   }
 
   logger.log(
-    "guild schedule change hit " +
-      `triggerChannel=${JSON.stringify(
-        "name" in message.channel ? message.channel.name : message.channel.id,
-      )} ` +
-      `guildName=${JSON.stringify(message.guild.name)} ` +
-      `scheduleChannels=${JSON.stringify(announcementChannels.map(({ name }) => name))} ` +
-      `newTimes=${JSON.stringify(
-        schedules.map(({ channelName, timestamp }) => ({
-          channelName,
-          timestamp,
-        })),
-      )}`,
+    buildGuildScheduleRefreshLogMessage(
+      message,
+      trigger,
+      announcementChannels.map(({ name }) => name),
+      schedules.map(({ channelName, timestamp }) => ({
+        channelName,
+        timestamp,
+      })),
+    ),
   );
 
   for (const channel of announcementChannels) {
@@ -238,6 +273,35 @@ export const getAnnouncedTitleForChannel = async (
 
 const getChannelUrl = (message: Message): string =>
   `https://discord.com/channels/${message.guildId}/${message.channel.id}`;
+
+/**
+ * Returns the automatic-refresh reason for a source message, if it changed a
+ * schedule timestamp or title. Partial update payloads without an old timestamp
+ * do not cause a timestamp refresh.
+ */
+export const getGuildScheduleRefreshTrigger = async (
+  message: Message,
+  previousMessage?: Message,
+): Promise<GuildScheduleRefreshTrigger | undefined> => {
+  if (!isGuildScheduleSourceMessage(message)) return undefined;
+
+  const timestamp = getScheduleTimestamp(message);
+  if (!timestamp && !previousMessage && !isClearedScheduleMessage(message)) {
+    return undefined;
+  }
+
+  const previousTimestamp = previousMessage
+    ? getScheduleTimestamp(previousMessage)
+    : await getLatestSentScheduleTimestamp(message);
+  const timestampChanged = previousMessage
+    ? isGuildScheduleTimestampChanged(previousMessage, message)
+    : previousTimestamp !== timestamp || isClearedScheduleMessage(message);
+  if (timestampChanged) return { type: "timestamp-change" };
+
+  return (await isTitleChangeConfirmed(message, previousMessage))
+    ? { type: "title-change" }
+    : undefined;
+};
 
 /**
  * Determines whether a schedule response's run title changed in a way that should
@@ -307,27 +371,14 @@ export const registerGuildScheduleAnnouncementListener = (
     message: Message,
     previousMessage?: Message,
   ): Promise<void> => {
-    if (!isGuildScheduleSourceMessage(message)) return;
-
-    const timestamp = getScheduleTimestamp(message);
-    if (!timestamp && !previousMessage && !isClearedScheduleMessage(message)) {
-      return;
-    }
-
-    const previousTimestamp = previousMessage
-      ? getScheduleTimestamp(previousMessage)
-      : await getLatestSentScheduleTimestamp(message);
-    const timestampChanged =
-      previousTimestamp !== timestamp || isClearedScheduleMessage(message);
-
-    const titleChanged = !timestampChanged
-      ? await isTitleChangeConfirmed(message, previousMessage)
-      : false;
-
-    if (!timestampChanged && !titleChanged) return;
+    const trigger = await getGuildScheduleRefreshTrigger(
+      message,
+      previousMessage,
+    );
+    if (!trigger) return;
 
     try {
-      await refreshGuildScheduleAnnouncement(message);
+      await refreshGuildScheduleAnnouncement(message, trigger);
     } catch (error) {
       logger.error("Failed to refresh guild schedule announcement:", error);
     }
@@ -354,7 +405,10 @@ export const registerGuildScheduleAnnouncementListener = (
     if (!scheduleMessage) return;
 
     try {
-      await refreshGuildScheduleAnnouncement(scheduleMessage);
+      await refreshGuildScheduleAnnouncement(scheduleMessage, {
+        type: "channel-rename",
+        previousChannelName: oldChannel.name,
+      });
     } catch (error) {
       logger.error("Failed to refresh guild schedule announcement:", error);
     }
