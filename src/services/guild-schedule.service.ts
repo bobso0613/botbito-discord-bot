@@ -13,6 +13,7 @@ import type {
 } from "../types/guild-schedule.js";
 
 const scheduleTimestampPattern = /Your\s+Time:\s*(<t:(\d+):F>)/i;
+const scheduleTimeLabelPattern = /Your\s+Time:/i;
 
 /** Escapes a value for literal use in a regular expression. */
 const escapeRegularExpression = (value: string): string =>
@@ -103,7 +104,11 @@ const isAccessibleScheduleChannel = (
       PermissionFlagsBits.ReadMessageHistory,
     ]) === true;
 
-/** Gets the newest active schedule posted in a text channel. */
+/**
+ * Gets the newest active schedule from the configured schedule bot's recent replies.
+ * Replies without a `Your Time:` label, such as command confirmations or cancelled
+ * interactions, are ignored. A reply with `Your Time: TBD` clears an older schedule.
+ */
 const getNewestChannelSchedule = async (
   channel: TextChannel,
   member: GuildMember,
@@ -111,44 +116,54 @@ const getNewestChannelSchedule = async (
   isRoleRestricted?: boolean,
   includePast = false,
 ): Promise<GuildSchedule | undefined> => {
-  const messages = await channel.messages.fetch({ limit: 100 });
   const displayNamePattern = escapeRegularExpression(member.displayName);
-  const newestScheduleMessage = Array.from(messages.values())
-    .sort((first, second) => second.createdTimestamp - first.createdTimestamp)
-    .find(
+  const messages = await channel.messages.fetch({ limit: 100 });
+  const scheduleMessages = Array.from(messages.values())
+    .filter(
       (message) => message.author.id === DISCORD_SETTINGS.guildScheduleBotId,
-    );
+    )
+    .sort((first, second) => second.createdTimestamp - first.createdTimestamp);
 
-  if (!newestScheduleMessage) return undefined;
+  for (const message of scheduleMessages) {
+    const schedule = message.embeds.flatMap((embed) => {
+      const embedText = getEmbedText(embed);
+      const timestamp = getActiveScheduleTimestamp(
+        embedText,
+        timeWindow,
+        includePast,
+      );
+      const isReserve = isMemberReserve(embedText, displayNamePattern);
+      return timestamp && embed.title
+        ? [
+            {
+              title: embed.title,
+              timestamp,
+              channelName: channel.name,
+              channelUrl: channel.url,
+              isSignedUp:
+                !isReserve && isMemberSignedUp(embedText, displayNamePattern),
+              isReserve,
+              charNote: getMemberCharNote(embedText, displayNamePattern),
+              isRoleRestricted,
+            },
+          ]
+        : [];
+    })[0];
+    if (schedule) return schedule;
 
-  return newestScheduleMessage.embeds.flatMap((embed) => {
-    const embedText = getEmbedText(embed);
-    const timestamp = getActiveScheduleTimestamp(
-      embedText,
-      timeWindow,
-      includePast,
-    );
-    const isReserve = isMemberReserve(embedText, displayNamePattern);
-    return timestamp && embed.title
-      ? [
-          {
-            title: embed.title,
-            timestamp,
-            channelName: channel.name,
-            channelUrl: channel.url,
-            isSignedUp:
-              !isReserve && isMemberSignedUp(embedText, displayNamePattern),
-            isReserve,
-            charNote: getMemberCharNote(embedText, displayNamePattern),
-            isRoleRestricted,
-          },
-        ]
-      : [];
-  })[0];
+    const embedText = message.embeds.map(getEmbedText).join("\n");
+    if (scheduleTimeLabelPattern.test(embedText)) {
+      return undefined;
+    }
+  }
+
+  return undefined;
 };
 
 /**
- * Lists accessible active schedules, keeping the newest message per channel.
+ * Lists accessible active schedules, keeping the newest active schedule per channel.
+ * Time-less schedule-bot replies are ignored, while a newer `Your Time: TBD` embed
+ * clears that channel's older schedule.
  * Results are ordered from earliest to latest scheduled time.
  * When a time window is provided, schedules inside that window are included even
  * when their scheduled time has already passed.

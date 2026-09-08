@@ -1,5 +1,6 @@
 import {
   ApplicationIntegrationType,
+  ButtonInteraction,
   InteractionContextType,
   MessageFlags,
   SlashCommandBuilder,
@@ -26,6 +27,8 @@ import {
   getScheduleWeekWindow,
 } from "../utils/guild-schedule.js";
 import { getInteractionContext } from "../utils/interaction-context.js";
+
+type MyScheduleInteraction = ChatInputCommandInteraction | ButtonInteraction;
 
 /**
  * Gets active schedules in a configured schedule guild that the member can see.
@@ -60,6 +63,53 @@ const getAccessibleGuildSchedules = async (
 };
 
 /** Sends signed-up and reserve schedules across the member's guilds by DM. */
+export const sendMySchedule = async (
+  interaction: MyScheduleInteraction,
+  scheduleWeekWindow?: GuildScheduleTimeWindow,
+  grouping: MyScheduleGrouping = "date",
+): Promise<void> => {
+  await interaction.deferReply(
+    interaction.guildId ? { flags: MessageFlags.Ephemeral } : {},
+  );
+
+  const schedulesByGuild = await Promise.all(
+    GUILD_SCHEDULE_GUILD_IDS.map(async (guildId) => {
+      const guild = interaction.client.guilds.cache.get(guildId);
+      if (!guild) return [];
+
+      try {
+        const member = await guild.members.fetch(interaction.user.id);
+        return getAccessibleGuildSchedules(guild, member, scheduleWeekWindow);
+      } catch {
+        return [];
+      }
+    }),
+  );
+  const schedules = schedulesByGuild
+    .flat()
+    .sort(
+      (first, second) =>
+        getScheduleUnixSeconds(first) - getScheduleUnixSeconds(second),
+    );
+  const context = getInteractionContext(interaction);
+  const embed = buildMyScheduleEmbed(
+    schedules,
+    context,
+    grouping,
+    scheduleWeekWindow ? getScheduleWeekTitle(scheduleWeekWindow) : undefined,
+  );
+
+  try {
+    await interaction.user.send({ embeds: [embed] });
+    await interaction.editReply({ content: "Scheduled sent to your DM" });
+  } catch {
+    await interaction.editReply({
+      content: "I couldn't send your schedules by DM.",
+    });
+  }
+};
+
+/** Sends signed-up and reserve schedules across the member's guilds by DM. */
 export const mySchedCommand: Command = {
   data: new SlashCommandBuilder()
     .setName("mysched")
@@ -84,7 +134,6 @@ export const mySchedCommand: Command = {
         ),
     ) as SlashCommandBuilder,
   execute: async (interaction: ChatInputCommandInteraction) => {
-    const isGuildInvocation = Boolean(interaction.guildId);
     const thisWeekOnly =
       interaction.options.getBoolean("thisweekonly") ?? false;
     const scheduleWeekWindow = thisWeekOnly
@@ -95,44 +144,6 @@ export const mySchedCommand: Command = {
         "grouping",
       ) as MyScheduleGrouping | null) ?? "date";
 
-    await interaction.deferReply(
-      isGuildInvocation ? { flags: MessageFlags.Ephemeral } : {},
-    );
-
-    const schedulesByGuild = await Promise.all(
-      GUILD_SCHEDULE_GUILD_IDS.map(async (guildId) => {
-        const guild = interaction.client.guilds.cache.get(guildId);
-        if (!guild) return [];
-
-        try {
-          const member = await guild.members.fetch(interaction.user.id);
-          return getAccessibleGuildSchedules(guild, member, scheduleWeekWindow);
-        } catch {
-          return [];
-        }
-      }),
-    );
-    const schedules = schedulesByGuild
-      .flat()
-      .sort(
-        (first, second) =>
-          getScheduleUnixSeconds(first) - getScheduleUnixSeconds(second),
-      );
-    const context = getInteractionContext(interaction);
-    const embed = buildMyScheduleEmbed(
-      schedules,
-      context,
-      grouping,
-      scheduleWeekWindow ? getScheduleWeekTitle(scheduleWeekWindow) : undefined,
-    );
-
-    try {
-      await interaction.user.send({ embeds: [embed] });
-      await interaction.editReply({ content: "Scheduled sent to your DM" });
-    } catch {
-      await interaction.editReply({
-        content: "I couldn't send your schedules by DM.",
-      });
-    }
+    await sendMySchedule(interaction, scheduleWeekWindow, grouping);
   },
 };

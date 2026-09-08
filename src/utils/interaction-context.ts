@@ -1,11 +1,14 @@
-import type { ChatInputCommandInteraction } from "discord.js";
+import type {
+  ButtonInteraction,
+  ChatInputCommandInteraction,
+} from "discord.js";
 import type { InteractionContext } from "../types/interaction-context.js";
 
 export type { InteractionContext } from "../types/interaction-context.js";
 
-/** Extracts user and guild presentation data from a slash command interaction. */
+/** Extracts user and guild presentation data from a command or button interaction. */
 export const getInteractionContext = (
-  interaction: ChatInputCommandInteraction,
+  interaction: ChatInputCommandInteraction | ButtonInteraction,
 ): InteractionContext => ({
   userId: interaction.user.id,
   username: interaction.user.username,

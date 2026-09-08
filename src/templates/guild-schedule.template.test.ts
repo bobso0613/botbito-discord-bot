@@ -1,6 +1,8 @@
 import { describe, expect, it, jest } from "@jest/globals";
+import { ButtonStyle } from "discord.js";
 import type { InteractionContext } from "../types/interaction-context.js";
 import {
+  buildMyScheduleButtonRow,
   buildGuildScheduleEmbed,
   buildMyScheduleEmbed,
 } from "./guild-schedule.template.js";
@@ -17,6 +19,18 @@ const context: InteractionContext = {
 };
 
 describe("buildGuildScheduleEmbed", () => {
+  it("builds the labeled My Sched button used by button-click logs", () => {
+    expect(buildMyScheduleButtonRow().toJSON()).toMatchObject({
+      components: [
+        {
+          custom_id: "my-sched",
+          label: "My Sched",
+          style: ButtonStyle.Primary,
+        },
+      ],
+    });
+  });
+
   it("builds an embed with linked schedule titles and timestamps", () => {
     const embed = buildGuildScheduleEmbed(
       [

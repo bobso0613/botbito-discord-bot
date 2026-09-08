@@ -9,10 +9,13 @@ import {
   REST,
   Routes,
   ActivityType,
+  type ButtonInteraction,
   type ChatInputCommandInteraction,
 } from "discord.js";
 import { commands } from "./commands/index.js";
+import { sendMySchedule } from "./commands/mysched.command.js";
 import { registerGuildScheduleAnnouncementListener } from "./services/guild-schedule-announcement.service.js";
+import { MY_SCHEDULE_BUTTON_ID } from "./templates/guild-schedule.template.js";
 import { logger } from "./utils/logger.js";
 
 const token = process.env.DISCORD_TOKEN;
@@ -50,12 +53,14 @@ const commandsByName = new Collection(
 );
 
 const getCommandLogContext = (
-  interaction: ChatInputCommandInteraction,
+  interaction: ChatInputCommandInteraction | ButtonInteraction,
 ): string => {
   return [
     `guildName=${JSON.stringify(interaction.guild?.name ?? "direct-message")}`,
     `username=${JSON.stringify(interaction.user.username)}`,
-    `parameters=${JSON.stringify(interaction.options.data)}`,
+    `parameters=${JSON.stringify(
+      interaction.isChatInputCommand() ? interaction.options.data : [],
+    )}`,
   ].join(" ");
 };
 
@@ -99,7 +104,48 @@ client.on(Events.GuildCreate, async (guild) => {
   await registerGuildSlashCommands(guild.id);
 });
 
+/**
+ * Handles slash commands and the My Sched button.
+ * Button logs include `button`, `buttonLabel`, status, and the standard guild,
+ * user, and parameter context; button interactions have an empty parameter list.
+ */
 client.on(Events.InteractionCreate, async (interaction) => {
+  if (interaction.isButton()) {
+    if (interaction.customId !== MY_SCHEDULE_BUTTON_ID) return;
+    const buttonLabel =
+      "label" in interaction.component
+        ? (interaction.component.label ?? null)
+        : null;
+
+    try {
+      await sendMySchedule(interaction);
+      logger.log(
+        `button=${interaction.customId} buttonLabel=${JSON.stringify(buttonLabel)} status=success guildId=${interaction.guildId ?? "direct-message"} userId=${interaction.user.id} ${getCommandLogContext(interaction)}`,
+      );
+    } catch (error) {
+      logger.error(
+        `button=${interaction.customId} buttonLabel=${JSON.stringify(buttonLabel)} status=fail guildId=${interaction.guildId ?? "direct-message"} userId=${interaction.user.id} ${getCommandLogContext(interaction)}`,
+        error,
+      );
+      try {
+        if (interaction.deferred || interaction.replied) {
+          await interaction.editReply(
+            "Something went wrong while processing this command. Please try again.",
+          );
+        } else {
+          await interaction.reply({
+            content:
+              "Something went wrong while processing this command. Please try again.",
+            flags: MessageFlags.Ephemeral,
+          });
+        }
+      } catch (replyError) {
+        logger.error("Failed to send button error response:", replyError);
+      }
+    }
+    return;
+  }
+
   if (!interaction.isChatInputCommand()) return;
 
   const command = commandsByName.get(interaction.commandName);

@@ -323,7 +323,7 @@ describe("getActiveGuildSchedules", () => {
     ]);
   });
 
-  it("does not reuse an older schedule when the newest embed is TBD", async () => {
+  it("clears an older schedule when a newer embed has Your Time: TBD", async () => {
     const member = { displayName: "Lucian Blight" };
     const channel = {
       type: ChannelType.GuildText,
@@ -384,7 +384,7 @@ describe("getActiveGuildSchedules", () => {
     expect(schedules).toEqual([]);
   });
 
-  it("does not reuse an older schedule after a newer postpone response", async () => {
+  it("ignores a newer schedule-bot reply without a Your Time label", async () => {
     const member = { displayName: "Lucian Blight" };
     const channel = {
       type: ChannelType.GuildText,
@@ -437,6 +437,74 @@ describe("getActiveGuildSchedules", () => {
       true,
     );
 
-    expect(schedules).toEqual([]);
+    expect(schedules.map((schedule) => schedule.title)).toEqual([
+      "Old schedule",
+    ]);
+  });
+
+  it("does not let newer confirmations or cancelled interactions hide a schedule", async () => {
+    const member = { displayName: "Lucian Blight" };
+    const channel = {
+      type: ChannelType.GuildText,
+      id: "busy-schedule",
+      parentId: "schedule-category",
+      name: "busy-schedule",
+      url: "https://discord.com/channels/guild/busy-schedule",
+      permissionsFor: jest.fn().mockReturnValue({
+        has: jest.fn().mockReturnValue(true),
+      }),
+      messages: {
+        fetch: jest.fn().mockResolvedValue(
+          new Map([
+            [
+              "cancelled-interaction",
+              {
+                author: { id: DISCORD_SETTINGS.guildScheduleBotId },
+                createdTimestamp: 3,
+                content: "Interaction cancelled",
+                embeds: [],
+              },
+            ],
+            [
+              "confirmation",
+              {
+                author: { id: DISCORD_SETTINGS.guildScheduleBotId },
+                createdTimestamp: 2,
+                content:
+                  "Are you sure you would like to reschedule for next week, same time?",
+                embeds: [],
+              },
+            ],
+            [
+              "schedule",
+              {
+                author: { id: DISCORD_SETTINGS.guildScheduleBotId },
+                createdTimestamp: 1,
+                embeds: [
+                  {
+                    title: "Active schedule",
+                    description:
+                      "- **Lucian Blight**\nYour Time: <t:4102444800:F>",
+                    fields: [],
+                  },
+                ],
+              },
+            ],
+          ]) as never,
+        ),
+      },
+    };
+    const guild = { channels: { cache: new Map([[channel.id, channel]]) } };
+
+    const schedules = await getActiveGuildSchedules(
+      guild as never,
+      member as never,
+      ["schedule-category"],
+    );
+
+    expect(schedules.map((schedule) => schedule.title)).toEqual([
+      "Active schedule",
+    ]);
+    expect(channel.messages.fetch).toHaveBeenCalledTimes(1);
   });
 });

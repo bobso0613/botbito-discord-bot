@@ -1,4 +1,9 @@
-import { EmbedBuilder } from "discord.js";
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  EmbedBuilder,
+} from "discord.js";
 import type {
   GuildSchedule,
   MyScheduleGrouping,
@@ -21,6 +26,17 @@ const getScheduleStatusWithNote = (schedule: GuildSchedule): string => {
 };
 
 const personalScheduleLegend = "**__📝 Signed Up / 🪑 Reserve__: **";
+
+export const MY_SCHEDULE_BUTTON_ID = "my-sched";
+
+/** Builds the button that lets a member request their personal schedule by DM. */
+export const buildMyScheduleButtonRow = (): ActionRowBuilder<ButtonBuilder> =>
+  new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(MY_SCHEDULE_BUTTON_ID)
+      .setLabel("My Sched")
+      .setStyle(ButtonStyle.Primary),
+  );
 
 /** Formats the guild label shown before personal schedule entries. */
 const getGuildHeading = (

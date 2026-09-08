@@ -8,7 +8,10 @@ import {
   GUILD_SCHEDULE_GUILD_IDS,
 } from "../config/discord-settings.js";
 import { getActiveGuildSchedules } from "../services/guild-schedule.service.js";
-import { buildGuildScheduleEmbed } from "../templates/guild-schedule.template.js";
+import {
+  buildGuildScheduleEmbed,
+  buildMyScheduleButtonRow,
+} from "../templates/guild-schedule.template.js";
 import type { Command } from "../types/command.js";
 import { getInteractionContext } from "../utils/interaction-context.js";
 
@@ -83,6 +86,9 @@ export const guildSchedCommand: Command = {
       isPublic,
     );
 
-    await interaction.editReply({ embeds: [embed] });
+    await interaction.editReply({
+      embeds: [embed],
+      components: [buildMyScheduleButtonRow()],
+    });
   },
 };

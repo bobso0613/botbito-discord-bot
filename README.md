@@ -67,7 +67,7 @@ Enable the **Server Members Intent** and **Message Content Intent** in the Disco
 
 `/payoutsummary` 📄 displays every non-zero payout and its total for the calling server. It is available in every channel of configured payout guilds. The optional `amount` parameter selects `Share Ready` (default), `Pending`, or `Distributed`. The optional `sendprivately` parameter sends the response ephemerally; it is public by default. Each row shows the Discord guild display name and its right-aligned zeny balance. It uses the Server Members Intent to resolve display names from the sheet's Discord tags. The optional `sort` parameter supports `Name` and `Amount`; the optional `direction` parameter supports `Ascending` and `Descending`. By default, payouts are sorted by the selected amount descending, with Name ascending as the tie-breaker. Share Ready summaries include the release description and distribution contact; Pending summaries use `Currently vending:` and Distributed summaries omit the description and distribution contact. When the configured payout contact invokes either payout command, the claim message adds `Oh wait, that's me! lol`.
 
-`/guildsched` 🗓️ lists active runs from the configured guild schedule categories. It is available to all members of the guild. The bot includes only signup channels the invoking member can view and read, uses the newest active schedule per channel, and orders results earliest to latest.
+`/guildsched` 🗓️ lists active runs from the configured guild schedule categories. It is available to all members of the guild. The bot includes only signup channels the invoking member can view and read, uses the newest active schedule per channel, and orders results earliest to latest. It checks the configured schedule bot's most recent 100 messages in each channel newest-first: replies without a `Your Time:` label, such as command confirmations and `Interaction cancelled`, are ignored; a newer schedule embed with `Your Time: TBD` clears that channel's older schedule. Every guild schedule output, including automatic announcements, includes a `My Sched` button that sends the clicking member's default `/mysched` result by DM. Its success and failure logs record `button=my-sched`, `buttonLabel="My Sched"`, status, guild, user, and the standard command context; button clicks log `parameters=[]`.
 
 When a configured schedule bot posts or updates a schedule response in one of the configured `categoryIds` channels, the bot automatically refreshes every `scheduleTextChannelIds` channel. It deletes the existing announcement messages and posts a public announcement equivalent to `/guildsched public:true forannouncementonly:true`. The listener compares the newest schedule-bot response with the previous response, including `Your Time: TBD` and plain postpone responses, so new schedule-changing commands do not require code changes. A configured `scheduleTextChannelIds` channel is never treated as a source channel, even if it is placed in a configured category. Updates without a cached prior timestamp, such as partial `messageUpdate` payloads after a restart, are ignored for timestamp-based refreshes to prevent false announcements. Refresh logs include the `triggerReason`, source `triggerChannel`, current `triggerRunTitle`, and `previousChannelName` for channel renames.
 
@@ -133,6 +133,14 @@ For `/payoutsummary`, the bot selects that guild's `Pending`, `Share Ready`, or 
 ## Guild Schedule Format 📅
 
 Schedule embeds are posted by the configured `guildScheduleBotId` bot in signup channels. Each entry's format determines how the bot displays signup and reserve information.
+
+An active schedule must include a Discord timestamp in this form:
+
+```plain
+Your Time: <t:unix-seconds:F>
+```
+
+The Discord client renders that timestamp as a localized date and time. `Your Time: TBD` explicitly clears the channel's previous schedule. Other schedule-bot replies without a `Your Time:` label do not replace an active schedule.
 
 Signup entries use this format:
 

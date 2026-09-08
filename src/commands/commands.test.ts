@@ -308,6 +308,9 @@ describe("command handlers", () => {
     });
     const reply = (interaction.editReply as jest.Mock).mock.calls[0][0] as {
       embeds: Array<{ data: { description: string } }>;
+      components: Array<{
+        components: Array<{ data: { custom_id: string; label: string } }>;
+      }>;
     };
     expect(reply.embeds[0].data.description).toContain(
       "Endless Tower Wednesday",
@@ -321,6 +324,10 @@ describe("command handlers", () => {
     ).toBeLessThan(
       reply.embeds[0].data.description.indexOf("Endless Tower Wednesday"),
     );
+    expect(reply.components[0]?.components[0]?.data).toMatchObject({
+      custom_id: "my-sched",
+      label: "My Sched",
+    });
   });
 
   it("makes guild schedules public when requested", async () => {
