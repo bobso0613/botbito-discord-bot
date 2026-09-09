@@ -274,6 +274,71 @@ describe("getActiveGuildSchedules", () => {
     ]);
   });
 
+  it("keeps an earlier in-window schedule when a newer schedule is outside the window", async () => {
+    const member = { displayName: "Lucian Blight" };
+    const channel = {
+      type: ChannelType.GuildText,
+      id: "recurring-schedule",
+      parentId: "schedule-category",
+      name: "recurring-schedule",
+      url: "https://discord.com/channels/guild/recurring-schedule",
+      permissionsFor: jest.fn().mockReturnValue({
+        has: jest.fn().mockReturnValue(true),
+      }),
+      messages: {
+        fetch: jest.fn().mockResolvedValue(
+          new Map([
+            [
+              "completed-this-week",
+              {
+                author: { id: DISCORD_SETTINGS.guildScheduleBotId },
+                createdTimestamp: 1,
+                embeds: [
+                  {
+                    title: "Completed this week",
+                    description: `- **Lucian Blight**\nYour Time: ${getDiscordTimestamp("2026-09-01T08:00:00Z")}`,
+                    fields: [],
+                  },
+                ],
+              },
+            ],
+            [
+              "next-week",
+              {
+                author: { id: DISCORD_SETTINGS.guildScheduleBotId },
+                createdTimestamp: 2,
+                embeds: [
+                  {
+                    title: "Next week",
+                    description: `- **Lucian Blight**\nYour Time: ${getDiscordTimestamp("2026-09-08T08:00:00Z")}`,
+                    fields: [],
+                  },
+                ],
+              },
+            ],
+          ]) as never,
+        ),
+      },
+    };
+    const guild = { channels: { cache: new Map([[channel.id, channel]]) } };
+    const timeWindow: GuildScheduleTimeWindow = {
+      start: new Date("2026-08-31T06:00:00Z"),
+      end: new Date("2026-09-07T06:00:00Z"),
+    };
+
+    const schedules = await getActiveGuildSchedules(
+      guild as never,
+      member as never,
+      ["schedule-category"],
+      [],
+      timeWindow,
+    );
+
+    expect(schedules.map((schedule) => schedule.title)).toEqual([
+      "Completed this week",
+    ]);
+  });
+
   it("includes past schedules when requested for an announcement refresh", async () => {
     const member = { displayName: "Lucian Blight" };
     const channel = {

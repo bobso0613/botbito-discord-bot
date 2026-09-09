@@ -87,7 +87,7 @@ export const COMMAND_GUIDE: ReadonlyArray<{
       {
         name: "thisweekonly",
         description:
-          "Include completed runs from this schedule week, Monday 06:00 GMT through Sunday",
+          "Show all signed-up and reserve runs from this schedule week, Monday 06:00 GMT through Sunday",
         required: false,
       },
       {

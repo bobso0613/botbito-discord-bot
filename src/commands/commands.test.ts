@@ -128,7 +128,7 @@ describe("command handlers", () => {
         expect.objectContaining({
           name: "Parameters",
           value: expect.stringContaining(
-            "**thisweekonly** (optional): Include completed runs from this schedule week, Monday 06:00 GMT through Sunday",
+            "**thisweekonly** (optional): Show all signed-up and reserve runs from this schedule week, Monday 06:00 GMT through Sunday",
           ),
         }),
         expect.objectContaining({

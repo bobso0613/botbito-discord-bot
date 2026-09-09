@@ -13,7 +13,7 @@ import type {
 } from "../types/guild-schedule.js";
 
 const scheduleTimestampPattern = /Your\s+Time:\s*(<t:(\d+):F>)/i;
-const scheduleTimeLabelPattern = /Your\s+Time:/i;
+const clearedScheduleTimePattern = /Your\s+Time:\s*TBD\b/i;
 
 /** Escapes a value for literal use in a regular expression. */
 const escapeRegularExpression = (value: string): string =>
@@ -105,7 +105,8 @@ const isAccessibleScheduleChannel = (
     ]) === true;
 
 /**
- * Gets the newest active schedule from the configured schedule bot's recent replies.
+ * Gets the newest active schedule within the requested time window from the configured
+ * schedule bot's recent replies. Scheduled replies outside the window are skipped.
  * Replies without a `Your Time:` label, such as command confirmations or cancelled
  * interactions, are ignored. A reply with `Your Time: TBD` clears an older schedule.
  */
@@ -152,7 +153,7 @@ const getNewestChannelSchedule = async (
     if (schedule) return schedule;
 
     const embedText = message.embeds.map(getEmbedText).join("\n");
-    if (scheduleTimeLabelPattern.test(embedText)) {
+    if (clearedScheduleTimePattern.test(embedText)) {
       return undefined;
     }
   }
@@ -166,7 +167,8 @@ const getNewestChannelSchedule = async (
  * clears that channel's older schedule.
  * Results are ordered from earliest to latest scheduled time.
  * When a time window is provided, schedules inside that window are included even
- * when their scheduled time has already passed.
+ * when their scheduled time has already passed; a newer scheduled reply outside the
+ * window does not hide an older in-window schedule.
  * @param guild The guild to search for schedules
  * @param member The member requesting schedules (used for permission checks)
  * @param categoryIds Array of category IDs to search within

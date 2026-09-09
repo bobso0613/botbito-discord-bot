@@ -120,7 +120,7 @@ export const mySchedCommand: Command = {
       option
         .setName("thisweekonly")
         .setDescription(
-          "Show signed-up and reserve schedules from this schedule week",
+          "Show all signed-up and reserve runs from this schedule week",
         ),
     )
     .addStringOption((option) =>
