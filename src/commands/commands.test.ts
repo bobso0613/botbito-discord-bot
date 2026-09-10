@@ -44,7 +44,8 @@ jest.unstable_mockModule("../utils/guild-members.js", () => ({
 
 const { payoutCommand } = await import("./payout.command.js");
 const { payoutSummaryCommand } = await import("./payout-summary.command.js");
-const { helpCommand } = await import("./help.command.js");
+const { helpCommand, handleHelpAutocomplete } =
+  await import("./help.command.js");
 const { guildSchedCommand } = await import("./guildsched.command.js");
 const { mySchedCommand } = await import("./mysched.command.js");
 const { myCooldowsCommand } = await import("./mycooldowns.command.js");
@@ -97,8 +98,14 @@ describe("command handlers", () => {
     });
   });
 
-  it("shows help as an ephemeral embed", async () => {
-    const interaction = createInteraction();
+  it("shows help for the selected command as an ephemeral embed", async () => {
+    const interaction = createInteraction({
+      options: {
+        getString: jest
+          .fn<(name: string) => string | null>()
+          .mockReturnValue("/mysched"),
+      },
+    });
 
     await helpCommand.execute(interaction as never);
 
@@ -107,48 +114,57 @@ describe("command handlers", () => {
     );
     const reply = (interaction.reply as jest.Mock).mock.calls[0][0] as {
       embeds: Array<{
+        data: {
+          title: string;
+          fields: Array<{ name: string; value: string }>;
+        };
+      }>;
+    };
+    expect(reply.embeds[0].data.title).toBe("Command Guide - /mysched");
+    expect(reply.embeds[0].data.fields).toEqual([
+      expect.objectContaining({
+        name: "⌚ `/mysched`",
+        value:
+          "DM your signed-up and reserve schedules across accessible guilds",
+      }),
+      expect.objectContaining({
+        name: "Parameters",
+        value: expect.stringContaining(
+          "**thisweekonly** (optional): Show all signed-up and reserve runs from this schedule week, Monday 06:00 GMT through Sunday",
+        ),
+      }),
+    ]);
+    expect(reply.embeds[0].data.fields[1]?.value).toEqual(
+      expect.stringContaining(
+        "**grouping** (optional): Group schedules by date, guild, or instance type (By Date default)",
+      ),
+    );
+    expect(
+      reply.embeds[0].data.fields.some((field) =>
+        field.name.includes("/payout"),
+      ),
+    ).toBe(false);
+  });
+
+  it("shows every command grouped by category when no command is selected (help button)", async () => {
+    const interaction = createInteraction();
+
+    const { sendHelp } = await import("./help.command.js");
+    await sendHelp(interaction as never);
+
+    const reply = (interaction.reply as jest.Mock).mock.calls[0][0] as {
+      embeds: Array<{
         data: { fields: Array<{ name: string; value: string }> };
       }>;
     };
-    expect(reply.embeds[0].data.fields).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          name: "⌚ `/mysched`",
-          value:
-            "DM your signed-up and reserve schedules across accessible guilds",
-        }),
-        expect.objectContaining({
-          name: "💰 `/payout`",
-          value: "Get your payout details in this server",
-        }),
-        expect.objectContaining({
-          name: "📄 `/payoutsummary`",
-          value: "View this server's payout summary",
-        }),
-        expect.objectContaining({
-          name: "Parameters",
-          value: expect.stringContaining(
-            "**thisweekonly** (optional): Show all signed-up and reserve runs from this schedule week, Monday 06:00 GMT through Sunday",
-          ),
-        }),
-        expect.objectContaining({
-          name: "Parameters",
-          value: expect.stringContaining(
-            "**grouping** (optional): Group schedules by date, guild, or instance type (By Date default)",
-          ),
-        }),
-        expect.objectContaining({
-          name: "🔥 `/mycooldowns`",
-          value: "View your weekly cooldown status across accessible guilds",
-        }),
-        expect.objectContaining({
-          name: "Parameters",
-          value: expect.stringContaining(
-            "**showinpublic** (optional): Show your cooldown status to everyone in this channel",
-          ),
-        }),
-      ]),
-    );
+    const fields = reply.embeds[0].data.fields;
+    expect(fields.length).toBeLessThanOrEqual(25);
+    const payoutField = fields.find((field) => field.name === "Payout");
+    expect(payoutField?.value).toContain("💰 `/payout`");
+    expect(payoutField?.value).toContain("📄 `/payoutsummary`");
+    const scheduleField = fields.find((field) => field.name === "Schedule");
+    expect(scheduleField?.value).toContain("⌚ `/mysched`");
+    expect(scheduleField?.value).toContain("🔥 `/mycooldowns`");
   });
 
   it("makes /help available in guilds and bot DMs", () => {
@@ -156,6 +172,34 @@ describe("command handlers", () => {
       integration_types: [ApplicationIntegrationType.GuildInstall],
       contexts: [InteractionContextType.Guild, InteractionContextType.BotDM],
     });
+  });
+
+  it("requires a command with autocomplete for /help", () => {
+    const [commandOption] = helpCommand.data.toJSON().options ?? [];
+    expect(commandOption).toMatchObject({
+      name: "command",
+      required: true,
+      autocomplete: true,
+    });
+  });
+
+  it("suggests up to 25 matching commands for /help autocomplete", async () => {
+    const respond = jest.fn();
+    const interaction = {
+      options: { getFocused: jest.fn().mockReturnValue("cha") },
+      respond,
+    };
+
+    await handleHelpAutocomplete(interaction as never);
+
+    expect(respond).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        { name: "/change all", value: "/change all" },
+        { name: "/charnote", value: "/charnote" },
+      ]),
+    );
+    const [suggestions] = respond.mock.calls[0] as [unknown[]];
+    expect(suggestions.length).toBeLessThanOrEqual(25);
   });
 
   it("exposes public-by-default private response options for payout commands", () => {

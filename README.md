@@ -61,7 +61,7 @@ Enable the **Server Members Intent** and **Message Content Intent** in the Disco
 
 ## Commands 💬
 
-`/help` ℹ️ displays a private guide to available commands with descriptions, parameters, and usage for each command. Each command is labeled with its associated emoji for quick recognition.
+`/help` ℹ️ requires a `command` choice parameter and displays a private guide for just that command, including its description, parameters, and usage. Choices are generated from the same command list used to power the guide, so new entries automatically appear as selectable choices. The "Help" button on guild schedule output still shows the full guide across every command.
 
 `/payout` 💰 displays the command user's Pending, Share Ready, and Distributed balances in zeny (`z`). It is available in every channel of configured payout guilds. When the user has no non-zero payout balance, it instead displays a message that they are not on the list. The optional `sendprivately` parameter sends the response ephemerally; it is public by default.
 
@@ -192,6 +192,12 @@ Configure role-restricted channels in `private/discord_settings.json`:
   - Role-restricted schedules you have access to are displayed with a **(Private run)** label in the title (no clickable link to the channel).
   - Role-restricted schedules you cannot access are not shown.
 
+## Signup Sheets 📋
+
+Channel-scoped signup sheets (created with `/newrun`) support their own set of guild-only commands (`/add`, `/remove`, `/swap`, `/clear`, `/change`, and more). Every signup sheet embed includes a **Show list of commands** button that replies ephemerally with the full command reference for that sheet.
+
+`/ping` pings signed-up and/or reserve members with a message, formatted as `Ping from **<invoker display name>**: <message>` followed by the mentions on their own line. The required `which` choice selects `Main Roster`, `Reserves`, or `All`.
+
 ## Project Layout 🧱
 
 ```text
@@ -205,23 +211,29 @@ src/
 │   ├── guildsched.command.ts
 │   ├── index.ts
 │   ├── mysched.command.ts
+│   ├── mycooldowns.command.ts
 │   ├── payout.command.ts
-│   └── payout-summary.command.ts
+│   ├── payout-summary.command.ts
+│   └── signup.command.ts
 ├── constants/
-│   └── index.ts
+│   ├── index.ts
+│   └── cooldowns.ts
 ├── services/
 │   ├── google-sheets.service.ts
 │   ├── guild-schedule.service.ts
-│   └── payout.service.ts
+│   ├── payout.service.ts
+│   └── signup-sheet.service.ts
 ├── templates/
 │   ├── guild-schedule.template.ts
-│   └── payout.template.ts
+│   ├── payout.template.ts
+│   └── signup-sheet.template.ts
 ├── types/
 │   ├── command.ts
 │   ├── guild-schedule.ts
 │   ├── google-sheets.ts
 │   ├── interaction-context.ts
-│   └── payout.ts
+│   ├── payout.ts
+│   └── signup-sheet.ts
 └── utils/
     ├── format-zeny.ts
     ├── guild-members.ts
