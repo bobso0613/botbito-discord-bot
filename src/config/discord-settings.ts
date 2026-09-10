@@ -34,3 +34,8 @@ export const PAYOUT_GUILD_IDS = DISCORD_SETTINGS.payoutGuildIds;
 export const GUILD_SCHEDULE_GUILD_IDS = Object.keys(
   DISCORD_SETTINGS.guildScheduleSourceByGuild,
 );
+
+/** Guilds where channel-scoped signup sheets are available as guild commands. */
+export const SIGNUP_GUILD_IDS = [
+  ...new Set([...PAYOUT_GUILD_IDS, ...GUILD_SCHEDULE_GUILD_IDS]),
+];

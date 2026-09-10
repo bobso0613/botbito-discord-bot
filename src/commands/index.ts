@@ -5,6 +5,7 @@ import { myCooldowsCommand } from "./mycooldowns.command.js";
 import { mySchedCommand } from "./mysched.command.js";
 import { payoutCommand } from "./payout.command.js";
 import { payoutSummaryCommand } from "./payout-summary.command.js";
+import { signupCommands } from "./signup.command.js";
 
 export const commands: Command[] = [
   payoutCommand,
@@ -13,4 +14,5 @@ export const commands: Command[] = [
   mySchedCommand,
   myCooldowsCommand,
   helpCommand,
+  ...signupCommands,
 ];
