@@ -85,22 +85,22 @@ export const createEmptySlots = (partySizes: number[]): SignupSlot[] =>
       signupUserId: null,
       signupDisplayName: null,
       charNote: null,
+      isTbc: false,
     }),
   );
 
-/** Renders slots as editable `NN: Role - Name (note)` roster text for the roster-edit prompt. */
+/** Renders slots as editable `NN: Role - Name (note) ❓` roster text for the roster-edit prompt. */
 export const getDefaultRoster = (slots: SignupSlot[]): string =>
   slots
-    .map(
-      (slot) =>
-        `${String(slot.number).padStart(2, "0")}: ${slot.role} -${
-          slot.signupDisplayName
-            ? ` ${slot.signupDisplayName}${
-                slot.charNote ? ` (${slot.charNote})` : ""
-              }`
-            : ""
-        }`,
-    )
+    .map((slot) => {
+      const tbcSuffix = slot.isTbc ? " ❓" : "";
+      const signupContent = slot.signupDisplayName
+        ? ` ${slot.signupDisplayName}${
+            slot.charNote ? ` (${slot.charNote})` : ""
+          }${tbcSuffix}`
+        : tbcSuffix;
+      return `${String(slot.number).padStart(2, "0")}: ${slot.role} -${signupContent}`;
+    })
     .join("\n");
 
 /** Builds the prompt message shown when asking the user to send their edited roster text. */
@@ -122,8 +122,8 @@ export const normalizeRosterDisplayName = (
 /**
  * Parses roster text back into slots. The role/name separator is a dash
  * preceded by a space (" -"), so mid-word dashes in the role (e.g. "Ka-Buff")
- * or name (e.g. "char-name") don't split early. Returns `null` when the text
- * doesn't have one continuous, correctly numbered line per existing slot.
+ * or name (e.g. "char-name") don't split early. The `❓` emoji marks a slot as TBC.
+ * Returns `null` when the text doesn't have one continuous, correctly numbered line per existing slot.
  */
 export const parseRoster = (
   roster: string,
@@ -149,8 +149,14 @@ export const parseRoster = (
     if (!match || Number(match[1]) !== index + 1 || !match[2]?.trim())
       return null;
     const signupValue = match[3]?.trim() || null;
-    const signupMatch = signupValue
-      ? /^(.*?)(?:\s+\((.*)\))?$/.exec(signupValue)
+    let isTbc = false;
+    let cleanedSignupValue = signupValue;
+    if (cleanedSignupValue && cleanedSignupValue.includes("❓")) {
+      isTbc = true;
+      cleanedSignupValue = cleanedSignupValue.replace(/❓/g, "").trim() || null;
+    }
+    const signupMatch = cleanedSignupValue
+      ? /^(.*?)(?:\s+\((.*)\))?$/.exec(cleanedSignupValue)
       : null;
     const signupDisplayName =
       normalizeRosterDisplayName(signupMatch?.[1] ?? null) ?? null;
@@ -167,6 +173,7 @@ export const parseRoster = (
           : (userIdsByDisplayName.get(signupDisplayName ?? "") ?? null),
       signupDisplayName,
       charNote: signupMatch?.[2]?.trim() || null,
+      isTbc,
     });
   }
   return slots;

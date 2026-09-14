@@ -11,7 +11,7 @@ import {
 import { COMMAND_GUIDE } from "../constants/index.js";
 import type { Command } from "../types/command.js";
 
-type HelpInteraction = ChatInputCommandInteraction | ButtonInteraction;
+export type HelpInteraction = ChatInputCommandInteraction | ButtonInteraction;
 
 /** Groups a command name to a section heading for the compact full-guide overview. */
 const CATEGORY_BY_COMMAND_NAME: Record<string, string> = {
@@ -38,6 +38,9 @@ const CATEGORY_BY_COMMAND_NAME: Record<string, string> = {
   "/remove": "Signup Roster",
   "/swap": "Signup Roster",
   "/charnote": "Signup Roster",
+  "/removecharnote": "Signup Roster",
+  "/tbc": "Signup Roster",
+  "/removetbc": "Signup Roster",
   "/ping": "Signup Roster",
   "/postpone": "Signup Schedule",
   "/next": "Signup Schedule",

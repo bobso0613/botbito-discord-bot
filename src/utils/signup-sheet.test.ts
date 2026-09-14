@@ -126,27 +126,45 @@ describe("signup-sheet utils", () => {
   describe("getDefaultRoster / parseRoster round-trip", () => {
     it("parses back the roster text it generated, including signups and notes", () => {
       const slots = [
-        buildSlot({ number: 1, role: "High Wizard" }),
+        buildSlot({ number: 1, role: "High Wizard", isTbc: true }),
         buildSlot({
           number: 2,
           role: "SL (Link + Ka-Buff)",
           signupUserId: "user-1",
           signupDisplayName: "charName",
           charNote: "alt",
+          isTbc: true,
         }),
       ];
       const rosterText = getDefaultRoster(slots);
+      expect(rosterText).toContain("01: High Wizard - ❓");
+      expect(rosterText).toContain(
+        "02: SL (Link + Ka-Buff) - charName (alt) ❓",
+      );
       const parsed = parseRoster(rosterText, slots);
       expect(parsed).not.toBeNull();
       expect(parsed?.[0]).toMatchObject({
         role: "High Wizard",
         signupUserId: null,
+        isTbc: true,
       });
       expect(parsed?.[1]).toMatchObject({
         role: "SL (Link + Ka-Buff)",
         signupDisplayName: "charName",
         signupUserId: "user-1",
         charNote: "alt",
+        isTbc: true,
+      });
+    });
+
+    it("parses TBC emoji on user with no note", () => {
+      const slots = [buildSlot({ number: 1, role: "Tank" })];
+      const parsed = parseRoster("01: Tank - Alice ❓", slots);
+      expect(parsed?.[0]).toMatchObject({
+        role: "Tank",
+        signupDisplayName: "Alice",
+        charNote: null,
+        isTbc: true,
       });
     });
 

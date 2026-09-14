@@ -1,11 +1,19 @@
 import { jest } from "@jest/globals";
 import type { SignupSheet } from "../types/signup-sheet.js";
 
-const readFile = jest.fn();
-const writeFile = jest.fn();
-const mkdir = jest.fn();
-const rename = jest.fn();
-const randomUUID = jest.fn(() => "fixed-uuid");
+const readFile =
+  jest.fn<(path: string, encoding?: string) => Promise<string>>();
+const writeFile =
+  jest.fn<(path: string, data: string, encoding?: string) => Promise<void>>();
+const mkdir =
+  jest.fn<
+    (
+      path: string,
+      options?: { recursive?: boolean },
+    ) => Promise<string | undefined>
+  >();
+const rename = jest.fn<(oldPath: string, newPath: string) => Promise<void>>();
+const randomUUID = jest.fn<() => string>(() => "fixed-uuid");
 
 jest.unstable_mockModule("node:fs/promises", () => ({
   readFile,
@@ -65,11 +73,9 @@ describe("signup-sheet service", () => {
       );
     });
 
-    it("returns the sheet stored under the guild/channel key", async () => {
+    it("returns the sheet stored under the channel key", async () => {
       const sheet = buildSheet();
-      readFile.mockResolvedValue(
-        JSON.stringify({ "guild-1:channel-1": sheet }),
-      );
+      readFile.mockResolvedValue(JSON.stringify({ "channel-1": sheet }));
 
       await expect(getSignupSheet("guild-1", "channel-1")).resolves.toEqual(
         sheet,
@@ -84,13 +90,13 @@ describe("signup-sheet service", () => {
   });
 
   describe("saveSignupSheet", () => {
-    it("writes to a temp file then renames it into place, preserving other sheets", async () => {
+    it("writes to a temp file then renames it into place, preserving other channels in the guild", async () => {
       const existingSheet = buildSheet({
-        guildId: "guild-2",
+        guildId: "guild-1",
         channelId: "channel-2",
       });
       readFile.mockResolvedValue(
-        JSON.stringify({ "guild-2:channel-2": existingSheet }),
+        JSON.stringify({ "channel-2": existingSheet }),
       );
       const newSheet = buildSheet();
 
@@ -105,37 +111,33 @@ describe("signup-sheet service", () => {
       ];
       expect(temporaryPath).toContain("fixed-uuid.tmp");
       expect(JSON.parse(contents)).toEqual({
-        "guild-2:channel-2": existingSheet,
-        "guild-1:channel-1": newSheet,
+        "channel-2": existingSheet,
+        "channel-1": newSheet,
       });
       expect(rename).toHaveBeenCalledWith(
         temporaryPath,
-        expect.stringContaining("signup-sheets.json"),
+        expect.stringContaining("guild-1.json"),
       );
     });
 
-    it("overwrites an existing sheet for the same guild/channel", async () => {
+    it("overwrites an existing sheet for the same channel in the guild", async () => {
       const original = buildSheet({ title: "Original" });
-      readFile.mockResolvedValue(
-        JSON.stringify({ "guild-1:channel-1": original }),
-      );
+      readFile.mockResolvedValue(JSON.stringify({ "channel-1": original }));
       const updated = buildSheet({ title: "Updated" });
 
       await saveSignupSheet(updated);
 
       const [, contents] = writeFile.mock.calls[0] as [string, string];
       expect(JSON.parse(contents)).toEqual({
-        "guild-1:channel-1": updated,
+        "channel-1": updated,
       });
     });
   });
 
   describe("deleteSignupSheet", () => {
-    it("removes the sheet for the given guild/channel", async () => {
+    it("removes the sheet for the given channel in the guild", async () => {
       const sheet = buildSheet();
-      readFile.mockResolvedValue(
-        JSON.stringify({ "guild-1:channel-1": sheet }),
-      );
+      readFile.mockResolvedValue(JSON.stringify({ "channel-1": sheet }));
 
       await deleteSignupSheet("guild-1", "channel-1");
 

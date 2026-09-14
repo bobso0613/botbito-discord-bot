@@ -82,13 +82,11 @@ describe("SIGNUP_COMMANDS_HELP_TEXT", () => {
 });
 
 describe("buildSignupSheetEmbed", () => {
-  it("shows the run title, description, party/reserve/schedule fields, and organizer footer", () => {
+  it("shows the run title, party/reserve/count/schedule fields, and organizer footer", () => {
     const embed = buildSignupSheetEmbed(buildSheet(), "Guild", null);
     const data = embed.data;
 
     expect(data.title).toBe("Test Run");
-    expect(data.description).toContain("🗓️ **1** of **2** slot/s filled");
-    expect(data.description).toContain("🪑 0 reserve/s");
     expect(data.fields?.[0]).toMatchObject({
       name: "__Party 1:__",
       value: "`01`: Tank - **Alice** *(alt)*\n`02`: DPS -",
@@ -97,10 +95,71 @@ describe("buildSignupSheetEmbed", () => {
       name: "Reserves:",
       value: "None - *to add as reserve, type `/add input=reserve`*",
     });
+    expect(data.fields?.[2]).toMatchObject({
+      name: "",
+      value: "🗓️ **1** of **2** filled",
+      inline: true,
+    });
+    expect(data.fields?.[3]).toMatchObject({
+      name: "",
+      value: "🪑 **0** reserve/s",
+      inline: true,
+    });
+    expect(data.fields?.[4]).toMatchObject({
+      name: "",
+      value: "❓ **0** TBC",
+      inline: true,
+    });
     expect(data.footer).toEqual({
       text: "Organizer - Organizer",
       icon_url: "https://example.com/organizer.png",
     });
+  });
+
+  it("shows ❓ emoji for TBC slots and reserves and updates the TBC count field", () => {
+    const embed = buildSignupSheetEmbed(
+      buildSheet({
+        slots: [
+          {
+            number: 1,
+            role: "Tank",
+            signupUserId: "user-1",
+            signupDisplayName: "Alice",
+            charNote: "alt",
+            isTbc: true,
+          },
+          {
+            number: 2,
+            role: "DPS",
+            signupUserId: null,
+            signupDisplayName: null,
+            charNote: null,
+          },
+        ],
+        reserves: [
+          {
+            userId: "user-2",
+            displayName: "Bob",
+            charNote: "wallet",
+            isTbc: true,
+          },
+        ],
+      }),
+      "Guild",
+      null,
+    );
+
+    expect(embed.data.fields?.[4]).toMatchObject({
+      name: "",
+      value: "❓ **2** TBC",
+      inline: true,
+    });
+    expect(embed.data.fields?.[0]?.value).toContain(
+      "`01`: Tank - **Alice** *(alt)* ❓",
+    );
+    expect(embed.data.fields?.[1]?.value).toContain(
+      "`03`: **Bob** *(wallet)* ❓",
+    );
   });
 
   it("includes important notes in the description when present", () => {
@@ -109,7 +168,7 @@ describe("buildSignupSheetEmbed", () => {
       "Guild",
       null,
     );
-    expect(embed.data.description).toContain("Important Notes:\nBring potions");
+    expect(embed.data.description).toBe("Important Notes:\nBring potions");
   });
 
   it("lists reserves with their character notes", () => {

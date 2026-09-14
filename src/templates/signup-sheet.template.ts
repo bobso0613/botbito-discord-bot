@@ -47,7 +47,7 @@ export const formatSignupSchedule = (sheet: SignupSheet): string => {
 
 /** Full signup command reference shown by the "Show list of commands" button and `/help`. */
 export const SIGNUP_COMMANDS_HELP_TEXT = [
-  "**Manage Self:** `/add input=#/random/reserve`, `/remove`, `/remove input=#`, `/swap first=#/random/reserve second=#`, `/charnote input=YourNote`",
+  "**Manage Self:** `/add input=#/random/reserve`, `/remove`, `/remove input=#`, `/swap first=#/random/reserve second=#`, `/charnote input=YourNote`, `/removecharnote`, `/tbc`, `/removetbc`",
   "",
   "**Manage others:** `/add input=#/random/reserve @user`, `/remove input='# of @user'`, `/swap first='# of @user' second=#`",
   "",
@@ -61,15 +61,15 @@ export const SIGNUP_COMMANDS_HELP_TEXT = [
 /** Formats a single party slot as `NN: Role -` optionally followed by the signed-up member and character note. */
 const formatSlot = (slot: SignupSheet["slots"][number]): string => {
   const signedUp = slot.signupDisplayName
-    ? ` **${slot.signupDisplayName}**${slot.charNote ? ` *(${slot.charNote})*` : ""}`
-    : "";
+    ? ` **${slot.signupDisplayName}**${slot.charNote ? ` *(${slot.charNote})*` : ""}${slot.isTbc ? " ❓" : ""}`
+    : `${slot.isTbc ? " ❓" : ""}`;
   return `\`${String(slot.number).padStart(2, "0")}\`: ${slot.role} -${signedUp}`;
 };
 
 /**
- * Builds the full signup sheet embed: notes and fill summary, one field per
- * party with its slots, the reserve list, the schedule, and an organizer
- * footer that includes the instance type (with emoji) when one is set.
+ * Builds the full signup sheet embed: notes, one field per party with its
+ * slots, the reserve list, fill and TBC counts as inline fields, the schedule,
+ * and an organizer footer that includes the instance type (with emoji) when one is set.
  */
 export const buildSignupSheetEmbed = (
   sheet: SignupSheet,
@@ -79,13 +79,9 @@ export const buildSignupSheetEmbed = (
   const signedUpCount = sheet.slots.filter(
     (slot) => slot.signupDisplayName,
   ).length;
-  const lineupSummary = `🗓️ **${signedUpCount}** of **${sheet.slots.length}** slot/s filled ➖ 🪑 ${sheet.reserves.length} reserve/s`;
-  const description = [
-    sheet.notes?.trim() ? `Important Notes:\n${sheet.notes.trim()}` : null,
-    lineupSummary,
-  ]
-    .filter((section): section is string => Boolean(section))
-    .join("\n\n");
+  const tbcCount =
+    sheet.slots.filter((slot) => slot.isTbc).length +
+    sheet.reserves.filter((reserve) => reserve.isTbc).length;
   let slotOffset = 0;
   const partyFields = sheet.partySizes.map((partySize, index) => {
     const slots = sheet.slots.slice(slotOffset, slotOffset + partySize);
@@ -100,7 +96,7 @@ export const buildSignupSheetEmbed = (
     ? sheet.reserves
         .map(
           (reserve, index) =>
-            `\`${String(sheet.slots.length + index + 1).padStart(2, "0")}\`: **${reserve.displayName}**${reserve.charNote ? ` *(${reserve.charNote})*` : ""}`,
+            `\`${String(sheet.slots.length + index + 1).padStart(2, "0")}\`: **${reserve.displayName}**${reserve.charNote ? ` *(${reserve.charNote})*` : ""}${reserve.isTbc ? " ❓" : ""}`,
         )
         .join("\n")
     : "None - *to add as reserve, type `/add input=reserve`*";
@@ -110,10 +106,24 @@ export const buildSignupSheetEmbed = (
       ...(guildIconUrl ? { iconURL: guildIconUrl } : {}),
     })
     .setTitle(sheet.title)
-    .setDescription(description)
     .addFields(
       ...partyFields,
       { name: "Reserves:", value: reserveText, inline: false },
+      {
+        name: "",
+        value: `🗓️ **${signedUpCount}** of **${sheet.slots.length}** filled`,
+        inline: true,
+      },
+      {
+        name: "",
+        value: `🪑 **${sheet.reserves.length}** reserve/s`,
+        inline: true,
+      },
+      {
+        name: "",
+        value: `❓ **${tbcCount}** TBC`,
+        inline: true,
+      },
       {
         name: "Schedule:",
         value: formatSignupSchedule(sheet),
@@ -129,6 +139,9 @@ export const buildSignupSheetEmbed = (
         .join(" | "),
       iconURL: sheet.organizerAvatarUrl,
     });
+  if (sheet.notes?.trim()) {
+    embed.setDescription(`Important Notes:\n${sheet.notes.trim()}`);
+  }
   if (sheet.thumbnailUrl) embed.setThumbnail(sheet.thumbnailUrl);
   if (sheet.color !== null) embed.setColor(sheet.color);
   return embed;

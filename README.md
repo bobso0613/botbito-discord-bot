@@ -194,9 +194,30 @@ Configure role-restricted channels in `private/discord_settings.json`:
 
 ## Signup Sheets 📋
 
-Channel-scoped signup sheets (created with `/newrun`) support their own set of guild-only commands (`/add`, `/remove`, `/swap`, `/clear`, `/change`, and more). Every signup sheet embed includes a **Show list of commands** button that replies ephemerally with the full command reference for that sheet.
+Channel-scoped signup sheets (created with `/newrun`) provide an interactive party formation and roster management system stored per-guild under `private/signup-sheets/<guildId>.json`.
 
-`/ping` pings signed-up and/or reserve members with a message, formatted as `Ping from **<invoker display name>**: <message>` followed by the mentions on their own line. The required `which` choice selects `Main Roster`, `Reserves`, or `All`.
+### Features & Capabilities
+
+- **Party Setup & Customization**: Create multi-party configurations with customizable party sizes, custom run names, notes, thumbnail icons, embed colors, server timezones, and instance types.
+- **Roster Management**:
+  - `/add` (alias `/a`): Sign up for specific slot numbers (e.g. `1`, `1, 2`), `random` open slot, or `reserve`. Supports signing up other users by mention or username (e.g. `2 @user` or `2 B4D`).
+  - `/remove` (alias `/r`): Remove your own signups/reserves, or remove specific slot/reserve positions.
+  - `/swap`: Join a slot as yourself, swap two slots/reserves, or move to reserves. If a user holds multiple signups, specifying the second position is required to prevent ambiguity.
+  - `/charnote` (alias `/char`): Add character notes (e.g. `HP 3x`, `Alt`, `DPS`) to your own slot/reserve or a specified position number.
+  - `/removecharnote` (alias `/rc`): Clear character notes for your own positions or specified slot/reserve numbers.
+  - `/tbc`: Toggle To Be Confirmed (TBC) status for yourself or specified slot/reserve numbers. Marked with a `❓` emoji on the roster.
+  - `/removetbc` (alias `/rtbc`): Remove TBC markings from your own positions or specified slot/reserve numbers.
+  - `/ping`: Ping participants with a message. The `which` option selects `Main Roster`, `Reserves`, `TBC`, or `All`.
+- **Schedule Management**:
+  - `/sdt`: Set or clear (`TBD`) run date and time.
+  - `/when`: Display the localized run time and server time.
+  - `/gonow`: Set the run time to now (with optional duration offset).
+  - `/postpone`: Shift the scheduled time without modifying the roster.
+  - `/next`: Shift the schedule for a fresh run and clear the roster.
+  - `/last`, `/show`, `/s`: Re-post the channel's current signup sheet embed.
+- **Interactive Action Buttons**: Every published sheet embed includes two rows of interactive action buttons that open input modals:
+  - **Row 1**: `Add` (Success), `Remove` (Danger), `TBC` (Primary), `Swap` (Primary)
+  - **Row 2**: `Char` (Success), `Remove Char` (Danger), `Schedule` (Secondary), `Command List` (Secondary)
 
 ## Project Layout 🧱
 
@@ -207,34 +228,39 @@ src/
 ├── index.ts
 ├── deploy-commands.ts
 ├── commands/
-│   ├── help.command.ts
 │   ├── guildsched.command.ts
+│   ├── help.command.ts
 │   ├── index.ts
-│   ├── mysched.command.ts
 │   ├── mycooldowns.command.ts
-│   ├── payout.command.ts
+│   ├── mysched.command.ts
 │   ├── payout-summary.command.ts
+│   ├── payout.command.ts
 │   └── signup.command.ts
 ├── constants/
-│   ├── index.ts
-│   └── cooldowns.ts
+│   ├── cooldowns.ts
+│   └── index.ts
 ├── services/
 │   ├── google-sheets.service.ts
+│   ├── guild-schedule-announcement.service.ts
 │   ├── guild-schedule.service.ts
 │   ├── payout.service.ts
 │   └── signup-sheet.service.ts
 ├── templates/
+│   ├── cooldowns.template.ts
 │   ├── guild-schedule.template.ts
 │   ├── payout.template.ts
 │   └── signup-sheet.template.ts
 ├── types/
 │   ├── command.ts
-│   ├── guild-schedule.ts
+│   ├── cooldowns.ts
+│   ├── discord-settings.ts
 │   ├── google-sheets.ts
+│   ├── guild-schedule.ts
 │   ├── interaction-context.ts
 │   ├── payout.ts
 │   └── signup-sheet.ts
 └── utils/
+    ├── cooldowns.ts
     ├── format-zeny.ts
     ├── guild-members.ts
     ├── guild-schedule.ts
@@ -242,7 +268,9 @@ src/
     ├── logger.ts
     ├── payout-embed.ts
     ├── payout-sheet.ts
-    └── payout-summary.ts
+    ├── payout-summary.ts
+    ├── server-timestamp.ts
+    └── signup-sheet.ts
 ```
 
 ## Scripts 📜

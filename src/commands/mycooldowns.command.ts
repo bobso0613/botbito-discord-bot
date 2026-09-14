@@ -26,7 +26,9 @@ import {
 } from "../utils/guild-schedule.js";
 import { getInteractionContext } from "../utils/interaction-context.js";
 
-type MyCooldownsInteraction = ChatInputCommandInteraction | ButtonInteraction;
+export type MyCooldownsInteraction =
+  | ChatInputCommandInteraction
+  | ButtonInteraction;
 
 /** Gets active signed-up and reserve schedules for the current schedule week. */
 const getAccessibleGuildSchedules = async (

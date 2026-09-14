@@ -178,7 +178,8 @@ export const COMMAND_GUIDE: ReadonlyArray<{
       },
       {
         name: "second",
-        description: "Second slot number or reserve",
+        description:
+          "Second slot number or reserve (required if you have multiple signups)",
         required: false,
       },
     ],
@@ -203,7 +204,49 @@ export const COMMAND_GUIDE: ReadonlyArray<{
       { name: "note", description: "Character note", required: true },
       {
         name: "position",
-        description: "Slot (defaults to your own slot)",
+        description:
+          "Slot or reserve number (defaults to your own slot/reserve)",
+        required: false,
+      },
+    ],
+  },
+  {
+    name: "/removecharnote",
+    description: "Remove character notes (alias: /rc)",
+    emoji: "🗑️",
+    parameters: [
+      {
+        name: "input",
+        description:
+          "Slot or reserve number(s) comma-separated (blank removes all your character notes)",
+        required: false,
+      },
+    ],
+  },
+  {
+    name: "/tbc",
+    description:
+      "Toggle To Be Confirmed (TBC) status on slot(s), reserve(s), or yourself",
+    emoji: "❓",
+    parameters: [
+      {
+        name: "input",
+        description:
+          "Slot or reserve number(s) comma-separated (blank toggles your own TBC status)",
+        required: false,
+      },
+    ],
+  },
+  {
+    name: "/removetbc",
+    description:
+      "Remove TBC markings from slot(s), reserve(s), or yourself (alias: /rtbc)",
+    emoji: "✅",
+    parameters: [
+      {
+        name: "input",
+        description:
+          "Slot or reserve number(s) comma-separated (blank removes your own TBC status)",
         required: false,
       },
     ],
@@ -319,7 +362,7 @@ export const COMMAND_GUIDE: ReadonlyArray<{
       { name: "message", description: "Message", required: true },
       {
         name: "which",
-        description: "Who to ping (Main Roster, Reserves, All)",
+        description: "Who to ping (Main Roster, Reserves, TBC, All)",
         required: true,
       },
     ],

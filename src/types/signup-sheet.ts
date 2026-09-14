@@ -4,6 +4,7 @@ export interface SignupSlot {
   signupUserId: string | null;
   signupDisplayName: string | null;
   charNote: string | null;
+  isTbc?: boolean;
 }
 
 export interface SignupSheet {
@@ -18,6 +19,7 @@ export interface SignupSheet {
     userId: string;
     displayName: string;
     charNote: string | null;
+    isTbc?: boolean;
   }>;
   notes: string | null;
   thumbnailUrl: string | null;

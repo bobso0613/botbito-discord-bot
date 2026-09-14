@@ -103,4 +103,44 @@ describe("/ping", () => {
       content: "Ping from **Invoker**: hello\n\n<@user-2>",
     });
   });
+
+  it("only pings TBC participants across slots and reserves when which=tbc", async () => {
+    getSignupSheet.mockResolvedValue(
+      buildSheet({
+        slots: [
+          {
+            number: 1,
+            role: "Tank",
+            signupUserId: "user-1",
+            signupDisplayName: "Alice",
+            charNote: null,
+            isTbc: true,
+          },
+          {
+            number: 2,
+            role: "DPS",
+            signupUserId: "user-3",
+            signupDisplayName: "Charlie",
+            charNote: null,
+            isTbc: false,
+          },
+        ],
+        reserves: [
+          {
+            userId: "user-2",
+            displayName: "Bob",
+            charNote: null,
+            isTbc: true,
+          },
+        ],
+      }),
+    );
+    const interaction = createInteraction("tbc");
+
+    await pingCommand.execute(interaction as never);
+
+    expect(interaction.reply).toHaveBeenCalledWith({
+      content: "Ping from **Invoker**: hello\n\n<@user-1> <@user-2>",
+    });
+  });
 });

@@ -49,6 +49,20 @@ import {
   SIGNUP_INSTANCE_TYPE_BUTTON_ID,
   SIGNUP_INSTANCE_TYPE_SELECT_ID,
   SIGNUP_EDIT_PARTY_SETUP_BUTTON_ID,
+  SIGNUP_ADD_BUTTON_ID,
+  SIGNUP_REMOVE_BUTTON_ID,
+  SIGNUP_TBC_BUTTON_ID,
+  SIGNUP_CHARNOTE_BUTTON_ID,
+  SIGNUP_REMOVE_CHARNOTE_BUTTON_ID,
+  SIGNUP_SWAP_BUTTON_ID,
+  SIGNUP_WHEN_BUTTON_ID,
+  handleSignupAddButton,
+  handleSignupRemoveButton,
+  handleSignupTbcButton,
+  handleSignupCharNoteButton,
+  handleSignupRemoveCharNoteButton,
+  handleSignupSwapButton,
+  handleSignupWhenButton,
 } from "./commands/signup.command.js";
 import { logger } from "./utils/logger.js";
 
@@ -192,6 +206,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
         handleSignupAddCancelButton(buttonInteraction),
       [SIGNUP_INFO_BUTTON_ID]: (buttonInteraction) =>
         handleSignupInfoButton(buttonInteraction),
+      [SIGNUP_ADD_BUTTON_ID]: (buttonInteraction) =>
+        handleSignupAddButton(buttonInteraction),
+      [SIGNUP_REMOVE_BUTTON_ID]: (buttonInteraction) =>
+        handleSignupRemoveButton(buttonInteraction),
+      [SIGNUP_TBC_BUTTON_ID]: (buttonInteraction) =>
+        handleSignupTbcButton(buttonInteraction),
+      [SIGNUP_CHARNOTE_BUTTON_ID]: (buttonInteraction) =>
+        handleSignupCharNoteButton(buttonInteraction),
+      [SIGNUP_REMOVE_CHARNOTE_BUTTON_ID]: (buttonInteraction) =>
+        handleSignupRemoveCharNoteButton(buttonInteraction),
+      [SIGNUP_SWAP_BUTTON_ID]: (buttonInteraction) =>
+        handleSignupSwapButton(buttonInteraction),
+      [SIGNUP_WHEN_BUTTON_ID]: (buttonInteraction) =>
+        handleSignupWhenButton(buttonInteraction),
       [SIGNUP_INSTANCE_TYPE_BUTTON_ID]: (buttonInteraction) =>
         handleSignupInstanceTypeButton(buttonInteraction),
       [SIGNUP_EDIT_PARTY_SETUP_BUTTON_ID]: (buttonInteraction) =>

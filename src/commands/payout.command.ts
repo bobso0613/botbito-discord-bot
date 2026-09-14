@@ -13,7 +13,7 @@ import {
 import type { Command } from "../types/command.js";
 import { getInteractionContext } from "../utils/interaction-context.js";
 
-type PayoutInteraction = ChatInputCommandInteraction | ButtonInteraction;
+export type PayoutInteraction = ChatInputCommandInteraction | ButtonInteraction;
 
 /** Sends the invoking member's payout details, optionally as an ephemeral response. */
 export const sendPayout = async (
