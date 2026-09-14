@@ -1,14 +1,33 @@
 import { jest } from "@jest/globals";
 import type { SignupSheet } from "../types/signup-sheet.js";
 
-const getSignupSheet = jest.fn<() => Promise<SignupSheet | null>>();
+const getSignupSheet =
+  jest.fn<
+    (guildId: string, channelId: string) => Promise<SignupSheet | null>
+  >();
 const saveSignupSheet = jest.fn();
 const deleteSignupSheet = jest.fn();
+const mutateSignupSheet = jest.fn(
+  async (
+    guildId: string,
+    channelId: string,
+    mutate: (sheet: SignupSheet) => string | null,
+  ) => {
+    const sheet = await getSignupSheet(guildId, channelId);
+    if (!sheet) return { sheet: null, error: "MISSING_SHEET" };
+    const cloned = structuredClone(sheet);
+    const error = mutate(cloned);
+    if (error) return { sheet: null, error };
+    await saveSignupSheet(cloned);
+    return { sheet: cloned, error: null };
+  },
+);
 
 jest.unstable_mockModule("../services/signup-sheet.service.js", () => ({
   getSignupSheet,
   saveSignupSheet,
   deleteSignupSheet,
+  mutateSignupSheet,
 }));
 
 const { signupCommands } = await import("./signup.command.js");

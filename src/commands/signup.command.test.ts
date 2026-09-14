@@ -1,18 +1,38 @@
 import { jest } from "@jest/globals";
 import type { SignupSheet } from "../types/signup-sheet.js";
 
-const getSignupSheet = jest.fn<() => Promise<SignupSheet | null>>();
+const getSignupSheet =
+  jest.fn<
+    (guildId: string, channelId: string) => Promise<SignupSheet | null>
+  >();
 const saveSignupSheet = jest.fn();
 const deleteSignupSheet = jest.fn();
+const mutateSignupSheet = jest.fn(
+  async (
+    guildId: string,
+    channelId: string,
+    mutate: (sheet: SignupSheet) => string | null,
+  ) => {
+    const sheet = await getSignupSheet(guildId, channelId);
+    if (!sheet) return { sheet: null, error: "MISSING_SHEET" };
+    const cloned = structuredClone(sheet);
+    const error = mutate(cloned);
+    if (error) return { sheet: null, error };
+    await saveSignupSheet(cloned);
+    return { sheet: cloned, error: null };
+  },
+);
 
 jest.unstable_mockModule("../services/signup-sheet.service.js", () => ({
   getSignupSheet,
   saveSignupSheet,
   deleteSignupSheet,
+  mutateSignupSheet,
 }));
 
 const {
   signupCommands,
+  parseSetup,
   handleSignupAddButton,
   handleSignupRemoveButton,
   handleSignupTbcButton,
@@ -1143,6 +1163,261 @@ describe("/change roster and roster editing buttons", () => {
             ],
           }),
         ],
+      }),
+    );
+  });
+
+  it("rejects unauthorized user from executing /change", async () => {
+    const sheet = buildSheet();
+    getSignupSheet.mockResolvedValue(sheet);
+    const interaction = {
+      guildId: "guild-1",
+      channelId: "channel-1",
+      user: { id: "stranger-99", displayName: "Stranger" },
+      options: {
+        getSubcommand: jest.fn().mockReturnValue("roster"),
+      },
+      reply: jest.fn(),
+    };
+
+    await changeCommand.execute(interaction as never);
+
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content:
+          "Only the organizer or players on the roster can change the signup sheet.",
+      }),
+    );
+  });
+
+  it("rejects unauthorized user on handleSignupCancelSetupButton", async () => {
+    const sheet = buildSheet();
+    getSignupSheet.mockResolvedValue(sheet);
+    const setupInteraction = {
+      guildId: "guild-1",
+      channelId: "channel-1",
+      user: { id: "user-1", displayName: "Organizer" },
+      options: {
+        getSubcommand: jest.fn().mockReturnValue("roster"),
+      },
+      reply: jest.fn(),
+    };
+    await changeCommand.execute(setupInteraction as never);
+
+    const buttonInteraction = {
+      guildId: "guild-1",
+      channelId: "channel-1",
+      user: { id: "stranger-99", displayName: "Stranger" },
+      reply: jest.fn(),
+      deferUpdate: jest.fn(),
+      editReply: jest.fn(),
+    };
+
+    await handleSignupCancelSetupButton(buttonInteraction as never);
+
+    expect(buttonInteraction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: "This roster setup expired or belongs to another user.",
+      }),
+    );
+    expect(buttonInteraction.deferUpdate).not.toHaveBeenCalled();
+  });
+
+  it("cleans up stale message components on publishing a new sheet message", async () => {
+    const oldMessageEdit = jest.fn();
+    const mockChannel = {
+      messages: {
+        fetch: jest
+          .fn<() => Promise<{ edit: typeof oldMessageEdit }>>()
+          .mockResolvedValue({ edit: oldMessageEdit }),
+      },
+    };
+    const sheet = buildSheet({ messageId: "old-msg-123" });
+    getSignupSheet.mockResolvedValue(sheet);
+
+    const interaction = {
+      guildId: "guild-1",
+      channelId: "channel-1",
+      channel: mockChannel,
+      guild: { id: "guild-1", name: "Guild 1", iconURL: () => null },
+      user: { id: "user-1", displayName: "Organizer" },
+      reply: jest.fn(),
+      fetchReply: jest
+        .fn<() => Promise<{ id: string }>>()
+        .mockResolvedValue({ id: "new-msg-456" }),
+      deferred: false,
+      replied: false,
+      options: {
+        getString: jest.fn((name: string) =>
+          name === "input" ? "New Run Title" : null,
+        ),
+      },
+    };
+
+    const nameCommand = signupCommands.find((c) => c.data.name === "name")!;
+    await nameCommand.execute(interaction as never);
+
+    expect(oldMessageEdit).toHaveBeenCalledWith({ components: [] });
+    expect(saveSignupSheet).toHaveBeenCalledWith(
+      expect.objectContaining({ messageId: "new-msg-456" }),
+    );
+  });
+});
+
+describe("parseSetup party size changes", () => {
+  const createModalSubmitInteraction = (
+    fields: {
+      title?: string;
+      datetime?: string;
+      timezone?: string;
+      parties?: string;
+      sizes?: string;
+    } = {},
+  ) => ({
+    guildId: "guild-1",
+    channelId: "channel-1",
+    user: {
+      id: "user-1",
+      displayName: "Organizer",
+      displayAvatarURL: () => "https://example.com/avatar.png",
+    },
+    fields: {
+      getTextInputValue: jest.fn((name: string) => {
+        if (name === "title") return fields.title ?? "Test Run";
+        if (name === "datetime") return fields.datetime ?? "10/09 20:00 GMT+8";
+        if (name === "timezone") return fields.timezone ?? "GMT+8";
+        if (name === "parties") return fields.parties ?? "1";
+        if (name === "sizes") return fields.sizes ?? "2";
+        return "";
+      }),
+    },
+  });
+
+  it("returns an error when reducing party sizes would drop occupied slots", () => {
+    const existingSheet = buildSheet({
+      partySizes: [2],
+      slots: [
+        {
+          number: 1,
+          role: "Tank",
+          signupUserId: "user-1",
+          signupDisplayName: "Alice",
+          charNote: null,
+        },
+        {
+          number: 2,
+          role: "DPS",
+          signupUserId: "user-2",
+          signupDisplayName: "Bob",
+          charNote: null,
+        },
+      ],
+    });
+
+    const interaction = createModalSubmitInteraction({
+      parties: "1",
+      sizes: "1",
+    });
+
+    const result = parseSetup(interaction as never, existingSheet);
+    expect(result).toEqual({
+      error: expect.stringContaining(
+        "Reducing party sizes would drop signups in slot(s): 02: DPS",
+      ),
+    });
+  });
+
+  it("allows reducing party sizes when dropped slots have no signups", () => {
+    const existingSheet = buildSheet({
+      partySizes: [2],
+      slots: [
+        {
+          number: 1,
+          role: "Tank",
+          signupUserId: "user-1",
+          signupDisplayName: "Alice",
+          charNote: null,
+        },
+        {
+          number: 2,
+          role: "DPS",
+          signupUserId: null,
+          signupDisplayName: null,
+          charNote: null,
+        },
+      ],
+    });
+
+    const interaction = createModalSubmitInteraction({
+      parties: "1",
+      sizes: "1",
+    });
+
+    const result = parseSetup(interaction as never, existingSheet);
+    expect("sheet" in result).toBe(true);
+    if ("sheet" in result) {
+      expect(result.sheet.slots.length).toBe(1);
+      expect(result.sheet.slots[0]?.signupUserId).toBe("user-1");
+    }
+  });
+
+  it("sets organizerId on sheet creation and preserves it on existing sheet", () => {
+    const interaction = createModalSubmitInteraction({
+      datetime: "10/09 20:00 GMT+8",
+    });
+    const newResult = parseSetup(interaction as never);
+    expect("sheet" in newResult).toBe(true);
+    if ("sheet" in newResult) {
+      expect(newResult.sheet.organizerId).toBe("user-1");
+    }
+
+    const existingSheet = buildSheet({ organizerId: "orig-org-id" });
+    const editResult = parseSetup(interaction as never, existingSheet);
+    expect("sheet" in editResult).toBe(true);
+    if ("sheet" in editResult) {
+      expect(editResult.sheet.organizerId).toBe("orig-org-id");
+    }
+  });
+});
+
+describe("/swaporganizer", () => {
+  it("updates organizerId, organizerName, and organizerAvatarUrl", async () => {
+    const sheet = buildSheet({
+      organizerId: "user-1",
+      organizerName: "Old Organizer",
+      organizerAvatarUrl: "https://example.com/old.png",
+    });
+    getSignupSheet.mockResolvedValue(sheet);
+
+    const newUser = {
+      id: "user-new-99",
+      displayName: "New Organizer",
+      displayAvatarURL: () => "https://example.com/new.png",
+    };
+
+    const interaction = {
+      guildId: "guild-1",
+      channelId: "channel-1",
+      guild: { id: "guild-1", name: "Guild 1", iconURL: () => null },
+      user: { id: "user-1", displayName: "Invoker" },
+      reply: jest.fn(),
+      deferred: false,
+      replied: false,
+      options: {
+        getUser: jest.fn((name: string) => (name === "user" ? newUser : null)),
+      },
+    };
+
+    const swapOrgCommand = signupCommands.find(
+      (c) => c.data.name === "swaporganizer",
+    )!;
+    await swapOrgCommand.execute(interaction as never);
+
+    expect(saveSignupSheet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        organizerId: "user-new-99",
+        organizerName: "New Organizer",
+        organizerAvatarUrl: "https://example.com/new.png",
       }),
     );
   });

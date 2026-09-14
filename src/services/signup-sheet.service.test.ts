@@ -23,8 +23,12 @@ jest.unstable_mockModule("node:fs/promises", () => ({
 }));
 jest.unstable_mockModule("node:crypto", () => ({ randomUUID }));
 
-const { getSignupSheet, saveSignupSheet, deleteSignupSheet } =
-  await import("./signup-sheet.service.js");
+const {
+  getSignupSheet,
+  saveSignupSheet,
+  deleteSignupSheet,
+  mutateSignupSheet,
+} = await import("./signup-sheet.service.js");
 
 const buildSheet = (overrides: Partial<SignupSheet> = {}): SignupSheet => ({
   guildId: "guild-1",
@@ -151,6 +155,62 @@ describe("signup-sheet service", () => {
       await expect(
         deleteSignupSheet("guild-1", "channel-1"),
       ).resolves.toBeUndefined();
+    });
+  });
+
+  describe("mutateSignupSheet", () => {
+    it("returns MISSING_SHEET error when channel sheet does not exist", async () => {
+      readFile.mockResolvedValue(JSON.stringify({}));
+
+      const result = await mutateSignupSheet(
+        "guild-1",
+        "channel-1",
+        (sheet) => {
+          sheet.title = "Mutated";
+          return null;
+        },
+      );
+
+      expect(result).toEqual({ sheet: null, error: "MISSING_SHEET" });
+      expect(writeFile).not.toHaveBeenCalled();
+    });
+
+    it("mutates and persists sheet on success", async () => {
+      const original = buildSheet({ title: "Original" });
+      readFile.mockResolvedValue(JSON.stringify({ "channel-1": original }));
+
+      const result = await mutateSignupSheet(
+        "guild-1",
+        "channel-1",
+        (sheet) => {
+          sheet.title = "Mutated";
+          return null;
+        },
+      );
+
+      expect(result.error).toBeNull();
+      expect(result.sheet?.title).toBe("Mutated");
+      const [, contents] = writeFile.mock.calls[0] as [string, string];
+      expect(JSON.parse(contents)).toEqual({
+        "channel-1": expect.objectContaining({ title: "Mutated" }),
+      });
+    });
+
+    it("returns error and does not persist when mutate returns an error", async () => {
+      const original = buildSheet({ title: "Original" });
+      readFile.mockResolvedValue(JSON.stringify({ "channel-1": original }));
+
+      const result = await mutateSignupSheet(
+        "guild-1",
+        "channel-1",
+        (sheet) => {
+          sheet.title = "Mutated";
+          return "Custom mutation error";
+        },
+      );
+
+      expect(result).toEqual({ sheet: null, error: "Custom mutation error" });
+      expect(writeFile).not.toHaveBeenCalled();
     });
   });
 });

@@ -1,4 +1,4 @@
-import type { Message } from "discord.js";
+import type { Message, User } from "discord.js";
 import type { SignupSheet, SignupSlot } from "../types/signup-sheet.js";
 
 /**
@@ -303,4 +303,39 @@ export const parseTimeShift = (value: string): number | null => {
     amount,
     normalizedUnit === "min" ? "minute" : normalizedUnit,
   );
+};
+
+/**
+ * Checks if a user is the organizer or currently in the party roster / reserves.
+ */
+export const isUserInRosterOrOrganizer = (
+  sheet: SignupSheet,
+  user: Pick<User, "id"> &
+    Partial<Pick<User, "displayName" | "globalName" | "username">>,
+): boolean => {
+  if (sheet.organizerId && sheet.organizerId === user.id) {
+    return true;
+  }
+  const names = [user.displayName, user.globalName, user.username].filter(
+    (n): n is string => Boolean(n),
+  );
+  if (names.some((name) => sheet.organizerName === name)) {
+    return true;
+  }
+  const inSlots = sheet.slots.some(
+    (slot) =>
+      slot.signupUserId === user.id ||
+      (slot.signupDisplayName &&
+        names.includes(
+          normalizeRosterDisplayName(slot.signupDisplayName) ?? "",
+        )),
+  );
+  if (inSlots) return true;
+  const inReserves = sheet.reserves.some(
+    (reserve) =>
+      reserve.userId === user.id ||
+      (reserve.displayName &&
+        names.includes(normalizeRosterDisplayName(reserve.displayName) ?? "")),
+  );
+  return inReserves;
 };

@@ -11,6 +11,7 @@ export interface SignupSheet {
   guildId: string;
   channelId: string;
   title: string;
+  organizerId?: string | null;
   organizerName: string;
   organizerAvatarUrl: string;
   partySizes: number[];
@@ -28,4 +29,5 @@ export interface SignupSheet {
   timestamp: number | null;
   scheduleTimezone: string | null;
   serverTimezone: string | null;
+  messageId?: string | null;
 }

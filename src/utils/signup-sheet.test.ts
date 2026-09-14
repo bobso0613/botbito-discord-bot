@@ -8,6 +8,7 @@ import {
   getGmtOffset,
   getInvokingUserSlot,
   getRosterPrompt,
+  isUserInRosterOrOrganizer,
   mergeActionNotices,
   normalizeRosterDisplayName,
   parseNewRunTimestamp,
@@ -297,6 +298,69 @@ describe("signup-sheet utils", () => {
 
     it("parses fractional amounts in 0.5 increments", () => {
       expect(parseTimeShift("1.5 days")).toBe(1.5 * 86400);
+    });
+  });
+
+  describe("isUserInRosterOrOrganizer", () => {
+    it("returns true when the user matches the organizerId", () => {
+      const sheet = buildSheet([]);
+      sheet.organizerId = "organizer-123";
+      sheet.organizerName = "Alice";
+      expect(
+        isUserInRosterOrOrganizer(sheet, {
+          id: "organizer-123",
+          displayName: "DifferentName",
+        }),
+      ).toBe(true);
+    });
+
+    it("returns true when the user matches the organizerName", () => {
+      const sheet = buildSheet([]);
+      sheet.organizerName = "Alice";
+      expect(
+        isUserInRosterOrOrganizer(sheet, {
+          id: "user-9",
+          displayName: "Alice",
+        }),
+      ).toBe(true);
+    });
+
+    it("returns true when the user is signed up in a party slot", () => {
+      const sheet = buildSheet([
+        buildSlot({ signupUserId: "user-1", signupDisplayName: "Bob" }),
+      ]);
+      expect(
+        isUserInRosterOrOrganizer(sheet, {
+          id: "user-1",
+          displayName: "Invoker",
+        }),
+      ).toBe(true);
+    });
+
+    it("returns true when the user is in reserves", () => {
+      const sheet = buildSheet([]);
+      sheet.reserves = [
+        { userId: "user-3", displayName: "Charlie", charNote: null },
+      ];
+      expect(
+        isUserInRosterOrOrganizer(sheet, {
+          id: "user-3",
+          displayName: "Invoker",
+        }),
+      ).toBe(true);
+    });
+
+    it("returns false when the user is not organizer, slot, or reserve", () => {
+      const sheet = buildSheet([
+        buildSlot({ signupUserId: "user-1", signupDisplayName: "Bob" }),
+      ]);
+      sheet.organizerName = "Alice";
+      expect(
+        isUserInRosterOrOrganizer(sheet, {
+          id: "user-99",
+          displayName: "Stranger",
+        }),
+      ).toBe(false);
     });
   });
 });

@@ -36,13 +36,14 @@ export const getSignupSheet = async (
  */
 const mutateGuildSheets = async (
   guildId: string,
-  mutate: (sheets: SignupSheets) => void,
+  mutate: (sheets: SignupSheets) => boolean | void,
 ): Promise<void> => {
   const filePath = getGuildStoragePath(guildId);
   const currentQueue = mutationQueues.get(guildId) ?? Promise.resolve();
   const operation = currentQueue.then(async () => {
     const sheets = await readGuildSheets(guildId);
-    mutate(sheets);
+    const shouldWrite = mutate(sheets);
+    if (shouldWrite === false) return;
     await mkdir(dirname(filePath), { recursive: true });
     const temporaryPath = `${filePath}.${randomUUID()}.tmp`;
     await writeFile(temporaryPath, JSON.stringify(sheets, null, 2), "utf8");
@@ -60,6 +61,39 @@ export const saveSignupSheet = async (sheet: SignupSheet): Promise<void> => {
   await mutateGuildSheets(sheet.guildId, (sheets) => {
     sheets[sheet.channelId] = sheet;
   });
+};
+
+/**
+ * Atomically mutates a channel's signup sheet inside a queued critical section.
+ * Reads the latest sheets, applies `mutate` to a clone of the channel's sheet,
+ * and persists the updated sheet if `mutate` returns null (success).
+ * Returns `{ sheet: null, error: "MISSING_SHEET" }` when no sheet exists for the channel.
+ */
+export const mutateSignupSheet = async (
+  guildId: string,
+  channelId: string,
+  mutate: (sheet: SignupSheet) => string | null,
+): Promise<{ sheet: SignupSheet | null; error: string | null }> => {
+  let resultSheet: SignupSheet | null = null;
+  let resultError: string | null = null;
+
+  await mutateGuildSheets(guildId, (sheets) => {
+    const current = sheets[channelId];
+    if (!current) {
+      resultError = "MISSING_SHEET";
+      return false;
+    }
+    const cloned = structuredClone(current);
+    const error = mutate(cloned);
+    if (error) {
+      resultError = error;
+      return false;
+    }
+    sheets[channelId] = cloned;
+    resultSheet = cloned;
+  });
+
+  return { sheet: resultSheet, error: resultError };
 };
 
 /** Removes the persisted signup sheet for a channel, if one exists. */

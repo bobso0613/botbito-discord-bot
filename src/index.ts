@@ -136,7 +136,7 @@ client.once(Events.ClientReady, async (readyClient) => {
   readyClient.user.setPresence({
     activities: [
       {
-        name: "/help /payout /guildsched | @bobito",
+        name: "Use /help for command list | @bobito",
         type: ActivityType.Listening,
       },
     ],
