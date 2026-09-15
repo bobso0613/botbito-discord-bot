@@ -102,17 +102,35 @@ const loadDiscordSettings = (): DiscordSettings => {
 
 export const DISCORD_SETTINGS = loadDiscordSettings();
 
+// Mutated in place (not reassigned) so consumers that imported these arrays
+// see refreshed contents after reloadDiscordSettings() runs.
+export const PAYOUT_GUILD_IDS: string[] = [];
+export const GUILD_SCHEDULE_GUILD_IDS: string[] = [];
+/** Guilds where channel-scoped signup sheets are available as guild commands. */
+export const SIGNUP_GUILD_IDS: string[] = [];
+
+const refreshGuildIdLists = (): void => {
+  PAYOUT_GUILD_IDS.splice(
+    0,
+    PAYOUT_GUILD_IDS.length,
+    ...DISCORD_SETTINGS.payoutGuildIds,
+  );
+  GUILD_SCHEDULE_GUILD_IDS.splice(
+    0,
+    GUILD_SCHEDULE_GUILD_IDS.length,
+    ...Object.keys(DISCORD_SETTINGS.guildScheduleSourceByGuild),
+  );
+  SIGNUP_GUILD_IDS.splice(
+    0,
+    SIGNUP_GUILD_IDS.length,
+    ...new Set([...PAYOUT_GUILD_IDS, ...GUILD_SCHEDULE_GUILD_IDS]),
+  );
+};
+
+refreshGuildIdLists();
+
 /** Reloads the runtime aggregate after a guild setting is created or changed. */
 export const reloadDiscordSettings = (): void => {
   Object.assign(DISCORD_SETTINGS, loadDiscordSettings());
+  refreshGuildIdLists();
 };
-
-export const PAYOUT_GUILD_IDS = DISCORD_SETTINGS.payoutGuildIds;
-export const GUILD_SCHEDULE_GUILD_IDS = Object.keys(
-  DISCORD_SETTINGS.guildScheduleSourceByGuild,
-);
-
-/** Guilds where channel-scoped signup sheets are available as guild commands. */
-export const SIGNUP_GUILD_IDS = [
-  ...new Set([...PAYOUT_GUILD_IDS, ...GUILD_SCHEDULE_GUILD_IDS]),
-];

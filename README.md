@@ -66,22 +66,46 @@ Create one `private/guild-settings/<guild-id>.json` file for each guild with sch
 }
 ```
 
-When the bot joins a guild, it creates this file with empty schedule arrays and
-empty `DEV`/`PROD` icons if it does not already exist. Members with the
-Administrator permission can configure schedule sources with `/guildsetting set`:
-`tracked-category`, `excluded-channels`, `schedule-channels`, and
-`role-restricted-channels`. The matching `/guildsetting clear` subcommands clear
-each setting without requiring a value. Channel values accept Discord channel
-links or `#channel-name`; role restrictions use comma-separated
-`#channel=@role` mappings.
+When the bot joins a guild, or on startup for any guild it has already joined,
+it creates this file with empty schedule arrays and empty `DEV`/`PROD` icons if
+it does not already exist. Members with the Administrator permission can
+configure schedule sources with `/guildsetting set`: `tracked-category`,
+`excluded-channels`, `schedule-channels`, and `role-restricted-channels`. The
+matching `/guildsetting clear` subcommands clear each setting without requiring
+a value. Channel values accept Discord channel links or `#channel-name`; role
+restrictions use comma-separated `#channel=@role` mappings. `/guildsetting
+show` displays the current settings for the invoking guild.
 
 Cooldown instance types are also stored per guild in `cooldownInstanceTypes` and
-`multiplierInstanceTypes`. Administrators can update them with
+`multiplierInstanceTypes`. Administrators can add or update one type with
 `/guildsetting set cooldown-instance-types` using the separate `name`,
-`keywords`, `maxattempts`, and `emoji` options, or with
-`/guildsetting set multiplier-instance-types` using comma-separated instance
-names. The matching clear commands remove the configured values. New guilds and
-the existing guild settings are initialized from `src/constants/cooldowns.ts`.
+`keywords`, `maxattempts`, and `emoji` options; a name that already exists is
+updated in place instead of erroring. Use `/guildsetting remove
+cooldown-instance-type` to remove a single type by name. Multiplier types are
+still fully replaced with `/guildsetting set multiplier-instance-types` using
+comma-separated instance names. The matching clear commands remove all
+configured values for a setting. New guilds and the existing guild settings are
+initialized from `src/constants/cooldowns.ts`.
+
+### Migrating from the monolithic `discord_settings.json` 🔀
+
+Older deployments stored `payoutGuildIds`, `guildScheduleSourceByGuild`,
+`cooldownInstanceTypes`, and `multiplierInstanceTypes` together in a single
+`private/discord_settings.json`. To migrate to the per-guild layout above:
+
+1. Keep `payoutGuildIds`, `payoutToPingId`, and `payoutToPingTag` in
+   `private/discord_settings.json`; those remain global settings.
+2. Move `guildScheduleBotIds` into its own `private/guild_schedule_settings.json`
+   as shown above.
+3. For each guild ID previously under `guildScheduleSourceByGuild`, create
+   `private/guild-settings/<guild-id>.json` containing that guild's
+   `guildScheduleSource`, plus its `cooldownInstanceTypes`,
+   `multiplierInstanceTypes`, and `guildIcons` (previously keyed by guild ID
+   under a shared `guildIcons` map).
+4. Start the bot once with at least one `private/guild-settings/*.json` file in
+   place; startup throws if the directory is empty. Any additional guild the
+   bot has already joined gets an empty settings file created automatically on
+   the next `ClientReady`, which you can then fill in with `/guildsetting set`.
 
 Enable the **Server Members Intent** and **Message Content Intent** in the Discord Developer Portal for the bot application. `/payoutsummary` uses the Server Members Intent to resolve Discord display names from the sheet's Discord tags. The Message Content Intent allows automatic schedule announcements to read schedule embeds from guild message events. The client also enables the `Message` and `Channel` partials so edits to schedule messages still emit `messageUpdate` after they age out of the client's cache (e.g. following a bot restart); without these, discord.js silently drops update events for uncached messages.
 

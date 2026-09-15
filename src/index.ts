@@ -152,8 +152,19 @@ client.once(Events.ClientReady, async (readyClient) => {
   });
 
   for (const guildId of readyClient.guilds.cache.keys()) {
+    try {
+      await ensureGuildSettings(guildId);
+    } catch (error) {
+      logger.error(
+        `Failed to initialize settings for guild ${guildId}:`,
+        error,
+      );
+    }
     await registerGuildSlashCommands(guildId);
   }
+  logger.log(
+    `Loaded ${Object.keys(DISCORD_SETTINGS.guildScheduleSourceByGuild).length} guild setting file(s) for ${readyClient.guilds.cache.size} joined guild(s).`,
+  );
   logger.log(`Logged in as ${readyClient.user.tag}`);
 });
 

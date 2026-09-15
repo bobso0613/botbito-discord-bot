@@ -6,7 +6,9 @@ import {
   PermissionFlagsBits,
   SlashCommandBuilder,
   type ChatInputCommandInteraction,
-  type Guild,
+  type Collection,
+  type NonThreadGuildBasedChannel,
+  type Role,
 } from "discord.js";
 import { DISCORD_SETTINGS } from "../config/discord-settings.js";
 import {
@@ -49,7 +51,7 @@ const parseInstanceType = (
 
 /** Resolves a channel mention, channel link, or #channel name to an ID of the expected type. */
 const resolveChannel = (
-  guild: Guild,
+  channels: Collection<string, NonThreadGuildBasedChannel | null>,
   value: string,
   type: ChannelType.GuildCategory | ChannelType.GuildText,
 ): string | undefined => {
@@ -58,23 +60,23 @@ const resolveChannel = (
     value.match(/discord\.com\/channels\/\d+\/(\d+)/)?.[1];
   const name = value.replace(/^#/, "").toLowerCase();
   const channel = id
-    ? guild.channels.cache.get(id)
-    : Array.from(guild.channels.cache.values()).find(
-        (candidate) => candidate.name.toLowerCase() === name,
+    ? channels.get(id)
+    : Array.from(channels.values()).find(
+        (candidate) => candidate?.name.toLowerCase() === name,
       );
   return channel?.type === type ? channel.id : undefined;
 };
 
 /** Resolves a delimited channel list, retaining entries that could not be found or had the wrong type. */
 const resolveChannels = (
-  guild: Guild,
+  channels: Collection<string, NonThreadGuildBasedChannel | null>,
   value: string,
   type: ChannelType.GuildCategory | ChannelType.GuildText,
 ): { ids: string[]; invalid: string[] } => {
   const ids: string[] = [];
   const invalid: string[] = [];
   for (const entry of splitValues(value)) {
-    const id = resolveChannel(guild, entry, type);
+    const id = resolveChannel(channels, entry, type);
     if (id) ids.push(id);
     else invalid.push(entry);
   }
@@ -82,12 +84,15 @@ const resolveChannels = (
 };
 
 /** Resolves a role mention or @role name to its Discord ID. */
-const resolveRole = (guild: Guild, value: string): string | undefined => {
+const resolveRole = (
+  roles: Collection<string, Role>,
+  value: string,
+): string | undefined => {
   const id = value.match(/^<@&(\d+)>$/)?.[1];
   const name = value.replace(/^@/, "").toLowerCase();
   const role = id
-    ? guild.roles.cache.get(id)
-    : Array.from(guild.roles.cache.values()).find(
+    ? roles.get(id)
+    : Array.from(roles.values()).find(
         (candidate) => candidate.name.toLowerCase() === name,
       );
   return role?.id;
@@ -103,6 +108,55 @@ const guildOnlyReply = async (
   });
 };
 
+/** Builds the ephemeral summary shown by `/guildsetting show`. */
+const buildGuildSettingsSummary = (guildId: string): string => {
+  const source = DISCORD_SETTINGS.guildScheduleSourceByGuild[guildId];
+  const cooldownTypes =
+    DISCORD_SETTINGS.cooldownInstanceTypesByGuild[guildId] ?? [];
+  const multiplierTypes =
+    DISCORD_SETTINGS.multiplierInstanceTypesByGuild[guildId] ?? [];
+  const roleRestrictedEntries = Object.entries(
+    source?.roleRestrictedChannels ?? {},
+  );
+
+  return [
+    `**Tracked categories:** ${
+      source?.categoryIds.length
+        ? source.categoryIds.map((id) => `<#${id}>`).join(", ")
+        : "none"
+    }`,
+    `**Schedule channels:** ${
+      source?.scheduleTextChannelIds.length
+        ? source.scheduleTextChannelIds.map((id) => `<#${id}>`).join(", ")
+        : "none"
+    }`,
+    `**Excluded channels:** ${
+      source?.excludedChannelIds?.length
+        ? source.excludedChannelIds.map((id) => `<#${id}>`).join(", ")
+        : "none"
+    }`,
+    `**Role-restricted channels:** ${
+      roleRestrictedEntries.length
+        ? roleRestrictedEntries
+            .map(([channelId, roleId]) => `<#${channelId}> -> <@&${roleId}>`)
+            .join(", ")
+        : "none"
+    }`,
+    `**Cooldown instance types:** ${
+      cooldownTypes.length
+        ? cooldownTypes
+            .map(
+              (type) => `${type.emoji} ${type.name} (max ${type.maxAttempts})`,
+            )
+            .join(", ")
+        : "none"
+    }`,
+    `**Multiplier instance types:** ${
+      multiplierTypes.length ? multiplierTypes.join(", ") : "none"
+    }`,
+  ].join("\n");
+};
+
 /** Administrator-only commands for configuring the current guild's schedule sources. */
 export const guildSettingCommand: Command = {
   data: new SlashCommandBuilder()
@@ -111,10 +165,19 @@ export const guildSettingCommand: Command = {
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
     .setContexts(InteractionContextType.Guild)
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("show")
+        .setDescription(
+          "Show this guild's current schedule and cooldown settings",
+        ),
+    )
     .addSubcommandGroup((group) =>
       group
         .setName("set")
-        .setDescription("Replace a schedule setting")
+        .setDescription(
+          "Replace a schedule setting, or add/update one cooldown instance type",
+        )
         .addSubcommand((subcommand) =>
           subcommand
             .setName("tracked-category")
@@ -234,6 +297,22 @@ export const guildSettingCommand: Command = {
             .setName("multiplier-instance-types")
             .setDescription("Clear cooldown multiplier instance names"),
         ),
+    )
+    .addSubcommandGroup((group) =>
+      group
+        .setName("remove")
+        .setDescription("Remove a single guild setting entry")
+        .addSubcommand((subcommand) =>
+          subcommand
+            .setName("cooldown-instance-type")
+            .setDescription("Remove one cooldown instance type by name")
+            .addStringOption((option) =>
+              option
+                .setName("name")
+                .setDescription("Instance type name")
+                .setRequired(true),
+            ),
+        ),
     ) as SlashCommandBuilder,
   registerInAllGuilds: true,
   execute: async (interaction) => {
@@ -254,6 +333,46 @@ export const guildSettingCommand: Command = {
 
     const subcommand = interaction.options.getSubcommand();
     const subcommandGroup = interaction.options.getSubcommandGroup();
+
+    if (!subcommandGroup && subcommand === "show") {
+      await interaction.reply({
+        content: buildGuildSettingsSummary(interaction.guildId),
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    if (
+      subcommandGroup === "remove" &&
+      subcommand === "cooldown-instance-type"
+    ) {
+      const name = interaction.options.getString("name", true);
+      const existingTypes =
+        DISCORD_SETTINGS.cooldownInstanceTypesByGuild[interaction.guildId] ??
+        [];
+      if (!existingTypes.some((type) => type.name === name)) {
+        await interaction.reply({
+          content: `No instance type named "${name}" exists.`,
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+      await updateGuildCooldownSettings(interaction.guildId, (settings) => {
+        settings.cooldownInstanceTypes = existingTypes.filter(
+          (type) => type.name !== name,
+        );
+        settings.multiplierInstanceTypes =
+          settings.multiplierInstanceTypes.filter(
+            (multiplierName) => multiplierName !== name,
+          );
+      });
+      await interaction.reply({
+        content: `Removed cooldown instance type "${name}".`,
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
     const previousScheduleTextChannelIds =
       DISCORD_SETTINGS.guildScheduleSourceByGuild[interaction.guildId]
         ?.scheduleTextChannelIds ?? [];
@@ -316,12 +435,11 @@ export const guildSettingCommand: Command = {
             DISCORD_SETTINGS.cooldownInstanceTypesByGuild[
               interaction.guildId
             ] ?? [];
-          if (existingTypes.some(({ name }) => name === type.name)) {
-            throw new Error(
-              `An instance type named "${type.name}" already exists.`,
-            );
-          }
-          const types = [...existingTypes, type];
+          const types = existingTypes.some(({ name }) => name === type.name)
+            ? existingTypes.map((existing) =>
+                existing.name === type.name ? type : existing,
+              )
+            : [...existingTypes, type];
           await updateGuildCooldownSettings(interaction.guildId, (settings) => {
             settings.cooldownInstanceTypes = types;
           });
@@ -359,21 +477,19 @@ export const guildSettingCommand: Command = {
     }
 
     if (subcommand === "role-restricted-channels") {
+      const [channels, roles] = await Promise.all([
+        interaction.guild.channels.fetch(),
+        interaction.guild.roles.fetch(),
+      ]);
       const mappings: Record<string, string> = {};
       const invalid: string[] = [];
       for (const entry of splitValues(value)) {
         const [channelValue, roleValue, ...extra] =
           entry.split(/\s*(?:=|:|->)\s*/);
         const channelId = channelValue
-          ? resolveChannel(
-              interaction.guild,
-              channelValue,
-              ChannelType.GuildText,
-            )
+          ? resolveChannel(channels, channelValue, ChannelType.GuildText)
           : undefined;
-        const roleId = roleValue
-          ? resolveRole(interaction.guild, roleValue)
-          : undefined;
+        const roleId = roleValue ? resolveRole(roles, roleValue) : undefined;
         if (extra.length || !channelId || !roleId) invalid.push(entry);
         else mappings[channelId] = roleId;
       }
@@ -392,7 +508,8 @@ export const guildSettingCommand: Command = {
         subcommand === "tracked-category"
           ? ChannelType.GuildCategory
           : ChannelType.GuildText;
-      const { ids, invalid } = resolveChannels(interaction.guild, value, type);
+      const channels = await interaction.guild.channels.fetch();
+      const { ids, invalid } = resolveChannels(channels, value, type);
       if (invalid.length) {
         await interaction.reply({
           content: `Could not resolve: ${invalid.join(", ")}`,

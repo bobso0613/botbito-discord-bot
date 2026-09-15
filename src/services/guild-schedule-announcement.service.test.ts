@@ -1,7 +1,34 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import type { Message } from "discord.js";
-import { DISCORD_SETTINGS } from "../config/discord-settings.js";
-import {
+import type { DiscordSettings } from "../types/discord-settings.js";
+
+const guildId = "guild-id";
+const categoryId = "category-id";
+const scheduleTextChannelId = "schedule-channel-id";
+
+const DISCORD_SETTINGS: DiscordSettings = {
+  payoutGuildIds: [],
+  payoutToPingId: "",
+  payoutToPingTag: "",
+  guildScheduleBotIds: ["schedule-bot-id"],
+  guildIcons: { DEV: {}, PROD: {} },
+  guildScheduleSourceByGuild: {
+    [guildId]: {
+      categoryIds: [categoryId],
+      scheduleTextChannelIds: [scheduleTextChannelId],
+      excludedChannelIds: [],
+      roleRestrictedChannels: {},
+    },
+  },
+  cooldownInstanceTypesByGuild: {},
+  multiplierInstanceTypesByGuild: {},
+};
+
+jest.unstable_mockModule("../config/discord-settings.js", () => ({
+  DISCORD_SETTINGS,
+}));
+
+const {
   buildGuildScheduleRefreshLogMessage,
   getAnnouncedTitleForChannel,
   getGuildScheduleRefreshTrigger,
@@ -13,14 +40,7 @@ import {
   isGuildScheduleTimestampChanged,
   isIdentifierAnnounced,
   isTitleChangeConfirmed,
-} from "./guild-schedule-announcement.service.js";
-
-const guildId = Object.keys(DISCORD_SETTINGS.guildScheduleSourceByGuild)[0];
-const categoryId =
-  DISCORD_SETTINGS.guildScheduleSourceByGuild[guildId].categoryIds[0];
-const scheduleTextChannelId =
-  DISCORD_SETTINGS.guildScheduleSourceByGuild[guildId]
-    .scheduleTextChannelIds[0];
+} = await import("./guild-schedule-announcement.service.js");
 
 const createMessage = ({
   authorId = DISCORD_SETTINGS.guildScheduleBotIds[0],

@@ -1,6 +1,9 @@
-import { describe, expect, it, jest } from "@jest/globals";
+import { describe, expect, it, jest, afterEach } from "@jest/globals";
 import { ChannelType, MessageFlags, PermissionFlagsBits } from "discord.js";
-import type { GuildSettings } from "../types/discord-settings.js";
+import type {
+  DiscordSettings,
+  GuildSettings,
+} from "../types/discord-settings.js";
 
 const updateGuildScheduleSource =
   jest.fn<
@@ -22,6 +25,16 @@ const updateGuildCooldownSettings =
       ) => void,
     ) => Promise<void>
   >();
+const DISCORD_SETTINGS: DiscordSettings = {
+  payoutGuildIds: [],
+  payoutToPingId: "",
+  payoutToPingTag: "",
+  guildScheduleBotIds: [],
+  guildIcons: { DEV: {}, PROD: {} },
+  guildScheduleSourceByGuild: {},
+  cooldownInstanceTypesByGuild: {},
+  multiplierInstanceTypesByGuild: {},
+};
 
 jest.unstable_mockModule("../services/guild-settings.service.js", () => ({
   updateGuildScheduleSource,
@@ -31,8 +44,18 @@ jest.unstable_mockModule(
   "../services/guild-schedule-announcement.service.js",
   () => ({ publishGuildScheduleAnnouncement }),
 );
+jest.unstable_mockModule("../config/discord-settings.js", () => ({
+  DISCORD_SETTINGS,
+}));
 
 const { guildSettingCommand } = await import("./guildsetting.command.js");
+
+afterEach(() => {
+  Object.assign(DISCORD_SETTINGS, {
+    cooldownInstanceTypesByGuild: {},
+    multiplierInstanceTypesByGuild: {},
+  });
+});
 
 const source: GuildSettings["guildScheduleSource"] = {
   categoryIds: [],
@@ -70,18 +93,22 @@ const guild = {
         },
       ],
     ]),
+    fetch: jest.fn(),
   },
   roles: {
     cache: new Map([
       ["100000000000000004", { id: "100000000000000004", name: "Elite" }],
     ]),
+    fetch: jest.fn(),
   },
 };
+guild.channels.fetch.mockImplementation(async () => guild.channels.cache);
+guild.roles.fetch.mockImplementation(async () => guild.roles.cache);
 
 const createInteraction = (
   subcommand: string,
   value: string,
-  subcommandGroup = "set",
+  subcommandGroup: string | null = "set",
   isAdministrator = true,
   optionValues: Record<string, string> = {},
 ) => ({
@@ -204,6 +231,144 @@ describe("guild setting command", () => {
     );
     expect(interaction.reply).toHaveBeenCalledWith({
       content: "Guild cooldown setting updated.",
+      flags: MessageFlags.Ephemeral,
+    });
+  });
+
+  it("updates an existing cooldown instance type instead of erroring on a duplicate name", async () => {
+    Object.assign(DISCORD_SETTINGS.cooldownInstanceTypesByGuild, {
+      "guild-id": [
+        { name: "Custom Run", keywords: ["CR"], maxAttempts: 1, emoji: "🌀" },
+      ],
+    });
+    let savedTypes: GuildSettings["cooldownInstanceTypes"] = [];
+    updateGuildCooldownSettings.mockImplementation(
+      async (
+        _guildId,
+        update: (
+          value: Pick<
+            GuildSettings,
+            "cooldownInstanceTypes" | "multiplierInstanceTypes"
+          >,
+        ) => void,
+      ) => {
+        const settings = {
+          cooldownInstanceTypes: [],
+          multiplierInstanceTypes: [],
+        };
+        update(settings);
+        savedTypes = settings.cooldownInstanceTypes;
+      },
+    );
+    const interaction = createInteraction(
+      "cooldown-instance-types",
+      "Custom Run",
+      "set",
+      true,
+      {
+        name: "Custom Run",
+        keywords: "CR, Custom Run",
+        maxattempts: "2",
+        emoji: "✨",
+      },
+    );
+
+    await guildSettingCommand.execute(interaction as never);
+
+    expect(savedTypes).toEqual([
+      {
+        name: "Custom Run",
+        keywords: ["CR", "Custom Run"],
+        maxAttempts: 2,
+        emoji: "✨",
+      },
+    ]);
+    expect(interaction.reply).toHaveBeenCalledWith({
+      content: "Guild cooldown setting updated.",
+      flags: MessageFlags.Ephemeral,
+    });
+  });
+
+  it("removes a single cooldown instance type by name", async () => {
+    Object.assign(DISCORD_SETTINGS.cooldownInstanceTypesByGuild, {
+      "guild-id": [
+        { name: "Custom Run", keywords: ["CR"], maxAttempts: 1, emoji: "🌀" },
+      ],
+    });
+    let savedSettings: Pick<
+      GuildSettings,
+      "cooldownInstanceTypes" | "multiplierInstanceTypes"
+    > = { cooldownInstanceTypes: [], multiplierInstanceTypes: [] };
+    updateGuildCooldownSettings.mockImplementation(
+      async (
+        _guildId,
+        update: (
+          value: Pick<
+            GuildSettings,
+            "cooldownInstanceTypes" | "multiplierInstanceTypes"
+          >,
+        ) => void,
+      ) => {
+        const settings = {
+          cooldownInstanceTypes: [
+            {
+              name: "Custom Run",
+              keywords: ["CR"],
+              maxAttempts: 1,
+              emoji: "🌀",
+            },
+          ],
+          multiplierInstanceTypes: ["Custom Run"],
+        };
+        update(settings);
+        savedSettings = settings;
+      },
+    );
+    const interaction = createInteraction(
+      "cooldown-instance-type",
+      "",
+      "remove",
+      true,
+      { name: "Custom Run" },
+    );
+
+    await guildSettingCommand.execute(interaction as never);
+
+    expect(savedSettings).toEqual({
+      cooldownInstanceTypes: [],
+      multiplierInstanceTypes: [],
+    });
+    expect(interaction.reply).toHaveBeenCalledWith({
+      content: 'Removed cooldown instance type "Custom Run".',
+      flags: MessageFlags.Ephemeral,
+    });
+  });
+
+  it("rejects removing a cooldown instance type that does not exist", async () => {
+    const interaction = createInteraction(
+      "cooldown-instance-type",
+      "",
+      "remove",
+      true,
+      { name: "Nonexistent" },
+    );
+
+    await guildSettingCommand.execute(interaction as never);
+
+    expect(updateGuildCooldownSettings).not.toHaveBeenCalled();
+    expect(interaction.reply).toHaveBeenCalledWith({
+      content: 'No instance type named "Nonexistent" exists.',
+      flags: MessageFlags.Ephemeral,
+    });
+  });
+
+  it("shows the current guild settings", async () => {
+    const interaction = createInteraction("show", "", null);
+
+    await guildSettingCommand.execute(interaction as never);
+
+    expect(interaction.reply).toHaveBeenCalledWith({
+      content: expect.stringContaining("Tracked categories:"),
       flags: MessageFlags.Ephemeral,
     });
   });
