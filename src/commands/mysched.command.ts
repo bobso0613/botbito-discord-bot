@@ -46,6 +46,9 @@ const getAccessibleGuildSchedules = async (
   if (!source) {
     return [];
   }
+  if (source.categoryIds.length === 0) {
+    return [];
+  }
 
   const guildIcon = getGuildIcon(guild.id);
   const schedules = await getActiveGuildSchedules(

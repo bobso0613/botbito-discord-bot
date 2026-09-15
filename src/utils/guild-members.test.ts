@@ -11,10 +11,10 @@ describe("guild member utilities", () => {
       { user: { tag: "Alice" }, displayName: "Alice The Brave" },
       { user: { tag: "@Bob" }, displayName: "Bob The Wise" },
     ];
-    const fetch = jest.fn().mockResolvedValue({
+    const fetch = jest.fn(async () => ({
       map: <T>(callback: (member: (typeof members)[number]) => T): T[] =>
         members.map(callback),
-    });
+    }));
     const guild = { members: { fetch } } as unknown as Guild;
 
     await expect(getDisplayNameByDiscordTag(guild)).resolves.toEqual(

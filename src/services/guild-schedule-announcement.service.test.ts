@@ -23,7 +23,7 @@ const scheduleTextChannelId =
     .scheduleTextChannelIds[0];
 
 const createMessage = ({
-  authorId = DISCORD_SETTINGS.guildScheduleBotId,
+  authorId = DISCORD_SETTINGS.guildScheduleBotIds[0],
   parentId = categoryId,
   channelId = "source-channel-id",
   timestamp = "1799177400",
@@ -60,6 +60,19 @@ describe("isGuildScheduleChangeMessage", () => {
     expect(isGuildScheduleMessage(createMessage())).toBe(true);
   });
 
+  it("accepts schedule responses from an additional configured bot", () => {
+    const scheduleBotIds = DISCORD_SETTINGS.guildScheduleBotIds as string[];
+    scheduleBotIds.push("signup-bot-id");
+
+    try {
+      expect(
+        isGuildScheduleMessage(createMessage({ authorId: "signup-bot-id" })),
+      ).toBe(true);
+    } finally {
+      scheduleBotIds.pop();
+    }
+  });
+
   it("ignores responses outside source categories", () => {
     expect(
       isGuildScheduleMessage(
@@ -74,6 +87,18 @@ describe("isGuildScheduleChangeMessage", () => {
         createMessage({ channelId: scheduleTextChannelId }),
       ),
     ).toBe(false);
+  });
+
+  it("ignores source messages when no announcement channels are configured", () => {
+    const source = DISCORD_SETTINGS.guildScheduleSourceByGuild[guildId];
+    const scheduleTextChannelIds = source.scheduleTextChannelIds;
+    source.scheduleTextChannelIds = [];
+
+    try {
+      expect(isGuildScheduleSourceMessage(createMessage())).toBe(false);
+    } finally {
+      source.scheduleTextChannelIds = scheduleTextChannelIds;
+    }
   });
 
   it("ignores schedule-shaped messages from other authors", () => {
@@ -279,7 +304,7 @@ describe("isGuildScheduleChangeMessage", () => {
               first: () => ({
                 embeds: [
                   {
-                    description: `**[Monday Sealed Shrine](${channelUrl})**\n<t:1:F> (<t:1:R>)\n↪ [#source-channel](${channelUrl})`,
+                    description: `**[Monday Sealed Shrine](${channelUrl})**\n<t:1:F> (<t:1:R>)\nâ†ª [#source-channel](${channelUrl})`,
                   },
                 ],
               }),
@@ -387,7 +412,7 @@ describe("isGuildScheduleChangeMessage", () => {
               first: () => ({
                 embeds: [
                   {
-                    description: `**[Monday Sealed Shrine](${channelUrl})**\n<t:1:F> (<t:1:R>)\n↪ [#source-channel](${channelUrl})`,
+                    description: `**[Monday Sealed Shrine](${channelUrl})**\n<t:1:F> (<t:1:R>)\nâ†ª [#source-channel](${channelUrl})`,
                   },
                 ],
               }),

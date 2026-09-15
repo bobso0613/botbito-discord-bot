@@ -28,34 +28,60 @@ Set `PEPEMONEYRAIN_EMOJI_ID` to the custom animated Discord emoji ID used beside
 
 When running `npm run dev` with `MODE=DEV`, automatic guild schedule announcements are disabled unless `ENABLE_GUILD_SCHEDULE_ANNOUNCEMENTS=true` is set in `.env`. This toggle does not affect non-DEV environments, where the listener is always registered.
 
-Create `private/discord_settings.json` to configure the payout guilds, guild schedule sources, and the payout contact:
+Create `private/discord_settings.json` to configure the payout guilds and payout contact:
 
 ```json
 {
   "payoutGuildIds": ["guild-id"],
   "payoutToPingId": "discord-user-id",
-  "payoutToPingTag": "discord-user-tag",
-  "guildScheduleBotId": "schedule-bot-user-id",
-  "guildIcons": {
-    "PROD": {
-      "guild-id": "<:guildIcon_name:emoji-id>"
-    },
-    "DEV": {
-      "guild-id": "<:guildIcon_name:emoji-id>"
+  "payoutToPingTag": "discord-user-tag"
+}
+```
+
+Create `private/guild_schedule_settings.json` for the schedule bots. Add the
+external schedule bot and this bot's user ID during the transition:
+
+```json
+{
+  "guildScheduleBotIds": ["external-schedule-bot-user-id", "this-bot-user-id"]
+}
+```
+
+Create one `private/guild-settings/<guild-id>.json` file for each guild with schedules:
+
+```json
+{
+  "guildScheduleSource": {
+    "categoryIds": ["schedule-category-id", "other-category-id"],
+    "scheduleTextChannelIds": ["public-schedule-channel-id"],
+    "excludedChannelIds": ["private-signup-channel-id"],
+    "roleRestrictedChannels": {
+      "restricted-channel-id": "required-role-id"
     }
   },
-  "guildScheduleSourceByGuild": {
-    "guild-id": {
-      "categoryIds": ["schedule-category-id", "other-category-id"],
-      "scheduleTextChannelIds": ["public-schedule-channel-id"],
-      "excludedChannelIds": ["private-signup-channel-id"],
-      "roleRestrictedChannels": {
-        "restricted-channel-id": "required-role-id"
-      }
-    }
+  "guildIcons": {
+    "PROD": "<:guildIcon_name:emoji-id>",
+    "DEV": "<:guildIcon_name:emoji-id>"
   }
 }
 ```
+
+When the bot joins a guild, it creates this file with empty schedule arrays and
+empty `DEV`/`PROD` icons if it does not already exist. Members with the
+Administrator permission can configure schedule sources with `/guildsetting set`:
+`tracked-category`, `excluded-channels`, `schedule-channels`, and
+`role-restricted-channels`. The matching `/guildsetting clear` subcommands clear
+each setting without requiring a value. Channel values accept Discord channel
+links or `#channel-name`; role restrictions use comma-separated
+`#channel=@role` mappings.
+
+Cooldown instance types are also stored per guild in `cooldownInstanceTypes` and
+`multiplierInstanceTypes`. Administrators can update them with
+`/guildsetting set cooldown-instance-types` using the separate `name`,
+`keywords`, `maxattempts`, and `emoji` options, or with
+`/guildsetting set multiplier-instance-types` using comma-separated instance
+names. The matching clear commands remove the configured values. New guilds and
+the existing guild settings are initialized from `src/constants/cooldowns.ts`.
 
 Enable the **Server Members Intent** and **Message Content Intent** in the Discord Developer Portal for the bot application. `/payoutsummary` uses the Server Members Intent to resolve Discord display names from the sheet's Discord tags. The Message Content Intent allows automatic schedule announcements to read schedule embeds from guild message events. The client also enables the `Message` and `Channel` partials so edits to schedule messages still emit `messageUpdate` after they age out of the client's cache (e.g. following a bot restart); without these, discord.js silently drops update events for uncached messages.
 
@@ -132,7 +158,7 @@ For `/payoutsummary`, the bot selects that guild's `Pending`, `Share Ready`, or 
 
 ## Guild Schedule Format 📅
 
-Schedule embeds are posted by the configured `guildScheduleBotId` bot in signup channels. Each entry's format determines how the bot displays signup and reserve information.
+Schedule embeds are posted by a configured `guildScheduleBotIds` bot in signup channels. Each entry's format determines how the bot displays signup and reserve information.
 
 An active schedule must include a Discord timestamp in this form:
 
@@ -170,11 +196,11 @@ Certain schedule channels can be restricted to users with specific Discord roles
 
 When a member views a role-restricted channel privately, they only see it if they have the required role. When posting publicly with `/guildsched public:true`, role-restricted channels are displayed with a "(Private run)" label in the run title instead of a direct link, allowing authorized members to see private runs while others can see they exist without accessing their details.
 
-Configure role-restricted channels in `private/discord_settings.json`:
+Configure role-restricted channels in the guild's `private/guild-settings/<guild-id>.json`:
 
 ```json
-"guildScheduleSourceByGuild": {
-  "guild-id": {
+{
+  "guildScheduleSource": {
     "categoryIds": ["schedule-category-id"],
     "scheduleTextChannelIds": ["public-schedule-channel-id"],
     "roleRestrictedChannels": {
@@ -285,7 +311,7 @@ src/
 - (On hosting before running script) `/opt/cpanel/ea-nodejs22/bin/node deploy-commands.js`
 - (On hosting) `nohup /opt/cpanel/ea-nodejs22/bin/node index.js & disown`
 
-Ensure `.env`, `private/discord_settings.json`, and the Google service-account JSON are present in `private/` before starting the bot.
+Ensure `.env`, `private/discord_settings.json`, `private/guild_schedule_settings.json`, the relevant `private/guild-settings/<guild-id>.json` files, and the Google service-account JSON are present before starting the bot.
 
 ## Git Hooks 🪝
 

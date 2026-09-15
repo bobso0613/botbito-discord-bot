@@ -1,11 +1,15 @@
 import {
   ApplicationIntegrationType,
+  type AutocompleteInteraction,
   InteractionContextType,
   MessageFlags,
   SlashCommandBuilder,
   type ChatInputCommandInteraction,
 } from "discord.js";
-import { SIGNUP_GUILD_IDS } from "../config/discord-settings.js";
+import {
+  DISCORD_SETTINGS,
+  SIGNUP_GUILD_IDS,
+} from "../config/discord-settings.js";
 import { COOLDOWN_INSTANCE_TYPES } from "../constants/cooldowns.js";
 import { INSTANCE_TYPE_NONE_VALUE } from "../constants/signup.js";
 import {
@@ -50,6 +54,7 @@ export * from "./signup-buttons.js";
 const restrictToGuild = (command: Command): Command => ({
   ...command,
   guildIds: SIGNUP_GUILD_IDS,
+  requiresGuildScheduleSettings: true,
   data: command.data
     .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
     .setContexts(InteractionContextType.Guild),
@@ -275,16 +280,21 @@ const signupCommandDefinitions: Command[] = [
           .setName("type")
           .setDescription("Instance type")
           .setRequired(true)
-          .addChoices(
-            { name: "None", value: INSTANCE_TYPE_NONE_VALUE },
-            ...COOLDOWN_INSTANCE_TYPES.filter(
-              (type) => type.name !== "Others",
-            ).map((type) => ({ name: type.name, value: type.name })),
-          ),
+          .setAutocomplete(true),
       ) as SlashCommandBuilder,
     execute: async (i) => {
       await update(i, (s) => {
         const type = i.options.getString("type", true);
+        const configuredTypes = i.guildId
+          ? (DISCORD_SETTINGS.cooldownInstanceTypesByGuild[i.guildId] ??
+            COOLDOWN_INSTANCE_TYPES)
+          : COOLDOWN_INSTANCE_TYPES;
+        if (
+          type !== INSTANCE_TYPE_NONE_VALUE &&
+          !configuredTypes.some((instanceType) => instanceType.name === type)
+        ) {
+          return "That instance type is not configured for this guild.";
+        }
         s.instanceType = type === INSTANCE_TYPE_NONE_VALUE ? null : type;
         return null;
       });
@@ -690,6 +700,26 @@ const signupCommandDefinitions: Command[] = [
     },
   },
 ];
+
+/** Responds with instance types configured for the guild running /setinstancetype. */
+export const handleSetInstanceTypeAutocomplete = async (
+  interaction: AutocompleteInteraction,
+): Promise<void> => {
+  const source = interaction.guildId
+    ? DISCORD_SETTINGS.cooldownInstanceTypesByGuild[interaction.guildId]
+    : undefined;
+  const focused = interaction.options.getFocused().toLowerCase();
+  await interaction.respond([
+    { name: "None", value: INSTANCE_TYPE_NONE_VALUE },
+    ...(source ?? COOLDOWN_INSTANCE_TYPES)
+      .filter(
+        (type) =>
+          type.name !== "Others" && type.name.toLowerCase().includes(focused),
+      )
+      .slice(0, 24)
+      .map((type) => ({ name: type.name, value: type.name })),
+  ]);
+};
 
 export const signupCommands: Command[] =
   signupCommandDefinitions.map(restrictToGuild);

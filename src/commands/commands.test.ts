@@ -165,6 +165,15 @@ describe("command handlers", () => {
     const scheduleField = fields.find((field) => field.name === "Schedule");
     expect(scheduleField?.value).toContain("⌚ `/mysched`");
     expect(scheduleField?.value).toContain("🔥 `/mycooldowns`");
+    const administrationField = fields.find(
+      (field) => field.name === "Administration",
+    );
+    expect(administrationField?.value).toContain(
+      "⚙️ `/guildsetting set tracked-category`",
+    );
+    expect(administrationField?.value).toContain(
+      "⚙️ `/guildsetting set role-restricted-channels`",
+    );
   });
 
   it("makes /help available in guilds and bot DMs", () => {

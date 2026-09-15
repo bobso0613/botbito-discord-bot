@@ -1,5 +1,7 @@
 import { EmbedBuilder } from "discord.js";
+import { DISCORD_SETTINGS } from "../config/discord-settings.js";
 import { COOLDOWN_INSTANCE_TYPES } from "../constants/cooldowns.js";
+import type { InstanceType } from "../constants/cooldowns.js";
 import type { SignupSheet } from "../types/signup-sheet.js";
 
 /** Returns the hour offset from GMT for a normalized timezone string (e.g. `GMT+8`). */
@@ -7,9 +9,12 @@ const getServerTimezoneOffset = (timezone: string): number =>
   timezone === "GMT" ? 0 : Number(timezone.slice(3));
 
 /** Formats a sheet's instance type as `<emoji> <name>`, or `null` when unset. */
-const formatInstanceType = (instanceType: string | null): string | null => {
+const formatInstanceType = (
+  instanceType: string | null,
+  instanceTypes: readonly InstanceType[],
+): string | null => {
   if (!instanceType) return null;
-  const type = COOLDOWN_INSTANCE_TYPES.find((t) => t.name === instanceType);
+  const type = instanceTypes.find((t) => t.name === instanceType);
   return `${type?.emoji ?? ""} ${instanceType}`.trim();
 };
 
@@ -76,6 +81,9 @@ export const buildSignupSheetEmbed = (
   guildName: string,
   guildIconUrl: string | null,
 ): EmbedBuilder => {
+  const instanceTypes =
+    DISCORD_SETTINGS.cooldownInstanceTypesByGuild[sheet.guildId] ??
+    COOLDOWN_INSTANCE_TYPES;
   const signedUpCount = sheet.slots.filter(
     (slot) => slot.signupDisplayName,
   ).length;
@@ -133,7 +141,7 @@ export const buildSignupSheetEmbed = (
     .setFooter({
       text: [
         `Organizer - ${sheet.organizerName}`,
-        formatInstanceType(sheet.instanceType),
+        formatInstanceType(sheet.instanceType, instanceTypes),
       ]
         .filter((section): section is string => Boolean(section))
         .join(" | "),

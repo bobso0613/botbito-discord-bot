@@ -10,10 +10,13 @@ import {
  * Returns an array of all matching instance types or an empty array if none match.
  * Uses word boundaries for abbreviations (1-3 chars) and substring matching for full names.
  */
-export const parseInstanceTypes = (title: string): InstanceType[] => {
+export const parseInstanceTypes = (
+  title: string,
+  instanceTypes: readonly InstanceType[] = COOLDOWN_INSTANCE_TYPES,
+): InstanceType[] => {
   const matches: InstanceType[] = [];
 
-  for (const instanceType of COOLDOWN_INSTANCE_TYPES) {
+  for (const instanceType of instanceTypes) {
     // Skip "Others" type as it's only used as a fallback
     if (instanceType.name === "Others") continue;
 
@@ -47,11 +50,10 @@ export const parseInstanceTypes = (title: string): InstanceType[] => {
 export const extractMultiplierFromTitle = (
   title: string,
   instanceType: InstanceType,
+  multiplierInstanceTypes: readonly string[] = MULTIPLIER_INSTANCE_TYPES,
 ): number => {
   // Only apply multiplier for specific instance types
-  const multiplierApplies = MULTIPLIER_INSTANCE_TYPES.includes(
-    instanceType.name as (typeof MULTIPLIER_INSTANCE_TYPES)[number],
-  );
+  const multiplierApplies = multiplierInstanceTypes.includes(instanceType.name);
 
   if (!multiplierApplies) return 1;
 
@@ -73,6 +75,8 @@ export const extractMultiplierFromTitle = (
  */
 export const countCooldowns = (
   schedules: Array<GuildSchedule & { guildName: string }>,
+  instanceTypes: readonly InstanceType[] = COOLDOWN_INSTANCE_TYPES,
+  multiplierInstanceTypes: readonly string[] = MULTIPLIER_INSTANCE_TYPES,
 ): Map<
   string,
   {
@@ -89,7 +93,7 @@ export const countCooldowns = (
     }
   >();
 
-  for (const instanceType of COOLDOWN_INSTANCE_TYPES) {
+  for (const instanceType of instanceTypes) {
     cooldownMap.set(instanceType.name, {
       type: instanceType,
       count: 0,
@@ -98,7 +102,7 @@ export const countCooldowns = (
 
   // Count schedules
   for (const schedule of schedules) {
-    const matchedTypes = parseInstanceTypes(schedule.title);
+    const matchedTypes = parseInstanceTypes(schedule.title, instanceTypes);
 
     // If no types matched, add to "Others"
     if (matchedTypes.length === 0) {
@@ -112,6 +116,7 @@ export const countCooldowns = (
         const multiplier = extractMultiplierFromTitle(
           schedule.title,
           matchedType,
+          multiplierInstanceTypes,
         );
         const existing = cooldownMap.get(matchedType.name);
         if (existing) {

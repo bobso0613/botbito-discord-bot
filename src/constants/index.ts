@@ -111,6 +111,130 @@ export const COMMAND_GUIDE: ReadonlyArray<{
     ],
   },
   {
+    name: "/guildsetting set tracked-category",
+    description:
+      "Set this guild's tracked schedule categories (Administrator only)",
+    emoji: "⚙️",
+    parameters: [
+      {
+        name: "categories",
+        description: "Category links or #category names, separated by commas",
+        required: true,
+      },
+    ],
+  },
+  {
+    name: "/guildsetting set excluded-channels",
+    description: "Set channels excluded from schedules (Administrator only)",
+    emoji: "⚙️",
+    parameters: [
+      {
+        name: "channels",
+        description: "Channel links or #channel names, separated by commas",
+        required: true,
+      },
+    ],
+  },
+  {
+    name: "/guildsetting set schedule-channels",
+    description:
+      "Set public schedule announcement channels (Administrator only)",
+    emoji: "⚙️",
+    parameters: [
+      {
+        name: "channels",
+        description: "Channel links or #channel names, separated by commas",
+        required: true,
+      },
+    ],
+  },
+  {
+    name: "/guildsetting set role-restricted-channels",
+    description:
+      "Set channel-to-role schedule restrictions (Administrator only)",
+    emoji: "⚙️",
+    parameters: [
+      {
+        name: "mappings",
+        description: "#channel=@role mappings, separated by commas",
+        required: true,
+      },
+    ],
+  },
+  {
+    name: "/guildsetting clear tracked-category",
+    description:
+      "Clear this guild's tracked schedule categories (Administrator only)",
+    emoji: "⚙️",
+  },
+  {
+    name: "/guildsetting clear excluded-channels",
+    description: "Clear channels excluded from schedules (Administrator only)",
+    emoji: "⚙️",
+  },
+  {
+    name: "/guildsetting clear schedule-channels",
+    description:
+      "Clear public schedule announcement channels (Administrator only)",
+    emoji: "⚙️",
+  },
+  {
+    name: "/guildsetting clear role-restricted-channels",
+    description:
+      "Clear channel-to-role schedule restrictions (Administrator only)",
+    emoji: "⚙️",
+  },
+  {
+    name: "/guildsetting set cooldown-instance-types",
+    description: "Add a cooldown instance type (Administrator only)",
+    emoji: "⚙️",
+    parameters: [
+      {
+        name: "name",
+        description: "Instance type name",
+        required: true,
+      },
+      {
+        name: "keywords",
+        description: "Comma-separated title keywords",
+        required: true,
+      },
+      {
+        name: "maxattempts",
+        description: "Maximum weekly attempts",
+        required: true,
+      },
+      {
+        name: "emoji",
+        description: "Display emoji",
+        required: true,
+      },
+    ],
+  },
+  {
+    name: "/guildsetting set multiplier-instance-types",
+    description: "Set cooldown multiplier instance names (Administrator only)",
+    emoji: "⚙️",
+    parameters: [
+      {
+        name: "types",
+        description: "Instance names separated by commas",
+        required: true,
+      },
+    ],
+  },
+  {
+    name: "/guildsetting clear cooldown-instance-types",
+    description: "Clear cooldown instance types (Administrator only)",
+    emoji: "⚙️",
+  },
+  {
+    name: "/guildsetting clear multiplier-instance-types",
+    description:
+      "Clear cooldown multiplier instance names (Administrator only)",
+    emoji: "⚙️",
+  },
+  {
     name: "/newrun",
     description: "Create a signup sheet in this channel",
     emoji: "🆕",

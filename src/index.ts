@@ -16,6 +16,7 @@ import {
 } from "discord.js";
 import { commands } from "./commands/index.js";
 import { sendHelp, handleHelpAutocomplete } from "./commands/help.command.js";
+import { handleSetInstanceTypeAutocomplete } from "./commands/signup.command.js";
 import { sendMyCooldowns } from "./commands/mycooldowns.command.js";
 import { sendMySchedule } from "./commands/mysched.command.js";
 import { sendPayout } from "./commands/payout.command.js";
@@ -33,6 +34,7 @@ import {
   handleSignupEditPartySetupButton,
 } from "./commands/signup.command.js";
 import { registerGuildScheduleAnnouncementListener } from "./services/guild-schedule-announcement.service.js";
+import { ensureGuildSettings } from "./services/guild-settings.service.js";
 import {
   HELP_BUTTON_ID,
   MY_COOLDOWNS_BUTTON_ID,
@@ -64,6 +66,7 @@ import {
   handleSignupSwapButton,
   handleSignupWhenButton,
 } from "./commands/signup.command.js";
+import { DISCORD_SETTINGS } from "./config/discord-settings.js";
 import { logger } from "./utils/logger.js";
 
 const token = process.env.DISCORD_TOKEN;
@@ -121,7 +124,13 @@ const registerGuildSlashCommands = async (guildId: string): Promise<void> => {
   }
 
   const commandBody = commands
-    .filter((command) => command.guildIds?.includes(guildId))
+    .filter(
+      (command) =>
+        command.guildIds?.includes(guildId) ||
+        command.registerInAllGuilds ||
+        (command.requiresGuildScheduleSettings &&
+          guildId in DISCORD_SETTINGS.guildScheduleSourceByGuild),
+    )
     .map((command) => command.data.toJSON());
   const rest = new REST().setToken(botToken);
   await rest.put(Routes.applicationGuildCommands(clientId, guildId), {
@@ -149,7 +158,12 @@ client.once(Events.ClientReady, async (readyClient) => {
 });
 
 client.on(Events.GuildCreate, async (guild) => {
-  await registerGuildSlashCommands(guild.id);
+  try {
+    await ensureGuildSettings(guild.id);
+    await registerGuildSlashCommands(guild.id);
+  } catch (error) {
+    logger.error(`Failed to initialize settings for guild ${guild.id}:`, error);
+  }
 });
 
 client.on(Events.MessageCreate, async (message) => {
@@ -294,6 +308,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await handleHelpAutocomplete(interaction);
       } catch (error) {
         logger.error("Help autocomplete failed:", error);
+      }
+    } else if (interaction.commandName === "setinstancetype") {
+      try {
+        await handleSetInstanceTypeAutocomplete(interaction);
+      } catch (error) {
+        logger.error("Set instance type autocomplete failed:", error);
       }
     }
     return;

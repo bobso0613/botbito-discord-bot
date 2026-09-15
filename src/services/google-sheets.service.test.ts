@@ -1,7 +1,13 @@
 import { jest } from "@jest/globals";
 
-const readFile = jest.fn();
-const getValues = jest.fn();
+const readFile = jest.fn(async (_path: string): Promise<string> => "");
+const getValues = jest.fn(
+  async (
+    _options: unknown,
+  ): Promise<{ data: { values: (string | number)[][] } }> => ({
+    data: { values: [] },
+  }),
+);
 const GoogleAuth = jest.fn();
 const createSheets = jest.fn(() => ({
   spreadsheets: { values: { get: getValues } },
@@ -26,13 +32,15 @@ describe("google sheets service", () => {
     jest.clearAllMocks();
     process.env.GOOGLE_APPLICATION_CREDENTIALS = "private/service-account.json";
     process.env.GOOGLE_SHEETS_ID = "spreadsheet-id";
-    readFile.mockResolvedValue(
+    readFile.mockImplementation(async () =>
       JSON.stringify({
         client_email: "bot@example.com",
         private_key: "private-key",
       }),
     );
-    getValues.mockResolvedValue({ data: { values: [["A", 2], ["B"]] } });
+    getValues.mockImplementation(async () => ({
+      data: { values: [["A", 2], ["B"]] },
+    }));
   });
 
   afterAll(() => {
@@ -79,7 +87,7 @@ describe("google sheets service", () => {
     );
 
     process.env.GOOGLE_APPLICATION_CREDENTIALS = "private/service-account.json";
-    readFile.mockResolvedValue(
+    readFile.mockImplementation(async () =>
       JSON.stringify({ client_email: "bot@example.com" }),
     );
     await expect(readSheetValues("Sheet1!A:A")).rejects.toThrow(

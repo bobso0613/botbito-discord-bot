@@ -33,6 +33,7 @@ import {
   SIGNUP_ROSTER_BUTTON_ID,
 } from "../constants/signup.js";
 import { COOLDOWN_INSTANCE_TYPES } from "../constants/cooldowns.js";
+import { DISCORD_SETTINGS } from "../config/discord-settings.js";
 import {
   addConfirmationKey,
   executeAdd,
@@ -91,6 +92,7 @@ export const input = (
 /** Builds the instance-type select menu row, pre-selecting the sheet's current instance type (or "None"). */
 export const buildInstanceTypeSelectRow = (
   currentInstanceType: string | null,
+  instanceTypes = COOLDOWN_INSTANCE_TYPES,
 ): ActionRowBuilder<StringSelectMenuBuilder> =>
   new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
     new StringSelectMenuBuilder()
@@ -102,13 +104,13 @@ export const buildInstanceTypeSelectRow = (
           value: INSTANCE_TYPE_NONE_VALUE,
           default: !currentInstanceType,
         },
-        ...COOLDOWN_INSTANCE_TYPES.filter((type) => type.name !== "Others").map(
-          (type) => ({
+        ...instanceTypes
+          .filter((type) => type.name !== "Others")
+          .map((type) => ({
             label: `${type.emoji} ${type.name}`,
             value: type.name,
             default: currentInstanceType === type.name,
-          }),
-        ),
+          })),
       ),
   );
 
@@ -438,7 +440,13 @@ export const handleSignupInstanceTypeButton = async (
   await interaction.deferUpdate();
   await interaction.editReply({
     content: "Select the instance type for this run.",
-    components: [buildInstanceTypeSelectRow(sheet.instanceType)],
+    components: [
+      buildInstanceTypeSelectRow(
+        sheet.instanceType,
+        DISCORD_SETTINGS.cooldownInstanceTypesByGuild[interaction.guildId] ??
+          COOLDOWN_INSTANCE_TYPES,
+      ),
+    ],
   });
 };
 
