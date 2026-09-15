@@ -19,17 +19,14 @@ import {
   SIGNUP_TBC_BUTTON_ID,
   SIGNUP_WHEN_BUTTON_ID,
 } from "../constants/signup.js";
-import {
-  getSignupSheet,
-  mutateSignupSheet,
-  saveSignupSheet,
-} from "./signup-sheet.service.js";
+import { getSignupSheet, mutateSignupSheet } from "./signup-sheet.service.js";
 import {
   buildSignupSheetEmbed,
   formatSignupSchedule,
 } from "../templates/signup-sheet.template.js";
 import type { SignupSheet } from "../types/signup-sheet.js";
 import {
+  ExpiringMap,
   formatSlotLabel,
   getInvokingUserSlot,
   mergeActionNotices,
@@ -48,7 +45,7 @@ export interface PendingAddConfirmation {
   slotNumbers: number[];
 }
 
-export const pendingAddConfirmations = new Map<
+export const pendingAddConfirmations = new ExpiringMap<
   string,
   PendingAddConfirmation
 >();
@@ -178,20 +175,90 @@ export const publish = async (
       sentMessage = (await interaction.editReply(response)) as Message;
     }
   } else {
-    await interaction.reply(response);
-    if (typeof interaction.fetchReply === "function") {
+    const replyResult = await interaction.reply(response);
+    if (replyResult && typeof replyResult === "object" && "id" in replyResult) {
+      sentMessage = replyResult as unknown as Message;
+    } else if (typeof interaction.fetchReply === "function") {
       sentMessage = await interaction.fetchReply().catch(() => null);
     }
   }
   if (sentMessage?.id) {
     sheet.messageId = sentMessage.id;
-    await saveSignupSheet(sheet);
+    if (interaction.guildId && interaction.channelId) {
+      await mutateSignupSheet(
+        interaction.guildId,
+        interaction.channelId,
+        (s) => {
+          s.messageId = sentMessage!.id;
+          return null;
+        },
+      );
+    }
     if (previousMessageId && previousMessageId !== sentMessage.id) {
       await cleanupStaleSheetComponents(interaction, previousMessageId);
     }
-  } else {
-    await saveSignupSheet(sheet);
   }
+};
+
+/** Publishes the sheet as a new message directly to the channel (e.g. following an ephemeral action), updating messageId and cleaning up stale components. */
+export const publishToChannel = async (
+  interaction: SignupInteraction,
+  sheet: SignupSheet,
+): Promise<Message | null> => {
+  const previousMessageId = sheet.messageId;
+  const response = {
+    embeds: [
+      buildSignupSheetEmbed(
+        sheet,
+        interaction.guild?.name ?? "Direct Message",
+        interaction.guild?.iconURL({ extension: "png", size: 512 }) ?? null,
+      ),
+    ],
+    components: buildSignupSheetComponents(),
+  };
+  let sentMessage: Message | null = null;
+  const channel =
+    interaction.channel ??
+    (interaction.channelId && interaction.client?.channels
+      ? await interaction.client.channels
+          .fetch(interaction.channelId)
+          .catch(() => null)
+      : null);
+
+  if (
+    channel &&
+    "send" in channel &&
+    typeof (channel as { send?: unknown }).send === "function"
+  ) {
+    sentMessage = (await (
+      channel as { send: (options: unknown) => Promise<Message> }
+    )
+      .send(response)
+      .catch(() => null)) as Message | null;
+  } else if (typeof interaction.followUp === "function") {
+    sentMessage = (await interaction
+      .followUp(response)
+      .catch(() => null)) as Message | null;
+  }
+
+  if (sentMessage?.id) {
+    sheet.messageId = sentMessage.id;
+    if (interaction.guildId && interaction.channelId) {
+      await mutateSignupSheet(
+        interaction.guildId,
+        interaction.channelId,
+        (s) => {
+          s.messageId = sentMessage!.id;
+          return null;
+        },
+      );
+    }
+    if (previousMessageId && previousMessageId !== sentMessage.id) {
+      await cleanupStaleSheetComponents(interaction, previousMessageId);
+    }
+  }
+
+  return sentMessage;
 };
 
 /** Loads the sheet, applies `mutate` atomically in the storage layer, and publishes on success; replies with `mutate`'s returned error otherwise. */

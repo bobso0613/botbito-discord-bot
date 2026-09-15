@@ -339,3 +339,56 @@ export const isUserInRosterOrOrganizer = (
   );
   return inReserves;
 };
+
+/**
+ * In-memory map where entries automatically expire after a TTL duration (default 15 minutes).
+ */
+export class ExpiringMap<K, V> {
+  private readonly entries = new Map<K, { value: V; expiresAt: number }>();
+  private readonly defaultTtlMs: number;
+
+  constructor(defaultTtlMs = 15 * 60 * 1000) {
+    this.defaultTtlMs = defaultTtlMs;
+  }
+
+  get(key: K): V | undefined {
+    const entry = this.entries.get(key);
+    if (!entry) return undefined;
+    if (Date.now() > entry.expiresAt) {
+      this.entries.delete(key);
+      return undefined;
+    }
+    return entry.value;
+  }
+
+  set(key: K, value: V, ttlMs = this.defaultTtlMs): this {
+    this.entries.set(key, { value, expiresAt: Date.now() + ttlMs });
+    return this;
+  }
+
+  has(key: K): boolean {
+    return this.get(key) !== undefined;
+  }
+
+  delete(key: K): boolean {
+    return this.entries.delete(key);
+  }
+
+  clear(): void {
+    this.entries.clear();
+  }
+
+  get size(): number {
+    this.pruneExpired();
+    return this.entries.size;
+  }
+
+  private pruneExpired(): void {
+    const now = Date.now();
+    for (const [key, entry] of this.entries.entries()) {
+      if (now > entry.expiresAt) {
+        this.entries.delete(key);
+      }
+    }
+  }
+}

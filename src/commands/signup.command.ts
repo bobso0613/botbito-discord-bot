@@ -146,7 +146,7 @@ const signupCommandDefinitions: Command[] = [
           interaction.channelId!,
         );
         pendingSetupSnapshots.set(key, structuredClone(sheet));
-        pendingSetupDrafts.set(key, sheet);
+        pendingSetupDrafts.set(key, structuredClone(sheet));
         pendingRosterUsers.set(key, interaction.user.id);
         await interaction.reply({
           content: getRosterPrompt(sheet.slots),

@@ -43,19 +43,16 @@ import {
   executeTbc,
   pendingAddConfirmations,
   publish,
+  publishToChannel,
   sendActionNotices,
   signupSheetKey,
 } from "./signup-actions.service.js";
-import {
-  deleteSignupSheet,
-  getSignupSheet,
-  mutateSignupSheet,
-  saveSignupSheet,
-} from "./signup-sheet.service.js";
+import { getSignupSheet, mutateSignupSheet } from "./signup-sheet.service.js";
 import { buildSignupSheetEmbed } from "../templates/signup-sheet.template.js";
 import type { SignupSheet, SignupSlot } from "../types/signup-sheet.js";
 import {
   createEmptySlots,
+  ExpiringMap,
   formatNewRunDate,
   formatSlotLabel,
   getRosterPrompt,
@@ -65,10 +62,13 @@ import {
   resolveRosterSignupUserIds,
 } from "../utils/signup-sheet.js";
 
-export const pendingSetupSnapshots = new Map<string, SignupSheet | null>();
-export const pendingSetupDrafts = new Map<string, SignupSheet>();
-export const pendingRosterUsers = new Map<string, string>();
-export const pendingNoteUsers = new Map<string, string>();
+export const pendingSetupSnapshots = new ExpiringMap<
+  string,
+  SignupSheet | null
+>();
+export const pendingSetupDrafts = new ExpiringMap<string, SignupSheet>();
+export const pendingRosterUsers = new ExpiringMap<string, string>();
+export const pendingNoteUsers = new ExpiringMap<string, string>();
 
 export const input = (
   id: string,
@@ -480,6 +480,9 @@ export const handleSignupNoRosterChangesButton = async (
   pendingSetupDrafts.delete(key);
   pendingSetupSnapshots.delete(key);
   pendingRosterUsers.delete(key);
+  if (interaction.message && typeof interaction.message.edit === "function") {
+    await interaction.message.edit({ components: [] }).catch(() => null);
+  }
   await publish(interaction, sheet);
 };
 
@@ -566,8 +569,6 @@ export const handleSignupCancelSetupButton = async (
     });
     return;
   }
-  if (snapshot) await saveSignupSheet(snapshot);
-  else await deleteSignupSheet(interaction.guildId, interaction.channelId);
   pendingSetupSnapshots.delete(key);
   pendingSetupDrafts.delete(key);
   pendingRosterUsers.delete(key);
@@ -626,7 +627,7 @@ export const handleSignupAddConfirmButton = async (
     content: "Signup updated.",
     components: [],
   });
-  await publish(interaction, sheet);
+  await publishToChannel(interaction, sheet);
   await sendActionNotices(
     interaction,
     "added",

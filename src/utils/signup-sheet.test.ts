@@ -2,6 +2,7 @@ import { describe, expect, it, jest } from "@jest/globals";
 import { Collection } from "discord.js";
 import {
   createEmptySlots,
+  ExpiringMap,
   formatNewRunDate,
   formatSlotLabel,
   getDefaultRoster,
@@ -361,6 +362,42 @@ describe("signup-sheet utils", () => {
           displayName: "Stranger",
         }),
       ).toBe(false);
+    });
+  });
+
+  describe("ExpiringMap", () => {
+    it("stores and retrieves non-expired entries", () => {
+      const map = new ExpiringMap<string, string>(5000);
+      map.set("key-1", "val-1");
+      expect(map.get("key-1")).toBe("val-1");
+      expect(map.has("key-1")).toBe(true);
+      expect(map.size).toBe(1);
+    });
+
+    it("expires entries after ttl", () => {
+      const map = new ExpiringMap<string, string>(-100);
+      map.set("key-1", "val-1");
+      expect(map.get("key-1")).toBeUndefined();
+      expect(map.has("key-1")).toBe(false);
+      expect(map.size).toBe(0);
+    });
+
+    it("handles null values correctly", () => {
+      const map = new ExpiringMap<string, string | null>(5000);
+      map.set("key-null", null);
+      expect(map.get("key-null")).toBeNull();
+      expect(map.has("key-null")).toBe(true);
+    });
+
+    it("deletes and clears entries", () => {
+      const map = new ExpiringMap<string, string>(5000);
+      map.set("a", "1");
+      map.set("b", "2");
+      map.delete("a");
+      expect(map.has("a")).toBe(false);
+      expect(map.has("b")).toBe(true);
+      map.clear();
+      expect(map.size).toBe(0);
     });
   });
 });

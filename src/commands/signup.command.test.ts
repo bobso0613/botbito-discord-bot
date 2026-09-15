@@ -42,7 +42,12 @@ const {
   handleSignupWhenButton,
   handleSignupRosterButton,
   handleSignupCancelSetupButton,
+  handleSignupAddConfirmButton,
+  handleSignupAddCancelButton,
   handleSignupModal,
+  pendingSetupDrafts,
+  pendingAddConfirmations,
+  addConfirmationKey,
   SIGNUP_CANCEL_SETUP_BUTTON_ID,
   SIGNUP_MODAL_ADD_ID,
   SIGNUP_MODAL_REMOVE_ID,
@@ -1111,15 +1116,37 @@ describe("/change roster and roster editing buttons", () => {
 
     await handleSignupCancelSetupButton(buttonInteraction as never);
 
-    expect(saveSignupSheet).toHaveBeenCalledWith(
-      expect.objectContaining({ title: "Test Run" }),
-    );
+    expect(saveSignupSheet).not.toHaveBeenCalled();
     expect(buttonInteraction.editReply).toHaveBeenCalledWith(
       expect.objectContaining({
         content: "Party setup changes were reverted.",
         components: [],
       }),
     );
+  });
+
+  it("clones sheet for /change roster draft so mutating draft does not mutate original sheet", async () => {
+    const sheet = buildSheet({ title: "Original Title" });
+    getSignupSheet.mockResolvedValue(sheet);
+    const interaction = {
+      guildId: "guild-1",
+      channelId: "channel-1",
+      user: { id: "user-1", displayName: "Invoker" },
+      options: {
+        getSubcommand: jest.fn().mockReturnValue("roster"),
+      },
+      reply: jest.fn(),
+    };
+
+    await changeCommand.execute(interaction as never);
+
+    const draft = pendingSetupDrafts.get("guild-1:channel-1");
+    expect(draft).toBeDefined();
+    expect(draft).not.toBe(sheet);
+    if (draft) {
+      draft.title = "Modified In Draft";
+      expect(sheet.title).toBe("Original Title");
+    }
   });
 
   it("shows Cancel button when handleSignupRosterButton is clicked", async () => {
@@ -1420,5 +1447,111 @@ describe("/swaporganizer", () => {
         organizerAvatarUrl: "https://example.com/new.png",
       }),
     );
+  });
+});
+
+describe("/add overwrite confirmation buttons", () => {
+  it("updates ephemeral confirmation and publishes public sheet to channel on confirm", async () => {
+    const oldMessageEdit = jest.fn();
+    const channelSend = jest
+      .fn<(options: unknown) => Promise<{ id: string }>>()
+      .mockResolvedValue({ id: "public-msg-789" });
+    const mockChannel = {
+      messages: {
+        fetch: jest
+          .fn<() => Promise<{ edit: typeof oldMessageEdit }>>()
+          .mockResolvedValue({ edit: oldMessageEdit }),
+      },
+      send: channelSend,
+    };
+    const sheet = buildSheet({
+      messageId: "old-public-msg-123",
+      slots: [
+        {
+          number: 1,
+          role: "Tank",
+          signupUserId: "user-existing",
+          signupDisplayName: "ExistingTank",
+          charNote: null,
+        },
+      ],
+    });
+    getSignupSheet.mockResolvedValue(sheet);
+
+    const key = addConfirmationKey("guild-1", "channel-1", "user-1");
+    pendingAddConfirmations.set(key, {
+      userId: "user-1",
+      displayName: "NewTank",
+      slotNumbers: [1],
+    });
+
+    const buttonInteraction = {
+      guildId: "guild-1",
+      channelId: "channel-1",
+      channel: mockChannel,
+      guild: { id: "guild-1", name: "Guild 1", iconURL: () => null },
+      user: { id: "user-1", displayName: "NewTank" },
+      update: jest.fn(),
+      followUp: jest.fn(),
+    };
+
+    await handleSignupAddConfirmButton(buttonInteraction as never);
+
+    expect(buttonInteraction.update).toHaveBeenCalledWith({
+      content: "Signup updated.",
+      components: [],
+    });
+    expect(channelSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        embeds: expect.any(Array),
+        components: expect.any(Array),
+      }),
+    );
+    expect(oldMessageEdit).toHaveBeenCalledWith({ components: [] });
+    expect(mutateSignupSheet).toHaveBeenCalledWith(
+      "guild-1",
+      "channel-1",
+      expect.any(Function),
+    );
+  });
+
+  it("handles expired confirmation on confirm", async () => {
+    const buttonInteraction = {
+      guildId: "guild-1",
+      channelId: "channel-1",
+      user: { id: "user-1", displayName: "NewTank" },
+      update: jest.fn(),
+    };
+
+    await handleSignupAddConfirmButton(buttonInteraction as never);
+
+    expect(buttonInteraction.update).toHaveBeenCalledWith({
+      content: "This confirmation has expired.",
+      components: [],
+    });
+  });
+
+  it("updates ephemeral confirmation message on cancel", async () => {
+    const key = addConfirmationKey("guild-1", "channel-1", "user-1");
+    pendingAddConfirmations.set(key, {
+      userId: "user-1",
+      displayName: "NewTank",
+      slotNumbers: [1],
+    });
+
+    const buttonInteraction = {
+      guildId: "guild-1",
+      channelId: "channel-1",
+      user: { id: "user-1", displayName: "NewTank" },
+      update: jest.fn(),
+    };
+
+    await handleSignupAddCancelButton(buttonInteraction as never);
+
+    expect(buttonInteraction.update).toHaveBeenCalledWith({
+      content: "No changes were made.",
+      components: [],
+    });
+    expect(pendingAddConfirmations.has(key)).toBe(false);
   });
 });
