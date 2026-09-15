@@ -41,6 +41,7 @@ const {
   handleSignupSwapButton,
   handleSignupWhenButton,
   handleSignupRosterButton,
+  handleSignupNoRosterChangesButton,
   handleSignupCancelSetupButton,
   handleSignupAddConfirmButton,
   handleSignupAddCancelButton,
@@ -1119,7 +1120,7 @@ describe("/change roster and roster editing buttons", () => {
     expect(saveSignupSheet).not.toHaveBeenCalled();
     expect(buttonInteraction.editReply).toHaveBeenCalledWith(
       expect.objectContaining({
-        content: "Party setup changes were reverted.",
+        content: "Setup discarded; no changes saved.",
         components: [],
       }),
     );
@@ -1248,6 +1249,96 @@ describe("/change roster and roster editing buttons", () => {
       }),
     );
     expect(buttonInteraction.deferUpdate).not.toHaveBeenCalled();
+  });
+
+  it("persists newly created sheet to storage on /newrun Save Changes button click", async () => {
+    const modalInteraction = {
+      guildId: "guild-1",
+      channelId: "channel-1",
+      customId: "signup-setup",
+      user: {
+        id: "user-1",
+        displayName: "Organizer",
+        displayAvatarURL: () => "https://example.com/avatar.png",
+      },
+      fields: {
+        getTextInputValue: jest.fn((name: string) => {
+          if (name === "title") return "New Run Title";
+          if (name === "datetime") return "10/09 20:00 GMT+8";
+          if (name === "timezone") return "GMT+8";
+          if (name === "parties") return "1";
+          if (name === "sizes") return "2";
+          return "";
+        }),
+      },
+      deferReply: jest.fn(),
+      editReply: jest.fn(),
+    };
+
+    await handleSignupModal(modalInteraction as never);
+
+    const buttonMessageEdit = jest.fn();
+    const saveButtonInteraction = {
+      guildId: "guild-1",
+      channelId: "channel-1",
+      user: { id: "user-1", displayName: "Organizer" },
+      message: { edit: buttonMessageEdit },
+      deferred: true,
+      replied: false,
+      deferReply: jest.fn(),
+      reply: jest.fn(),
+      editReply: jest
+        .fn<() => Promise<{ id: string }>>()
+        .mockResolvedValue({ id: "posted-msg-999" }),
+      guild: { id: "guild-1", name: "Guild 1", iconURL: () => null },
+    };
+
+    await handleSignupNoRosterChangesButton(saveButtonInteraction as never);
+
+    expect(saveSignupSheet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "New Run Title",
+        partySizes: [2],
+      }),
+    );
+    expect(saveButtonInteraction.deferReply).toHaveBeenCalled();
+    expect(saveButtonInteraction.editReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        embeds: expect.any(Array),
+        components: expect.any(Array),
+      }),
+    );
+  });
+
+  it("rejects unauthorized user on handleSignupNoRosterChangesButton", async () => {
+    const sheet = buildSheet();
+    getSignupSheet.mockResolvedValue(sheet);
+    const setupInteraction = {
+      guildId: "guild-1",
+      channelId: "channel-1",
+      user: { id: "user-1", displayName: "Organizer" },
+      options: {
+        getSubcommand: jest.fn().mockReturnValue("roster"),
+      },
+      reply: jest.fn(),
+    };
+    await changeCommand.execute(setupInteraction as never);
+
+    const buttonInteraction = {
+      guildId: "guild-1",
+      channelId: "channel-1",
+      user: { id: "stranger-99", displayName: "Stranger" },
+      reply: jest.fn(),
+    };
+
+    await handleSignupNoRosterChangesButton(buttonInteraction as never);
+
+    expect(buttonInteraction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: "This roster setup expired or belongs to another user.",
+      }),
+    );
+    expect(saveSignupSheet).not.toHaveBeenCalled();
   });
 
   it("cleans up stale message components on publishing a new sheet message", async () => {

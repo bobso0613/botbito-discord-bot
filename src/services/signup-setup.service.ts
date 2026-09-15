@@ -47,7 +47,11 @@ import {
   sendActionNotices,
   signupSheetKey,
 } from "./signup-actions.service.js";
-import { getSignupSheet, mutateSignupSheet } from "./signup-sheet.service.js";
+import {
+  getSignupSheet,
+  mutateSignupSheet,
+  saveSignupSheet,
+} from "./signup-sheet.service.js";
 import { buildSignupSheetEmbed } from "../templates/signup-sheet.template.js";
 import type { SignupSheet, SignupSlot } from "../types/signup-sheet.js";
 import {
@@ -481,8 +485,13 @@ export const handleSignupNoRosterChangesButton = async (
   pendingSetupSnapshots.delete(key);
   pendingRosterUsers.delete(key);
   if (interaction.message && typeof interaction.message.edit === "function") {
-    await interaction.message.edit({ components: [] }).catch(() => null);
+    try {
+      await interaction.message.edit({ components: [] });
+    } catch {
+      // Ignore cleanup error
+    }
   }
+  await saveSignupSheet(sheet);
   await publish(interaction, sheet);
 };
 
@@ -573,9 +582,7 @@ export const handleSignupCancelSetupButton = async (
   pendingSetupDrafts.delete(key);
   pendingRosterUsers.delete(key);
   await interaction.editReply({
-    content: snapshot
-      ? "Party setup changes were reverted."
-      : "New signup sheet discarded.",
+    content: "Setup discarded; no changes saved.",
     components: [],
   });
 };
