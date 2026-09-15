@@ -102,10 +102,10 @@ Older deployments stored `payoutGuildIds`, `guildScheduleSourceByGuild`,
    `guildScheduleSource`, plus its `cooldownInstanceTypes`,
    `multiplierInstanceTypes`, and `guildIcons` (previously keyed by guild ID
    under a shared `guildIcons` map).
-4. Start the bot once with at least one `private/guild-settings/*.json` file in
-   place; startup throws if the directory is empty. Any additional guild the
-   bot has already joined gets an empty settings file created automatically on
-   the next `ClientReady`, which you can then fill in with `/guildsetting set`.
+4. `private/guild-settings/` may start empty on a brand-new deploy; the bot
+   creates a settings file for each guild it has already joined on the next
+   `ClientReady`, and for any guild it joins afterward, which you can then fill
+   in with `/guildsetting set`.
 
 Enable the **Server Members Intent** and **Message Content Intent** in the Discord Developer Portal for the bot application. `/payoutsummary` uses the Server Members Intent to resolve Discord display names from the sheet's Discord tags. The Message Content Intent allows automatic schedule announcements to read schedule embeds from guild message events. The client also enables the `Message` and `Channel` partials so edits to schedule messages still emit `messageUpdate` after they age out of the client's cache (e.g. following a bot restart); without these, discord.js silently drops update events for uncached messages.
 

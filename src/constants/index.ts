@@ -111,6 +111,12 @@ export const COMMAND_GUIDE: ReadonlyArray<{
     ],
   },
   {
+    name: "/guildsetting show",
+    description:
+      "Show this guild's current schedule and cooldown settings (Administrator only)",
+    emoji: "⚙️",
+  },
+  {
     name: "/guildsetting set tracked-category",
     description:
       "Set this guild's tracked schedule categories (Administrator only)",
@@ -186,7 +192,8 @@ export const COMMAND_GUIDE: ReadonlyArray<{
   },
   {
     name: "/guildsetting set cooldown-instance-types",
-    description: "Add a cooldown instance type (Administrator only)",
+    description:
+      "Add or update a cooldown instance type by name (Administrator only)",
     emoji: "⚙️",
     parameters: [
       {
@@ -233,6 +240,19 @@ export const COMMAND_GUIDE: ReadonlyArray<{
     description:
       "Clear cooldown multiplier instance names (Administrator only)",
     emoji: "⚙️",
+  },
+  {
+    name: "/guildsetting remove cooldown-instance-type",
+    description:
+      "Remove one cooldown instance type by name (Administrator only)",
+    emoji: "⚙️",
+    parameters: [
+      {
+        name: "name",
+        description: "Instance type name",
+        required: true,
+      },
+    ],
   },
   {
     name: "/newrun",

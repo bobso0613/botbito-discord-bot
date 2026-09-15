@@ -347,25 +347,30 @@ export const guildSettingCommand: Command = {
       subcommand === "cooldown-instance-type"
     ) {
       const name = interaction.options.getString("name", true);
-      const existingTypes =
-        DISCORD_SETTINGS.cooldownInstanceTypesByGuild[interaction.guildId] ??
-        [];
-      if (!existingTypes.some((type) => type.name === name)) {
+      try {
+        await updateGuildCooldownSettings(interaction.guildId, (settings) => {
+          if (
+            !settings.cooldownInstanceTypes.some((type) => type.name === name)
+          ) {
+            throw new Error(`No instance type named "${name}" exists.`);
+          }
+          settings.cooldownInstanceTypes =
+            settings.cooldownInstanceTypes.filter((type) => type.name !== name);
+          settings.multiplierInstanceTypes =
+            settings.multiplierInstanceTypes.filter(
+              (multiplierName) => multiplierName !== name,
+            );
+        });
+      } catch (error) {
         await interaction.reply({
-          content: `No instance type named "${name}" exists.`,
+          content:
+            error instanceof Error
+              ? error.message
+              : "Invalid cooldown setting.",
           flags: MessageFlags.Ephemeral,
         });
         return;
       }
-      await updateGuildCooldownSettings(interaction.guildId, (settings) => {
-        settings.cooldownInstanceTypes = existingTypes.filter(
-          (type) => type.name !== name,
-        );
-        settings.multiplierInstanceTypes =
-          settings.multiplierInstanceTypes.filter(
-            (multiplierName) => multiplierName !== name,
-          );
-      });
       await interaction.reply({
         content: `Removed cooldown instance type "${name}".`,
         flags: MessageFlags.Ephemeral,
@@ -431,31 +436,27 @@ export const guildSettingCommand: Command = {
             interaction.options.getString("maxattempts", true),
             interaction.options.getString("emoji", true),
           );
-          const existingTypes =
-            DISCORD_SETTINGS.cooldownInstanceTypesByGuild[
-              interaction.guildId
-            ] ?? [];
-          const types = existingTypes.some(({ name }) => name === type.name)
-            ? existingTypes.map((existing) =>
-                existing.name === type.name ? type : existing,
-              )
-            : [...existingTypes, type];
           await updateGuildCooldownSettings(interaction.guildId, (settings) => {
-            settings.cooldownInstanceTypes = types;
+            settings.cooldownInstanceTypes =
+              settings.cooldownInstanceTypes.some(
+                ({ name }) => name === type.name,
+              )
+                ? settings.cooldownInstanceTypes.map((existing) =>
+                    existing.name === type.name ? type : existing,
+                  )
+                : [...settings.cooldownInstanceTypes, type];
           });
         } else {
           const types = splitValues(value);
-          const configuredNames = new Set(
-            DISCORD_SETTINGS.cooldownInstanceTypesByGuild[
-              interaction.guildId
-            ]?.map(({ name }) => name) ?? [],
-          );
-          if (types.some((type) => !configuredNames.has(type))) {
-            throw new Error(
-              "Every multiplier type must be a configured instance type.",
-            );
-          }
           await updateGuildCooldownSettings(interaction.guildId, (settings) => {
+            const configuredNames = new Set(
+              settings.cooldownInstanceTypes.map(({ name }) => name),
+            );
+            if (types.some((type) => !configuredNames.has(type))) {
+              throw new Error(
+                "Every multiplier type must be a configured instance type.",
+              );
+            }
             settings.multiplierInstanceTypes = types;
           });
         }

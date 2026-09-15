@@ -345,6 +345,21 @@ describe("guild setting command", () => {
   });
 
   it("rejects removing a cooldown instance type that does not exist", async () => {
+    updateGuildCooldownSettings.mockImplementation(
+      async (
+        _guildId,
+        update: (
+          value: Pick<
+            GuildSettings,
+            "cooldownInstanceTypes" | "multiplierInstanceTypes"
+          >,
+        ) => void,
+      ) =>
+        update({
+          cooldownInstanceTypes: [],
+          multiplierInstanceTypes: [],
+        }),
+    );
     const interaction = createInteraction(
       "cooldown-instance-type",
       "",
@@ -355,7 +370,6 @@ describe("guild setting command", () => {
 
     await guildSettingCommand.execute(interaction as never);
 
-    expect(updateGuildCooldownSettings).not.toHaveBeenCalled();
     expect(interaction.reply).toHaveBeenCalledWith({
       content: 'No instance type named "Nonexistent" exists.',
       flags: MessageFlags.Ephemeral,

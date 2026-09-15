@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type {
   DiscordSettings,
@@ -29,7 +29,10 @@ const loadDiscordSettings = (): DiscordSettings => {
     readFileSync(guildScheduleSettingsPath, "utf8"),
   ) as Pick<Partial<DiscordSettings>, "guildScheduleBotIds">;
   const guildSettings = Object.fromEntries(
-    readdirSync(guildSettingsDirectory, { withFileTypes: true })
+    (existsSync(guildSettingsDirectory)
+      ? readdirSync(guildSettingsDirectory, { withFileTypes: true })
+      : []
+    )
       .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
       .map((entry) => [
         entry.name.slice(0, -".json".length),
@@ -77,7 +80,6 @@ const loadDiscordSettings = (): DiscordSettings => {
     !Array.isArray(guildScheduleSettings.guildScheduleBotIds) ||
     guildScheduleSettings.guildScheduleBotIds.length === 0 ||
     guildScheduleSettings.guildScheduleBotIds.some((botId) => !botId) ||
-    !Object.keys(guildSettings).length ||
     Object.values(guildScheduleSourceByGuild).some(
       (source) => !source?.scheduleTextChannelIds,
     )
