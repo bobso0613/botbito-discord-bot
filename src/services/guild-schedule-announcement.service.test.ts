@@ -109,6 +109,38 @@ describe("isGuildScheduleChangeMessage", () => {
     ).toBe(false);
   });
 
+  it("ignores responses in excluded channels", () => {
+    const source = DISCORD_SETTINGS.guildScheduleSourceByGuild[guildId];
+    source.excludedChannelIds = ["excluded-channel-id"];
+
+    try {
+      expect(
+        isGuildScheduleMessage(
+          createMessage({ channelId: "excluded-channel-id" }),
+        ),
+      ).toBe(false);
+    } finally {
+      source.excludedChannelIds = [];
+    }
+  });
+
+  it("keeps triggering for excluded channels that are role restricted", () => {
+    const source = DISCORD_SETTINGS.guildScheduleSourceByGuild[guildId];
+    source.excludedChannelIds = ["excluded-channel-id"];
+    source.roleRestrictedChannels = { "excluded-channel-id": "role-id" };
+
+    try {
+      expect(
+        isGuildScheduleMessage(
+          createMessage({ channelId: "excluded-channel-id" }),
+        ),
+      ).toBe(true);
+    } finally {
+      source.excludedChannelIds = [];
+      source.roleRestrictedChannels = {};
+    }
+  });
+
   it("ignores source messages when no announcement channels are configured", () => {
     const source = DISCORD_SETTINGS.guildScheduleSourceByGuild[guildId];
     const scheduleTextChannelIds = source.scheduleTextChannelIds;

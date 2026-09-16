@@ -11,6 +11,7 @@ import {
   buildGuildScheduleEmbed,
   buildScheduleActionRow,
 } from "../templates/guild-schedule.template.js";
+import type { DiscordSettings } from "../types/discord-settings.js";
 import type { InteractionContext } from "../types/interaction-context.js";
 import { logger } from "../utils/logger.js";
 
@@ -41,9 +42,26 @@ export const getScheduleTimestamp = (message: Message): string | undefined => {
 export const isClearedScheduleMessage = (message: Message): boolean =>
   clearedSchedulePattern.test(getEmbedText(message));
 
+type GuildScheduleSource =
+  DiscordSettings["guildScheduleSourceByGuild"][string];
+
+/**
+ * Returns whether a channel is kept out of the announcement list.
+ * Role-restricted channels stay listed even when excluded, matching the refresh.
+ */
+const isExcludedScheduleChannel = (
+  source: GuildScheduleSource,
+  channelId: string,
+): boolean =>
+  Boolean(
+    source.excludedChannelIds?.includes(channelId) &&
+    !source.roleRestrictedChannels?.[channelId],
+  );
+
 /**
  * Returns whether a message is from the configured schedule bot in a source category.
- * Configured announcement channels are excluded even when placed in a source category.
+ * Configured announcement channels and excluded channels are skipped even when placed
+ * in a source category, so they never trigger a refresh they cannot appear in.
  */
 export const isGuildScheduleSourceMessage = (message: Message): boolean => {
   if (
@@ -59,7 +77,8 @@ export const isGuildScheduleSourceMessage = (message: Message): boolean => {
   return Boolean(
     source?.scheduleTextChannelIds.length &&
     source?.categoryIds.includes(message.channel.parentId ?? "") &&
-    !source.scheduleTextChannelIds.includes(message.channel.id),
+    !source.scheduleTextChannelIds.includes(message.channel.id) &&
+    !isExcludedScheduleChannel(source, message.channel.id),
   );
 };
 
@@ -447,7 +466,8 @@ export const registerGuildScheduleAnnouncementListener = (
       DISCORD_SETTINGS.guildScheduleSourceByGuild[newChannel.guildId];
     if (
       !source?.scheduleTextChannelIds.length ||
-      !source.categoryIds.includes(newChannel.parentId ?? "")
+      !source.categoryIds.includes(newChannel.parentId ?? "") ||
+      isExcludedScheduleChannel(source, newChannel.id)
     )
       return;
 

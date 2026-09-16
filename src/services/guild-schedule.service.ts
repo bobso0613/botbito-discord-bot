@@ -106,9 +106,11 @@ const isAccessibleScheduleChannel = (
 
 /**
  * Gets the newest active schedule within the requested time window from the configured
- * schedule bot's recent replies. Scheduled replies outside the window are skipped.
+ * schedule bots' recent replies. Scheduled replies outside the window are skipped.
  * Replies without a `Your Time:` label, such as command confirmations or cancelled
- * interactions, are ignored. A reply with `Your Time: TBD` clears an older schedule.
+ * interactions, are ignored. A reply with `Your Time: TBD` clears an older schedule,
+ * but only for the bot that posted it, so a cleared sheet from one bot does not hide
+ * another bot's active sheet in the same channel.
  */
 const getNewestChannelSchedule = async (
   channel: TextChannel,
@@ -124,8 +126,11 @@ const getNewestChannelSchedule = async (
       DISCORD_SETTINGS.guildScheduleBotIds.includes(message.author.id),
     )
     .sort((first, second) => second.createdTimestamp - first.createdTimestamp);
+  const clearedBotIds = new Set<string>();
 
   for (const message of scheduleMessages) {
+    if (clearedBotIds.has(message.author.id)) continue;
+
     const schedule = message.embeds.flatMap((embed) => {
       const embedText = getEmbedText(embed);
       const timestamp = getActiveScheduleTimestamp(
@@ -154,7 +159,7 @@ const getNewestChannelSchedule = async (
 
     const embedText = message.embeds.map(getEmbedText).join("\n");
     if (clearedScheduleTimePattern.test(embedText)) {
-      return undefined;
+      clearedBotIds.add(message.author.id);
     }
   }
 
@@ -164,7 +169,8 @@ const getNewestChannelSchedule = async (
 /**
  * Lists accessible active schedules, keeping the newest active schedule per channel.
  * Time-less schedule-bot replies are ignored, while a newer `Your Time: TBD` embed
- * clears that channel's older schedule.
+ * clears that bot's older schedules in the channel without hiding another bot's
+ * active schedule there.
  * Results are ordered from earliest to latest scheduled time.
  * When a time window is provided, schedules inside that window are included even
  * when their scheduled time has already passed; a newer scheduled reply outside the

@@ -449,6 +449,74 @@ describe("getActiveGuildSchedules", () => {
     expect(schedules).toEqual([]);
   });
 
+  it("keeps another bot's active schedule when a newer bot's embed has Your Time: TBD", async () => {
+    const member = { displayName: "Lucian Blight" };
+    const channel = {
+      type: ChannelType.GuildText,
+      id: "migrated-schedule",
+      parentId: "schedule-category",
+      name: "migrated-schedule",
+      url: "https://discord.com/channels/guild/migrated-schedule",
+      permissionsFor: jest.fn().mockReturnValue({
+        has: jest.fn().mockReturnValue(true),
+      }),
+      messages: {
+        fetch: jest.fn().mockResolvedValue(
+          new Map([
+            [
+              "new-bot-schedule",
+              {
+                author: { id: DISCORD_SETTINGS.guildScheduleBotIds[1] },
+                createdTimestamp: 1,
+                embeds: [
+                  {
+                    title: "Migrated schedule",
+                    description: "",
+                    fields: [
+                      {
+                        name: "Schedule:",
+                        value: "*Your Time: <t:4102444800:F>*",
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+            [
+              "old-bot-cleared",
+              {
+                author: { id: DISCORD_SETTINGS.guildScheduleBotIds[0] },
+                createdTimestamp: 2,
+                embeds: [
+                  {
+                    title: "use the new bot on this channel for signup",
+                    description: "Your Time: TBD",
+                    fields: [],
+                  },
+                ],
+              },
+            ],
+          ]) as never,
+        ),
+      },
+    };
+    const guild = { channels: { cache: new Map([[channel.id, channel]]) } };
+
+    const schedules = await getActiveGuildSchedules(
+      guild as never,
+      member as never,
+      ["schedule-category"],
+      [],
+      undefined,
+      undefined,
+      true,
+    );
+
+    expect(schedules.map((schedule) => schedule.title)).toEqual([
+      "Migrated schedule",
+    ]);
+  });
+
   it("ignores a newer schedule-bot reply without a Your Time label", async () => {
     const member = { displayName: "Lucian Blight" };
     const channel = {
