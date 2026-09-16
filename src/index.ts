@@ -11,19 +11,62 @@ import {
   ActivityType,
   type ButtonInteraction,
   type ChatInputCommandInteraction,
+  type ModalSubmitInteraction,
+  type StringSelectMenuInteraction,
 } from "discord.js";
 import { commands } from "./commands/index.js";
-import { sendHelp } from "./commands/help.command.js";
+import { sendHelp, handleHelpAutocomplete } from "./commands/help.command.js";
+import { handleSetInstanceTypeAutocomplete } from "./commands/signup.command.js";
 import { sendMyCooldowns } from "./commands/mycooldowns.command.js";
 import { sendMySchedule } from "./commands/mysched.command.js";
 import { sendPayout } from "./commands/payout.command.js";
+import {
+  handleSignupModal,
+  handleSignupRosterButton,
+  handleSignupNoRosterChangesButton,
+  handleSignupRosterMessage,
+  handleSignupCancelSetupButton,
+  handleSignupAddConfirmButton,
+  handleSignupAddCancelButton,
+  handleSignupInfoButton,
+  handleSignupInstanceTypeButton,
+  handleSignupInstanceTypeSelect,
+  handleSignupEditPartySetupButton,
+} from "./commands/signup.command.js";
 import { registerGuildScheduleAnnouncementListener } from "./services/guild-schedule-announcement.service.js";
+import { ensureGuildSettings } from "./services/guild-settings.service.js";
 import {
   HELP_BUTTON_ID,
   MY_COOLDOWNS_BUTTON_ID,
   MY_PAYOUT_STATUS_BUTTON_ID,
   MY_SCHEDULE_BUTTON_ID,
 } from "./templates/guild-schedule.template.js";
+import {
+  SIGNUP_ROSTER_BUTTON_ID,
+  SIGNUP_NO_ROSTER_CHANGES_BUTTON_ID,
+  SIGNUP_CANCEL_SETUP_BUTTON_ID,
+  SIGNUP_ADD_CONFIRM_BUTTON_ID,
+  SIGNUP_ADD_CANCEL_BUTTON_ID,
+  SIGNUP_INFO_BUTTON_ID,
+  SIGNUP_INSTANCE_TYPE_BUTTON_ID,
+  SIGNUP_INSTANCE_TYPE_SELECT_ID,
+  SIGNUP_EDIT_PARTY_SETUP_BUTTON_ID,
+  SIGNUP_ADD_BUTTON_ID,
+  SIGNUP_REMOVE_BUTTON_ID,
+  SIGNUP_TBC_BUTTON_ID,
+  SIGNUP_CHARNOTE_BUTTON_ID,
+  SIGNUP_REMOVE_CHARNOTE_BUTTON_ID,
+  SIGNUP_SWAP_BUTTON_ID,
+  SIGNUP_WHEN_BUTTON_ID,
+  handleSignupAddButton,
+  handleSignupRemoveButton,
+  handleSignupTbcButton,
+  handleSignupCharNoteButton,
+  handleSignupRemoveCharNoteButton,
+  handleSignupSwapButton,
+  handleSignupWhenButton,
+} from "./commands/signup.command.js";
+import { DISCORD_SETTINGS } from "./config/discord-settings.js";
 import { logger } from "./utils/logger.js";
 
 const token = process.env.DISCORD_TOKEN;
@@ -81,7 +124,13 @@ const registerGuildSlashCommands = async (guildId: string): Promise<void> => {
   }
 
   const commandBody = commands
-    .filter((command) => command.guildIds?.includes(guildId))
+    .filter(
+      (command) =>
+        command.guildIds?.includes(guildId) ||
+        command.registerInAllGuilds ||
+        (command.requiresGuildScheduleSettings &&
+          guildId in DISCORD_SETTINGS.guildScheduleSourceByGuild),
+    )
     .map((command) => command.data.toJSON());
   const rest = new REST().setToken(botToken);
   await rest.put(Routes.applicationGuildCommands(clientId, guildId), {
@@ -96,20 +145,44 @@ client.once(Events.ClientReady, async (readyClient) => {
   readyClient.user.setPresence({
     activities: [
       {
-        name: "/help /payout /guildsched | @bobito",
+        name: "Use /help for command list | @bobito",
         type: ActivityType.Listening,
       },
     ],
   });
 
   for (const guildId of readyClient.guilds.cache.keys()) {
+    try {
+      await ensureGuildSettings(guildId);
+    } catch (error) {
+      logger.error(
+        `Failed to initialize settings for guild ${guildId}:`,
+        error,
+      );
+    }
     await registerGuildSlashCommands(guildId);
   }
+  logger.log(
+    `Loaded ${Object.keys(DISCORD_SETTINGS.guildScheduleSourceByGuild).length} guild setting file(s) for ${readyClient.guilds.cache.size} joined guild(s).`,
+  );
   logger.log(`Logged in as ${readyClient.user.tag}`);
 });
 
 client.on(Events.GuildCreate, async (guild) => {
-  await registerGuildSlashCommands(guild.id);
+  try {
+    await ensureGuildSettings(guild.id);
+    await registerGuildSlashCommands(guild.id);
+  } catch (error) {
+    logger.error(`Failed to initialize settings for guild ${guild.id}:`, error);
+  }
+});
+
+client.on(Events.MessageCreate, async (message) => {
+  try {
+    await handleSignupRosterMessage(message);
+  } catch (error) {
+    logger.error("Signup roster message processing failed:", error);
+  }
 });
 
 /**
@@ -118,6 +191,23 @@ client.on(Events.GuildCreate, async (guild) => {
  * user, and parameter context; button interactions have an empty parameter list.
  */
 client.on(Events.InteractionCreate, async (interaction) => {
+  if (interaction.isModalSubmit()) {
+    try {
+      await handleSignupModal(interaction as ModalSubmitInteraction);
+    } catch (error) {
+      logger.error("Signup modal processing failed:", error);
+      if (interaction.deferred || interaction.replied)
+        await interaction.editReply(
+          "Something went wrong while processing this signup sheet.",
+        );
+      else
+        await interaction.reply({
+          content: "Something went wrong while processing this signup sheet.",
+          flags: MessageFlags.Ephemeral,
+        });
+    }
+    return;
+  }
   if (interaction.isButton()) {
     const buttonActions: Readonly<
       Record<string, (buttonInteraction: ButtonInteraction) => Promise<void>>
@@ -129,6 +219,36 @@ client.on(Events.InteractionCreate, async (interaction) => {
       [MY_COOLDOWNS_BUTTON_ID]: (buttonInteraction) =>
         sendMyCooldowns(buttonInteraction),
       [HELP_BUTTON_ID]: (buttonInteraction) => sendHelp(buttonInteraction),
+      [SIGNUP_ROSTER_BUTTON_ID]: (buttonInteraction) =>
+        handleSignupRosterButton(buttonInteraction),
+      [SIGNUP_NO_ROSTER_CHANGES_BUTTON_ID]: (buttonInteraction) =>
+        handleSignupNoRosterChangesButton(buttonInteraction),
+      [SIGNUP_CANCEL_SETUP_BUTTON_ID]: (buttonInteraction) =>
+        handleSignupCancelSetupButton(buttonInteraction),
+      [SIGNUP_ADD_CONFIRM_BUTTON_ID]: (buttonInteraction) =>
+        handleSignupAddConfirmButton(buttonInteraction),
+      [SIGNUP_ADD_CANCEL_BUTTON_ID]: (buttonInteraction) =>
+        handleSignupAddCancelButton(buttonInteraction),
+      [SIGNUP_INFO_BUTTON_ID]: (buttonInteraction) =>
+        handleSignupInfoButton(buttonInteraction),
+      [SIGNUP_ADD_BUTTON_ID]: (buttonInteraction) =>
+        handleSignupAddButton(buttonInteraction),
+      [SIGNUP_REMOVE_BUTTON_ID]: (buttonInteraction) =>
+        handleSignupRemoveButton(buttonInteraction),
+      [SIGNUP_TBC_BUTTON_ID]: (buttonInteraction) =>
+        handleSignupTbcButton(buttonInteraction),
+      [SIGNUP_CHARNOTE_BUTTON_ID]: (buttonInteraction) =>
+        handleSignupCharNoteButton(buttonInteraction),
+      [SIGNUP_REMOVE_CHARNOTE_BUTTON_ID]: (buttonInteraction) =>
+        handleSignupRemoveCharNoteButton(buttonInteraction),
+      [SIGNUP_SWAP_BUTTON_ID]: (buttonInteraction) =>
+        handleSignupSwapButton(buttonInteraction),
+      [SIGNUP_WHEN_BUTTON_ID]: (buttonInteraction) =>
+        handleSignupWhenButton(buttonInteraction),
+      [SIGNUP_INSTANCE_TYPE_BUTTON_ID]: (buttonInteraction) =>
+        handleSignupInstanceTypeButton(buttonInteraction),
+      [SIGNUP_EDIT_PARTY_SETUP_BUTTON_ID]: (buttonInteraction) =>
+        handleSignupEditPartySetupButton(buttonInteraction),
     };
     const buttonAction = buttonActions[interaction.customId];
     if (!buttonAction) return;
@@ -161,6 +281,50 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
       } catch (replyError) {
         logger.error("Failed to send button error response:", replyError);
+      }
+    }
+    return;
+  }
+
+  if (interaction.isStringSelectMenu()) {
+    if (interaction.customId !== SIGNUP_INSTANCE_TYPE_SELECT_ID) return;
+    try {
+      await handleSignupInstanceTypeSelect(
+        interaction as StringSelectMenuInteraction,
+      );
+    } catch (error) {
+      logger.error("Signup instance type select processing failed:", error);
+      try {
+        if (interaction.deferred || interaction.replied) {
+          await interaction.editReply(
+            "Something went wrong while processing this command. Please try again.",
+          );
+        } else {
+          await interaction.reply({
+            content:
+              "Something went wrong while processing this command. Please try again.",
+            flags: MessageFlags.Ephemeral,
+          });
+        }
+      } catch (replyError) {
+        logger.error("Failed to send select menu error response:", replyError);
+      }
+    }
+    return;
+  }
+
+  if (interaction.isAutocomplete()) {
+    if (interaction.commandName === "help") {
+      try {
+        await handleHelpAutocomplete(interaction);
+      } catch (error) {
+        logger.error("Help autocomplete failed:", error);
+      }
+    } else if (interaction.commandName === "setinstancetype") {
+      try {
+        await handleSetInstanceTypeAutocomplete(interaction);
+      } catch (error) {
+        logger.error("Set instance type autocomplete failed:", error);
       }
     }
     return;

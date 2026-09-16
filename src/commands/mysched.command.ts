@@ -28,7 +28,9 @@ import {
 } from "../utils/guild-schedule.js";
 import { getInteractionContext } from "../utils/interaction-context.js";
 
-type MyScheduleInteraction = ChatInputCommandInteraction | ButtonInteraction;
+export type MyScheduleInteraction =
+  | ChatInputCommandInteraction
+  | ButtonInteraction;
 
 /**
  * Gets active schedules in a configured schedule guild that the member can see.
@@ -42,6 +44,9 @@ const getAccessibleGuildSchedules = async (
   const source = DISCORD_SETTINGS.guildScheduleSourceByGuild[guild.id];
 
   if (!source) {
+    return [];
+  }
+  if (source.categoryIds.length === 0) {
     return [];
   }
 

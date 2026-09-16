@@ -1,6 +1,6 @@
 import { getServerTimestamp } from "./server-timestamp.js";
 
-type LogArguments = readonly unknown[];
+export type LogArguments = readonly unknown[];
 
 const formatMessage = (message: string): string =>
   `${process.pid} - [${getServerTimestamp()}] ${message}`;

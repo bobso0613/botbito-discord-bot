@@ -19,13 +19,13 @@ describe("getActiveGuildSchedules", () => {
       signupName = "Lucian Blight",
       role = "Clown",
     ) => ({
-      author: { id: DISCORD_SETTINGS.guildScheduleBotId },
+      author: { id: DISCORD_SETTINGS.guildScheduleBotIds[0] },
       createdTimestamp,
       embeds: [
         {
           title,
           description:
-            "`04`: 🎸 " +
+            "`04`: ðŸŽ¸ " +
             `${role} - **` +
             `${signupName}** (_give link_)\nYour Time: ${timestamp}`,
           fields: [],
@@ -144,7 +144,7 @@ describe("getActiveGuildSchedules", () => {
     const member = { displayName: "Lucian Blight" };
     const accessiblePermissions = { has: jest.fn().mockReturnValue(true) };
     const createMessage = (description: string) => ({
-      author: { id: DISCORD_SETTINGS.guildScheduleBotId },
+      author: { id: DISCORD_SETTINGS.guildScheduleBotIds[0] },
       createdTimestamp: 1,
       embeds: [
         {
@@ -174,7 +174,7 @@ describe("getActiveGuildSchedules", () => {
                 [
                   "msg",
                   createMessage(
-                    "`04`: 🎸 Clown - **Lucian Blight** (_Mango Bay_)\nYour Time: <t:4070905800:F>",
+                    "`04`: ðŸŽ¸ Clown - **Lucian Blight** (_Mango Bay_)\nYour Time: <t:4070905800:F>",
                   ),
                 ],
               ]),
@@ -198,7 +198,7 @@ describe("getActiveGuildSchedules", () => {
     const member = { displayName: "Lucian Blight" };
     const accessiblePermissions = { has: jest.fn().mockReturnValue(true) };
     const createMessage = (title: string, timestamp: string) => ({
-      author: { id: DISCORD_SETTINGS.guildScheduleBotId },
+      author: { id: DISCORD_SETTINGS.guildScheduleBotIds[0] },
       createdTimestamp: 1,
       embeds: [
         {
@@ -291,7 +291,7 @@ describe("getActiveGuildSchedules", () => {
             [
               "completed-this-week",
               {
-                author: { id: DISCORD_SETTINGS.guildScheduleBotId },
+                author: { id: DISCORD_SETTINGS.guildScheduleBotIds[0] },
                 createdTimestamp: 1,
                 embeds: [
                   {
@@ -305,7 +305,7 @@ describe("getActiveGuildSchedules", () => {
             [
               "next-week",
               {
-                author: { id: DISCORD_SETTINGS.guildScheduleBotId },
+                author: { id: DISCORD_SETTINGS.guildScheduleBotIds[0] },
                 createdTimestamp: 2,
                 embeds: [
                   {
@@ -356,7 +356,7 @@ describe("getActiveGuildSchedules", () => {
             [
               "schedule",
               {
-                author: { id: DISCORD_SETTINGS.guildScheduleBotId },
+                author: { id: DISCORD_SETTINGS.guildScheduleBotIds[0] },
                 createdTimestamp: 1,
                 embeds: [
                   {
@@ -405,7 +405,7 @@ describe("getActiveGuildSchedules", () => {
             [
               "older",
               {
-                author: { id: DISCORD_SETTINGS.guildScheduleBotId },
+                author: { id: DISCORD_SETTINGS.guildScheduleBotIds[0] },
                 createdTimestamp: 1,
                 embeds: [
                   {
@@ -419,7 +419,7 @@ describe("getActiveGuildSchedules", () => {
             [
               "cleared",
               {
-                author: { id: DISCORD_SETTINGS.guildScheduleBotId },
+                author: { id: DISCORD_SETTINGS.guildScheduleBotIds[0] },
                 createdTimestamp: 2,
                 embeds: [
                   {
@@ -466,7 +466,7 @@ describe("getActiveGuildSchedules", () => {
             [
               "older",
               {
-                author: { id: DISCORD_SETTINGS.guildScheduleBotId },
+                author: { id: DISCORD_SETTINGS.guildScheduleBotIds[0] },
                 createdTimestamp: 1,
                 embeds: [
                   {
@@ -480,7 +480,7 @@ describe("getActiveGuildSchedules", () => {
             [
               "postponed",
               {
-                author: { id: DISCORD_SETTINGS.guildScheduleBotId },
+                author: { id: DISCORD_SETTINGS.guildScheduleBotIds[0] },
                 createdTimestamp: 2,
                 embeds: [],
                 content: "Schedule postponed",
@@ -524,7 +524,7 @@ describe("getActiveGuildSchedules", () => {
             [
               "cancelled-interaction",
               {
-                author: { id: DISCORD_SETTINGS.guildScheduleBotId },
+                author: { id: DISCORD_SETTINGS.guildScheduleBotIds[0] },
                 createdTimestamp: 3,
                 content: "Interaction cancelled",
                 embeds: [],
@@ -533,7 +533,7 @@ describe("getActiveGuildSchedules", () => {
             [
               "confirmation",
               {
-                author: { id: DISCORD_SETTINGS.guildScheduleBotId },
+                author: { id: DISCORD_SETTINGS.guildScheduleBotIds[0] },
                 createdTimestamp: 2,
                 content:
                   "Are you sure you would like to reschedule for next week, same time?",
@@ -543,7 +543,7 @@ describe("getActiveGuildSchedules", () => {
             [
               "schedule",
               {
-                author: { id: DISCORD_SETTINGS.guildScheduleBotId },
+                author: { id: DISCORD_SETTINGS.guildScheduleBotIds[0] },
                 createdTimestamp: 1,
                 embeds: [
                   {

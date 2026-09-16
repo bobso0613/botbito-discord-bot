@@ -28,40 +28,90 @@ Set `PEPEMONEYRAIN_EMOJI_ID` to the custom animated Discord emoji ID used beside
 
 When running `npm run dev` with `MODE=DEV`, automatic guild schedule announcements are disabled unless `ENABLE_GUILD_SCHEDULE_ANNOUNCEMENTS=true` is set in `.env`. This toggle does not affect non-DEV environments, where the listener is always registered.
 
-Create `private/discord_settings.json` to configure the payout guilds, guild schedule sources, and the payout contact:
+Create `private/discord_settings.json` to configure the payout guilds and payout contact:
 
 ```json
 {
   "payoutGuildIds": ["guild-id"],
   "payoutToPingId": "discord-user-id",
-  "payoutToPingTag": "discord-user-tag",
-  "guildScheduleBotId": "schedule-bot-user-id",
-  "guildIcons": {
-    "PROD": {
-      "guild-id": "<:guildIcon_name:emoji-id>"
-    },
-    "DEV": {
-      "guild-id": "<:guildIcon_name:emoji-id>"
+  "payoutToPingTag": "discord-user-tag"
+}
+```
+
+Create `private/guild_schedule_settings.json` for the schedule bots. Add the
+external schedule bot and this bot's user ID during the transition:
+
+```json
+{
+  "guildScheduleBotIds": ["external-schedule-bot-user-id", "this-bot-user-id"]
+}
+```
+
+Create one `private/guild-settings/<guild-id>.json` file for each guild with schedules:
+
+```json
+{
+  "guildScheduleSource": {
+    "categoryIds": ["schedule-category-id", "other-category-id"],
+    "scheduleTextChannelIds": ["public-schedule-channel-id"],
+    "excludedChannelIds": ["private-signup-channel-id"],
+    "roleRestrictedChannels": {
+      "restricted-channel-id": "required-role-id"
     }
   },
-  "guildScheduleSourceByGuild": {
-    "guild-id": {
-      "categoryIds": ["schedule-category-id", "other-category-id"],
-      "scheduleTextChannelIds": ["public-schedule-channel-id"],
-      "excludedChannelIds": ["private-signup-channel-id"],
-      "roleRestrictedChannels": {
-        "restricted-channel-id": "required-role-id"
-      }
-    }
+  "guildIcons": {
+    "PROD": "<:guildIcon_name:emoji-id>",
+    "DEV": "<:guildIcon_name:emoji-id>"
   }
 }
 ```
+
+When the bot joins a guild, or on startup for any guild it has already joined,
+it creates this file with empty schedule arrays and empty `DEV`/`PROD` icons if
+it does not already exist. Members with the Administrator permission can
+configure schedule sources with `/guildsetting set`: `tracked-category`,
+`excluded-channels`, `schedule-channels`, and `role-restricted-channels`. The
+matching `/guildsetting clear` subcommands clear each setting without requiring
+a value. Channel values accept Discord channel links or `#channel-name`; role
+restrictions use comma-separated `#channel=@role` mappings. `/guildsetting
+show` displays the current settings for the invoking guild.
+
+Cooldown instance types are also stored per guild in `cooldownInstanceTypes` and
+`multiplierInstanceTypes`. Administrators can add or update one type with
+`/guildsetting set cooldown-instance-types` using the separate `name`,
+`keywords`, `maxattempts`, and `emoji` options; a name that already exists is
+updated in place instead of erroring. Use `/guildsetting remove
+cooldown-instance-type` to remove a single type by name. Multiplier types are
+still fully replaced with `/guildsetting set multiplier-instance-types` using
+comma-separated instance names. The matching clear commands remove all
+configured values for a setting. New guilds and the existing guild settings are
+initialized from `src/constants/cooldowns.ts`.
+
+### Migrating from the monolithic `discord_settings.json` 🔀
+
+Older deployments stored `payoutGuildIds`, `guildScheduleSourceByGuild`,
+`cooldownInstanceTypes`, and `multiplierInstanceTypes` together in a single
+`private/discord_settings.json`. To migrate to the per-guild layout above:
+
+1. Keep `payoutGuildIds`, `payoutToPingId`, and `payoutToPingTag` in
+   `private/discord_settings.json`; those remain global settings.
+2. Move `guildScheduleBotIds` into its own `private/guild_schedule_settings.json`
+   as shown above.
+3. For each guild ID previously under `guildScheduleSourceByGuild`, create
+   `private/guild-settings/<guild-id>.json` containing that guild's
+   `guildScheduleSource`, plus its `cooldownInstanceTypes`,
+   `multiplierInstanceTypes`, and `guildIcons` (previously keyed by guild ID
+   under a shared `guildIcons` map).
+4. `private/guild-settings/` may start empty on a brand-new deploy; the bot
+   creates a settings file for each guild it has already joined on the next
+   `ClientReady`, and for any guild it joins afterward, which you can then fill
+   in with `/guildsetting set`.
 
 Enable the **Server Members Intent** and **Message Content Intent** in the Discord Developer Portal for the bot application. `/payoutsummary` uses the Server Members Intent to resolve Discord display names from the sheet's Discord tags. The Message Content Intent allows automatic schedule announcements to read schedule embeds from guild message events. The client also enables the `Message` and `Channel` partials so edits to schedule messages still emit `messageUpdate` after they age out of the client's cache (e.g. following a bot restart); without these, discord.js silently drops update events for uncached messages.
 
 ## Commands 💬
 
-`/help` ℹ️ displays a private guide to available commands with descriptions, parameters, and usage for each command. Each command is labeled with its associated emoji for quick recognition.
+`/help` ℹ️ requires a `command` choice parameter and displays a private guide for just that command, including its description, parameters, and usage. Choices are generated from the same command list used to power the guide, so new entries automatically appear as selectable choices. The "Help" button on guild schedule output still shows the full guide across every command.
 
 `/payout` 💰 displays the command user's Pending, Share Ready, and Distributed balances in zeny (`z`). It is available in every channel of configured payout guilds. When the user has no non-zero payout balance, it instead displays a message that they are not on the list. The optional `sendprivately` parameter sends the response ephemerally; it is public by default.
 
@@ -132,7 +182,7 @@ For `/payoutsummary`, the bot selects that guild's `Pending`, `Share Ready`, or 
 
 ## Guild Schedule Format 📅
 
-Schedule embeds are posted by the configured `guildScheduleBotId` bot in signup channels. Each entry's format determines how the bot displays signup and reserve information.
+Schedule embeds are posted by a configured `guildScheduleBotIds` bot in signup channels. Each entry's format determines how the bot displays signup and reserve information.
 
 An active schedule must include a Discord timestamp in this form:
 
@@ -170,11 +220,11 @@ Certain schedule channels can be restricted to users with specific Discord roles
 
 When a member views a role-restricted channel privately, they only see it if they have the required role. When posting publicly with `/guildsched public:true`, role-restricted channels are displayed with a "(Private run)" label in the run title instead of a direct link, allowing authorized members to see private runs while others can see they exist without accessing their details.
 
-Configure role-restricted channels in `private/discord_settings.json`:
+Configure role-restricted channels in the guild's `private/guild-settings/<guild-id>.json`:
 
 ```json
-"guildScheduleSourceByGuild": {
-  "guild-id": {
+{
+  "guildScheduleSource": {
     "categoryIds": ["schedule-category-id"],
     "scheduleTextChannelIds": ["public-schedule-channel-id"],
     "roleRestrictedChannels": {
@@ -192,6 +242,33 @@ Configure role-restricted channels in `private/discord_settings.json`:
   - Role-restricted schedules you have access to are displayed with a **(Private run)** label in the title (no clickable link to the channel).
   - Role-restricted schedules you cannot access are not shown.
 
+## Signup Sheets 📋
+
+Channel-scoped signup sheets (created with `/newrun`) provide an interactive party formation and roster management system stored per-guild under `private/signup-sheets/<guildId>.json`.
+
+### Features & Capabilities
+
+- **Party Setup & Customization**: Create multi-party configurations with customizable party sizes, custom run names, notes, thumbnail icons, embed colors, server timezones, and instance types.
+- **Roster Management**:
+  - `/add` (alias `/a`): Sign up for specific slot numbers (e.g. `1`, `1, 2`), `random` open slot, or `reserve`. Supports signing up other users by mention or username (e.g. `2 @user` or `2 B4D`).
+  - `/remove` (alias `/r`): Remove your own signups/reserves, or remove specific slot/reserve positions.
+  - `/swap`: Join a slot as yourself, swap two slots/reserves, or move to reserves. If a user holds multiple signups, specifying the second position is required to prevent ambiguity.
+  - `/charnote` (alias `/char`): Add character notes (e.g. `HP 3x`, `Alt`, `DPS`) to your own slot/reserve or a specified position number.
+  - `/removecharnote` (alias `/rc`): Clear character notes for your own positions or specified slot/reserve numbers.
+  - `/tbc`: Toggle To Be Confirmed (TBC) status for yourself or specified slot/reserve numbers. Marked with a `❓` emoji on the roster.
+  - `/removetbc` (alias `/rtbc`): Remove TBC markings from your own positions or specified slot/reserve numbers.
+  - `/ping`: Ping participants with a message. The `which` option selects `Main Roster`, `Reserves`, `TBC`, or `All`.
+- **Schedule Management**:
+  - `/sdt`: Set or clear (`TBD`) run date and time.
+  - `/when`: Display the localized run time and server time.
+  - `/gonow`: Set the run time to now (with optional duration offset).
+  - `/postpone`: Shift the scheduled time without modifying the roster.
+  - `/next`: Shift the schedule for a fresh run and clear the roster.
+  - `/last`, `/show`, `/s`: Re-post the channel's current signup sheet embed.
+- **Interactive Action Buttons**: Every published sheet embed includes two rows of interactive action buttons that open input modals:
+  - **Row 1**: `Add` (Success), `Remove` (Danger), `TBC` (Primary), `Swap` (Primary)
+  - **Row 2**: `Char` (Success), `Remove Char` (Danger), `Schedule` (Secondary), `Command List` (Secondary)
+
 ## Project Layout 🧱
 
 ```text
@@ -201,28 +278,39 @@ src/
 ├── index.ts
 ├── deploy-commands.ts
 ├── commands/
-│   ├── help.command.ts
 │   ├── guildsched.command.ts
+│   ├── help.command.ts
 │   ├── index.ts
+│   ├── mycooldowns.command.ts
 │   ├── mysched.command.ts
+│   ├── payout-summary.command.ts
 │   ├── payout.command.ts
-│   └── payout-summary.command.ts
+│   └── signup.command.ts
 ├── constants/
+│   ├── cooldowns.ts
 │   └── index.ts
 ├── services/
 │   ├── google-sheets.service.ts
+│   ├── guild-schedule-announcement.service.ts
 │   ├── guild-schedule.service.ts
-│   └── payout.service.ts
+│   ├── payout.service.ts
+│   └── signup-sheet.service.ts
 ├── templates/
+│   ├── cooldowns.template.ts
 │   ├── guild-schedule.template.ts
-│   └── payout.template.ts
+│   ├── payout.template.ts
+│   └── signup-sheet.template.ts
 ├── types/
 │   ├── command.ts
-│   ├── guild-schedule.ts
+│   ├── cooldowns.ts
+│   ├── discord-settings.ts
 │   ├── google-sheets.ts
+│   ├── guild-schedule.ts
 │   ├── interaction-context.ts
-│   └── payout.ts
+│   ├── payout.ts
+│   └── signup-sheet.ts
 └── utils/
+    ├── cooldowns.ts
     ├── format-zeny.ts
     ├── guild-members.ts
     ├── guild-schedule.ts
@@ -230,7 +318,9 @@ src/
     ├── logger.ts
     ├── payout-embed.ts
     ├── payout-sheet.ts
-    └── payout-summary.ts
+    ├── payout-summary.ts
+    ├── server-timestamp.ts
+    └── signup-sheet.ts
 ```
 
 ## Scripts 📜
@@ -245,7 +335,7 @@ src/
 - (On hosting before running script) `/opt/cpanel/ea-nodejs22/bin/node deploy-commands.js`
 - (On hosting) `nohup /opt/cpanel/ea-nodejs22/bin/node index.js & disown`
 
-Ensure `.env`, `private/discord_settings.json`, and the Google service-account JSON are present in `private/` before starting the bot.
+Ensure `.env`, `private/discord_settings.json`, `private/guild_schedule_settings.json`, the relevant `private/guild-settings/<guild-id>.json` files, and the Google service-account JSON are present before starting the bot.
 
 ## Git Hooks 🪝
 

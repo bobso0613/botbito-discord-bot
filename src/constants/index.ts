@@ -111,6 +111,420 @@ export const COMMAND_GUIDE: ReadonlyArray<{
     ],
   },
   {
+    name: "/guildsetting show",
+    description:
+      "Show this guild's current schedule and cooldown settings (Administrator only)",
+    emoji: "⚙️",
+  },
+  {
+    name: "/guildsetting set tracked-category",
+    description:
+      "Set this guild's tracked schedule categories (Administrator only)",
+    emoji: "⚙️",
+    parameters: [
+      {
+        name: "categories",
+        description: "Category links or #category names, separated by commas",
+        required: true,
+      },
+    ],
+  },
+  {
+    name: "/guildsetting set excluded-channels",
+    description: "Set channels excluded from schedules (Administrator only)",
+    emoji: "⚙️",
+    parameters: [
+      {
+        name: "channels",
+        description: "Channel links or #channel names, separated by commas",
+        required: true,
+      },
+    ],
+  },
+  {
+    name: "/guildsetting set schedule-channels",
+    description:
+      "Set public schedule announcement channels (Administrator only)",
+    emoji: "⚙️",
+    parameters: [
+      {
+        name: "channels",
+        description: "Channel links or #channel names, separated by commas",
+        required: true,
+      },
+    ],
+  },
+  {
+    name: "/guildsetting set role-restricted-channels",
+    description:
+      "Set channel-to-role schedule restrictions (Administrator only)",
+    emoji: "⚙️",
+    parameters: [
+      {
+        name: "mappings",
+        description: "#channel=@role mappings, separated by commas",
+        required: true,
+      },
+    ],
+  },
+  {
+    name: "/guildsetting clear tracked-category",
+    description:
+      "Clear this guild's tracked schedule categories (Administrator only)",
+    emoji: "⚙️",
+  },
+  {
+    name: "/guildsetting clear excluded-channels",
+    description: "Clear channels excluded from schedules (Administrator only)",
+    emoji: "⚙️",
+  },
+  {
+    name: "/guildsetting clear schedule-channels",
+    description:
+      "Clear public schedule announcement channels (Administrator only)",
+    emoji: "⚙️",
+  },
+  {
+    name: "/guildsetting clear role-restricted-channels",
+    description:
+      "Clear channel-to-role schedule restrictions (Administrator only)",
+    emoji: "⚙️",
+  },
+  {
+    name: "/guildsetting set cooldown-instance-types",
+    description:
+      "Add or update a cooldown instance type by name (Administrator only)",
+    emoji: "⚙️",
+    parameters: [
+      {
+        name: "name",
+        description: "Instance type name",
+        required: true,
+      },
+      {
+        name: "keywords",
+        description: "Comma-separated title keywords",
+        required: true,
+      },
+      {
+        name: "maxattempts",
+        description: "Maximum weekly attempts",
+        required: true,
+      },
+      {
+        name: "emoji",
+        description: "Display emoji",
+        required: true,
+      },
+    ],
+  },
+  {
+    name: "/guildsetting set multiplier-instance-types",
+    description: "Set cooldown multiplier instance names (Administrator only)",
+    emoji: "⚙️",
+    parameters: [
+      {
+        name: "types",
+        description: "Instance names separated by commas",
+        required: true,
+      },
+    ],
+  },
+  {
+    name: "/guildsetting clear cooldown-instance-types",
+    description: "Clear cooldown instance types (Administrator only)",
+    emoji: "⚙️",
+  },
+  {
+    name: "/guildsetting clear multiplier-instance-types",
+    description:
+      "Clear cooldown multiplier instance names (Administrator only)",
+    emoji: "⚙️",
+  },
+  {
+    name: "/guildsetting remove cooldown-instance-type",
+    description:
+      "Remove one cooldown instance type by name (Administrator only)",
+    emoji: "⚙️",
+    parameters: [
+      {
+        name: "name",
+        description: "Instance type name",
+        required: true,
+      },
+    ],
+  },
+  {
+    name: "/newrun",
+    description: "Create a signup sheet in this channel",
+    emoji: "🆕",
+  },
+  {
+    name: "/change all",
+    description:
+      "Reopen the party setup modal to change the title, date/time, timezone, or party sizes",
+    emoji: "🛠️",
+  },
+  {
+    name: "/change roster",
+    description: "Edit only the roster without touching the party setup",
+    emoji: "📋",
+  },
+  {
+    name: "/change position",
+    description: "Change a slot's role without removing its signup",
+    emoji: "🎭",
+    parameters: [
+      { name: "value", description: "New role", required: true },
+      {
+        name: "position",
+        description: "Slot number (defaults to your own slot)",
+        required: false,
+      },
+    ],
+  },
+  {
+    name: "/add",
+    description:
+      "Sign up for a slot or reserve, or add another user (alias: /a)",
+    emoji: "➕",
+    parameters: [
+      {
+        name: "input",
+        description:
+          "Slot number(s) comma-separated, `random`, or `reserve`, optionally followed by @user",
+        required: true,
+      },
+    ],
+  },
+  {
+    name: "/remove",
+    description: "Remove your signups/reserve, or specific slot(s) (alias: /r)",
+    emoji: "➖",
+    parameters: [
+      {
+        name: "position",
+        description:
+          "Slot number(s) comma-separated, or reserve (blank removes all your signups)",
+        required: false,
+      },
+    ],
+  },
+  {
+    name: "/swap",
+    description: "Join a slot, or swap two slots/reserves",
+    emoji: "🔀",
+    parameters: [
+      {
+        name: "first",
+        description: "Your or first slot number, `random`, or reserve",
+        required: true,
+      },
+      {
+        name: "second",
+        description:
+          "Second slot number or reserve (required if you have multiple signups)",
+        required: false,
+      },
+    ],
+  },
+  {
+    name: "/clear",
+    description: "Clear the roster, schedule, or both (alias: /c)",
+    emoji: "🧹",
+    parameters: [
+      {
+        name: "which",
+        description: "What to clear (Roster, Schedule, All)",
+        required: true,
+      },
+    ],
+  },
+  {
+    name: "/charnote",
+    description: "Set a character note (alias: /char)",
+    emoji: "📝",
+    parameters: [
+      { name: "note", description: "Character note", required: true },
+      {
+        name: "position",
+        description:
+          "Slot or reserve number (defaults to your own slot/reserve)",
+        required: false,
+      },
+    ],
+  },
+  {
+    name: "/removecharnote",
+    description: "Remove character notes (alias: /rc)",
+    emoji: "🗑️",
+    parameters: [
+      {
+        name: "input",
+        description:
+          "Slot or reserve number(s) comma-separated (blank removes all your character notes)",
+        required: false,
+      },
+    ],
+  },
+  {
+    name: "/tbc",
+    description:
+      "Toggle To Be Confirmed (TBC) status on slot(s), reserve(s), or yourself",
+    emoji: "❓",
+    parameters: [
+      {
+        name: "input",
+        description:
+          "Slot or reserve number(s) comma-separated (blank toggles your own TBC status)",
+        required: false,
+      },
+    ],
+  },
+  {
+    name: "/removetbc",
+    description:
+      "Remove TBC markings from slot(s), reserve(s), or yourself (alias: /rtbc)",
+    emoji: "✅",
+    parameters: [
+      {
+        name: "input",
+        description:
+          "Slot or reserve number(s) comma-separated (blank removes your own TBC status)",
+        required: false,
+      },
+    ],
+  },
+  {
+    name: "/name",
+    description: "Set the run title",
+    emoji: "✏️",
+    parameters: [{ name: "input", description: "Run name", required: true }],
+  },
+  {
+    name: "/note",
+    description:
+      "Edit important notes; reply with `remove` as your next message to clear them",
+    emoji: "🗒️",
+  },
+  {
+    name: "/setpic",
+    description: "Set the sheet thumbnail image",
+    emoji: "🖼️",
+    parameters: [{ name: "url", description: "Image URL", required: true }],
+  },
+  {
+    name: "/color",
+    description: "Set the embed color",
+    emoji: "🎨",
+    parameters: [
+      {
+        name: "hexcodecolor",
+        description: "Hex color, e.g. #00b0f4",
+        required: true,
+      },
+    ],
+  },
+  {
+    name: "/setservertimezone",
+    description: "Set the server timezone",
+    emoji: "🌐",
+    parameters: [
+      {
+        name: "timezone",
+        description: "GMT, GMT+8, GMT-5, etc.",
+        required: true,
+      },
+    ],
+  },
+  {
+    name: "/setinstancetype",
+    description: "Set the instance type for this run",
+    emoji: "🏷️",
+    parameters: [
+      { name: "type", description: "Instance type", required: true },
+    ],
+  },
+  {
+    name: "/postpone",
+    description: "Shift the run's date/time later without touching the roster",
+    emoji: "⏳",
+    parameters: [
+      {
+        name: "value",
+        description: "For example: next week, last hour, or 1.5 days",
+        required: true,
+      },
+    ],
+  },
+  {
+    name: "/next",
+    description: "Shift the date/time and clear the roster for a fresh run",
+    emoji: "⏭️",
+    parameters: [
+      {
+        name: "value",
+        description: "For example: next week, last hour, or 1.5 days",
+        required: true,
+      },
+    ],
+  },
+  {
+    name: "/gonow",
+    description: "Set the run to now, optionally offset by a duration",
+    emoji: "🚀",
+    parameters: [
+      {
+        name: "value",
+        description: "For example: next week, last hour, or 1.5 days",
+        required: false,
+      },
+    ],
+  },
+  {
+    name: "/sdt",
+    description: "Set the date and time, or `TBD` to clear it",
+    emoji: "📅",
+    parameters: [
+      {
+        name: "datetime",
+        description: "Date/time, e.g. 10/09 20:00 GMT+8, or TBD",
+        required: true,
+      },
+    ],
+  },
+  {
+    name: "/when",
+    description: "Show the run time",
+    emoji: "⌛",
+  },
+  {
+    name: "/ping",
+    description: "Ping signed-up and/or reserve members with a message",
+    emoji: "📣",
+    parameters: [
+      { name: "message", description: "Message", required: true },
+      {
+        name: "which",
+        description: "Who to ping (Main Roster, Reserves, TBC, All)",
+        required: true,
+      },
+    ],
+  },
+  {
+    name: "/swaporganizer",
+    description: "Change the organizer",
+    emoji: "👑",
+    parameters: [
+      { name: "user", description: "New organizer", required: true },
+    ],
+  },
+  {
+    name: "/show",
+    description: "Show this channel's signup sheet (aliases: /last, /s)",
+    emoji: "👁️",
+  },
+  {
     name: "/help",
     description: "Display this guide",
     emoji: "ℹ️",

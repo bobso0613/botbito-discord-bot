@@ -1,7 +1,34 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import type { Message } from "discord.js";
-import { DISCORD_SETTINGS } from "../config/discord-settings.js";
-import {
+import type { DiscordSettings } from "../types/discord-settings.js";
+
+const guildId = "guild-id";
+const categoryId = "category-id";
+const scheduleTextChannelId = "schedule-channel-id";
+
+const DISCORD_SETTINGS: DiscordSettings = {
+  payoutGuildIds: [],
+  payoutToPingId: "",
+  payoutToPingTag: "",
+  guildScheduleBotIds: ["schedule-bot-id"],
+  guildIcons: { DEV: {}, PROD: {} },
+  guildScheduleSourceByGuild: {
+    [guildId]: {
+      categoryIds: [categoryId],
+      scheduleTextChannelIds: [scheduleTextChannelId],
+      excludedChannelIds: [],
+      roleRestrictedChannels: {},
+    },
+  },
+  cooldownInstanceTypesByGuild: {},
+  multiplierInstanceTypesByGuild: {},
+};
+
+jest.unstable_mockModule("../config/discord-settings.js", () => ({
+  DISCORD_SETTINGS,
+}));
+
+const {
   buildGuildScheduleRefreshLogMessage,
   getAnnouncedTitleForChannel,
   getGuildScheduleRefreshTrigger,
@@ -13,17 +40,10 @@ import {
   isGuildScheduleTimestampChanged,
   isIdentifierAnnounced,
   isTitleChangeConfirmed,
-} from "./guild-schedule-announcement.service.js";
-
-const guildId = Object.keys(DISCORD_SETTINGS.guildScheduleSourceByGuild)[0];
-const categoryId =
-  DISCORD_SETTINGS.guildScheduleSourceByGuild[guildId].categoryIds[0];
-const scheduleTextChannelId =
-  DISCORD_SETTINGS.guildScheduleSourceByGuild[guildId]
-    .scheduleTextChannelIds[0];
+} = await import("./guild-schedule-announcement.service.js");
 
 const createMessage = ({
-  authorId = DISCORD_SETTINGS.guildScheduleBotId,
+  authorId = DISCORD_SETTINGS.guildScheduleBotIds[0],
   parentId = categoryId,
   channelId = "source-channel-id",
   timestamp = "1799177400",
@@ -60,6 +80,19 @@ describe("isGuildScheduleChangeMessage", () => {
     expect(isGuildScheduleMessage(createMessage())).toBe(true);
   });
 
+  it("accepts schedule responses from an additional configured bot", () => {
+    const scheduleBotIds = DISCORD_SETTINGS.guildScheduleBotIds as string[];
+    scheduleBotIds.push("signup-bot-id");
+
+    try {
+      expect(
+        isGuildScheduleMessage(createMessage({ authorId: "signup-bot-id" })),
+      ).toBe(true);
+    } finally {
+      scheduleBotIds.pop();
+    }
+  });
+
   it("ignores responses outside source categories", () => {
     expect(
       isGuildScheduleMessage(
@@ -74,6 +107,18 @@ describe("isGuildScheduleChangeMessage", () => {
         createMessage({ channelId: scheduleTextChannelId }),
       ),
     ).toBe(false);
+  });
+
+  it("ignores source messages when no announcement channels are configured", () => {
+    const source = DISCORD_SETTINGS.guildScheduleSourceByGuild[guildId];
+    const scheduleTextChannelIds = source.scheduleTextChannelIds;
+    source.scheduleTextChannelIds = [];
+
+    try {
+      expect(isGuildScheduleSourceMessage(createMessage())).toBe(false);
+    } finally {
+      source.scheduleTextChannelIds = scheduleTextChannelIds;
+    }
   });
 
   it("ignores schedule-shaped messages from other authors", () => {
@@ -279,7 +324,7 @@ describe("isGuildScheduleChangeMessage", () => {
               first: () => ({
                 embeds: [
                   {
-                    description: `**[Monday Sealed Shrine](${channelUrl})**\n<t:1:F> (<t:1:R>)\n↪ [#source-channel](${channelUrl})`,
+                    description: `**[Monday Sealed Shrine](${channelUrl})**\n<t:1:F> (<t:1:R>)\nâ†ª [#source-channel](${channelUrl})`,
                   },
                 ],
               }),
@@ -387,7 +432,7 @@ describe("isGuildScheduleChangeMessage", () => {
               first: () => ({
                 embeds: [
                   {
-                    description: `**[Monday Sealed Shrine](${channelUrl})**\n<t:1:F> (<t:1:R>)\n↪ [#source-channel](${channelUrl})`,
+                    description: `**[Monday Sealed Shrine](${channelUrl})**\n<t:1:F> (<t:1:R>)\nâ†ª [#source-channel](${channelUrl})`,
                   },
                 ],
               }),

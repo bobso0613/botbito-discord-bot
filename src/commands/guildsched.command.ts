@@ -35,6 +35,7 @@ export const guildSchedCommand: Command = {
         .setDescription("Hide signup details in a public announcement"),
     ) as SlashCommandBuilder,
   guildIds: GUILD_SCHEDULE_GUILD_IDS,
+  requiresGuildScheduleSettings: true,
   execute: async (interaction: ChatInputCommandInteraction) => {
     const source = interaction.guildId
       ? DISCORD_SETTINGS.guildScheduleSourceByGuild[interaction.guildId]
@@ -43,6 +44,14 @@ export const guildSchedCommand: Command = {
     if (!source || !interaction.guild) {
       await interaction.reply({
         content: "This command is not available for this guild.",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+    if (source.categoryIds.length === 0) {
+      await interaction.reply({
+        content:
+          "No schedule category is being tracked. Ask a server administrator to set one with /guildsetting set tracked-category.",
         flags: MessageFlags.Ephemeral,
       });
       return;

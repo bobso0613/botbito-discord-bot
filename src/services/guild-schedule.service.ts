@@ -120,8 +120,8 @@ const getNewestChannelSchedule = async (
   const displayNamePattern = escapeRegularExpression(member.displayName);
   const messages = await channel.messages.fetch({ limit: 100 });
   const scheduleMessages = Array.from(messages.values())
-    .filter(
-      (message) => message.author.id === DISCORD_SETTINGS.guildScheduleBotId,
+    .filter((message) =>
+      DISCORD_SETTINGS.guildScheduleBotIds.includes(message.author.id),
     )
     .sort((first, second) => second.createdTimestamp - first.createdTimestamp);
 

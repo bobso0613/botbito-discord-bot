@@ -1,5 +1,6 @@
 import {
   ChannelType,
+  type Guild,
   type Client,
   type Message,
   type TextChannel,
@@ -47,7 +48,7 @@ export const isClearedScheduleMessage = (message: Message): boolean =>
 export const isGuildScheduleSourceMessage = (message: Message): boolean => {
   if (
     !message.guildId ||
-    message.author.id !== DISCORD_SETTINGS.guildScheduleBotId ||
+    !DISCORD_SETTINGS.guildScheduleBotIds.includes(message.author.id) ||
     !message.channel.isTextBased() ||
     !("parentId" in message.channel)
   ) {
@@ -56,6 +57,7 @@ export const isGuildScheduleSourceMessage = (message: Message): boolean => {
 
   const source = DISCORD_SETTINGS.guildScheduleSourceByGuild[message.guildId];
   return Boolean(
+    source?.scheduleTextChannelIds.length &&
     source?.categoryIds.includes(message.channel.parentId ?? "") &&
     !source.scheduleTextChannelIds.includes(message.channel.id),
   );
@@ -96,7 +98,7 @@ export const getLatestSentScheduleTimestamp = async (
     .filter(
       (candidate) =>
         candidate.id !== message.id &&
-        candidate.author.id === DISCORD_SETTINGS.guildScheduleBotId,
+        DISCORD_SETTINGS.guildScheduleBotIds.includes(candidate.author.id),
     )
     .sort(
       (first, second) => second.createdTimestamp - first.createdTimestamp,
@@ -222,6 +224,52 @@ const refreshGuildScheduleAnnouncement = async (
 
   for (const channel of announcementChannels) {
     await deleteChannelMessages(channel);
+    await channel.send({
+      embeds: [embed],
+      components: [buildScheduleActionRow()],
+    });
+  }
+};
+
+/** Publishes the current schedule embed to newly configured announcement channels. */
+export const publishGuildScheduleAnnouncement = async (
+  guild: Guild,
+  scheduleTextChannelIds: readonly string[],
+  categoryIds: readonly string[],
+  excludedChannelIds: readonly string[],
+  roleRestrictedChannels: Readonly<Record<string, string>> | undefined,
+  context: InteractionContext,
+): Promise<void> => {
+  const member =
+    guild.members.me ??
+    (guild.client.user
+      ? await guild.members.fetch(guild.client.user.id)
+      : null);
+  if (!member) return;
+
+  const schedules = await getActiveGuildSchedules(
+    guild,
+    member,
+    [...categoryIds],
+    excludedChannelIds,
+    undefined,
+    roleRestrictedChannels,
+  );
+  const categoryNames = categoryIds
+    .map((categoryId) => guild.channels.cache.get(categoryId)?.name)
+    .filter((name): name is string => Boolean(name));
+  const embed = buildGuildScheduleEmbed(
+    schedules,
+    context,
+    categoryNames.length > 0 ? categoryNames : ["configured categories"],
+    true,
+    true,
+  );
+
+  for (const channelId of scheduleTextChannelIds) {
+    const channel = await guild.channels.fetch(channelId).catch(() => null);
+    if (!channel || channel.type !== ChannelType.GuildText) continue;
+
     await channel.send({
       embeds: [embed],
       components: [buildScheduleActionRow()],
@@ -355,9 +403,8 @@ const getNewestGuildScheduleMessage = async (
 ): Promise<Message | undefined> => {
   const messages = await channel.messages.fetch({ limit: 100 });
   return Array.from(messages.values())
-    .filter(
-      (candidate) =>
-        candidate.author.id === DISCORD_SETTINGS.guildScheduleBotId,
+    .filter((candidate) =>
+      DISCORD_SETTINGS.guildScheduleBotIds.includes(candidate.author.id),
     )
     .sort(
       (first, second) => second.createdTimestamp - first.createdTimestamp,
@@ -398,7 +445,11 @@ export const registerGuildScheduleAnnouncementListener = (
 
     const source =
       DISCORD_SETTINGS.guildScheduleSourceByGuild[newChannel.guildId];
-    if (!source?.categoryIds.includes(newChannel.parentId ?? "")) return;
+    if (
+      !source?.scheduleTextChannelIds.length ||
+      !source.categoryIds.includes(newChannel.parentId ?? "")
+    )
+      return;
 
     const wasAnnounced = await isIdentifierAnnounced(
       newChannel.guild,
