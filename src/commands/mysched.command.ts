@@ -57,6 +57,7 @@ const getAccessibleGuildSchedules = async (
     source.categoryIds,
     [],
     timeWindow,
+    source.roleRestrictedChannels,
   );
   return schedules
     .filter((schedule) => schedule.isSignedUp || schedule.isReserve)

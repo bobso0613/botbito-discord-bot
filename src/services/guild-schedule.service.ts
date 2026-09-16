@@ -53,29 +53,38 @@ const getActiveScheduleTimestamp = (
     : undefined;
 };
 
+/** Checks whether a roster line has a name entry (bold or plain) matching the pattern after a dash/comma. */
+const isNameOnLine = (line: string, displayNamePattern: string): boolean => {
+  const pattern = new RegExp(
+    `[-,]\\s*\\*{0,2}${displayNamePattern}\\*{0,2}(?=\\s|,|\\(|$)`,
+    "i",
+  );
+  return pattern.test(line);
+};
+
 /** Checks for a non-reserve roster entry matching the invoking member. */
 const isMemberSignedUp = (
   embedText: string,
   displayNamePattern: string,
-): boolean => {
-  const signupPattern = new RegExp(
-    `-\\s*\\*\\*${displayNamePattern}\\*\\*`,
-    "im",
-  );
-  return signupPattern.test(embedText);
-};
+): boolean =>
+  embedText
+    .split("\n")
+    .some(
+      (line) =>
+        !/\bReserve\b/i.test(line) && isNameOnLine(line, displayNamePattern),
+    );
 
 /** Checks for a reserve roster entry matching the invoking member. */
 const isMemberReserve = (
   embedText: string,
   displayNamePattern: string,
-): boolean => {
-  const reservePattern = new RegExp(
-    `(?:^|\\n)[^\\n]*\\bReserve[^-]*-\\s*\\*\\*${displayNamePattern}\\*\\*`,
-    "im",
-  );
-  return reservePattern.test(embedText);
-};
+): boolean =>
+  embedText
+    .split("\n")
+    .some(
+      (line) =>
+        /\bReserve\b/i.test(line) && isNameOnLine(line, displayNamePattern),
+    );
 
 /** Extracts the character note from a schedule embed for the invoking member. */
 const getMemberCharNote = (
@@ -83,7 +92,7 @@ const getMemberCharNote = (
   displayNamePattern: string,
 ): string | undefined => {
   const charNotePattern = new RegExp(
-    `\\*\\*${displayNamePattern}\\*\\*\\s*\\(([^)]+)\\)`,
+    `\\*{0,2}${displayNamePattern}\\*{0,2}\\s*\\(([^)]+)\\)`,
     "i",
   );
   const match = embedText.match(charNotePattern);
@@ -104,6 +113,13 @@ const isAccessibleScheduleChannel = (
       PermissionFlagsBits.ReadMessageHistory,
     ]) === true;
 
+/** Returns whether a Discord timestamp (`<t:unix:F>`) is already in the past. */
+const isPastTimestamp = (timestamp: string): boolean =>
+  Number(timestamp.match(/\d+/)?.[0]) * 1_000 < Date.now();
+
+const SCHEDULE_MESSAGE_PAGE_LIMIT = 100;
+const MAX_SCHEDULE_MESSAGE_PAGES = 5;
+
 /**
  * Gets the newest active schedule within the requested time window from the configured
  * schedule bots' recent replies. Scheduled replies outside the window are skipped.
@@ -111,6 +127,13 @@ const isAccessibleScheduleChannel = (
  * interactions, are ignored. A reply with `Your Time: TBD` clears an older schedule,
  * but only for the bot that posted it, so a cleared sheet from one bot does not hide
  * another bot's active sheet in the same channel.
+ * When a time window is requested, a cleared reply still keeps that bot's already
+ * finished in-window run visible, since clearing sets up the next run rather than
+ * undoing the one that already happened.
+ * A single page of 100 messages can miss an in-window run that has been pushed
+ * further back by channel activity, so additional pages are fetched (oldest-first
+ * cursor) while a time window is requested and the oldest fetched message is still
+ * newer than the window's start.
  */
 const getNewestChannelSchedule = async (
   channel: TextChannel,
@@ -120,47 +143,76 @@ const getNewestChannelSchedule = async (
   includePast = false,
 ): Promise<GuildSchedule | undefined> => {
   const displayNamePattern = escapeRegularExpression(member.displayName);
-  const messages = await channel.messages.fetch({ limit: 100 });
-  const scheduleMessages = Array.from(messages.values())
-    .filter((message) =>
-      DISCORD_SETTINGS.guildScheduleBotIds.includes(message.author.id),
-    )
-    .sort((first, second) => second.createdTimestamp - first.createdTimestamp);
   const clearedBotIds = new Set<string>();
+  let before: string | undefined;
 
-  for (const message of scheduleMessages) {
-    if (clearedBotIds.has(message.author.id)) continue;
+  for (let page = 0; page < MAX_SCHEDULE_MESSAGE_PAGES; page++) {
+    const messages = await channel.messages.fetch(
+      before
+        ? { limit: SCHEDULE_MESSAGE_PAGE_LIMIT, before }
+        : { limit: SCHEDULE_MESSAGE_PAGE_LIMIT },
+    );
+    const pageMessages = Array.from(messages.values());
+    if (pageMessages.length === 0) break;
 
-    const schedule = message.embeds.flatMap((embed) => {
-      const embedText = getEmbedText(embed);
-      const timestamp = getActiveScheduleTimestamp(
-        embedText,
-        timeWindow,
-        includePast,
+    const scheduleMessages = pageMessages
+      .filter((message) =>
+        DISCORD_SETTINGS.guildScheduleBotIds.includes(message.author.id),
+      )
+      .sort(
+        (first, second) => second.createdTimestamp - first.createdTimestamp,
       );
-      const isReserve = isMemberReserve(embedText, displayNamePattern);
-      return timestamp && embed.title
-        ? [
-            {
-              title: embed.title,
-              timestamp,
-              channelName: channel.name,
-              channelUrl: channel.url,
-              isSignedUp:
-                !isReserve && isMemberSignedUp(embedText, displayNamePattern),
-              isReserve,
-              charNote: getMemberCharNote(embedText, displayNamePattern),
-              isRoleRestricted,
-            },
-          ]
-        : [];
-    })[0];
-    if (schedule) return schedule;
 
-    const embedText = message.embeds.map(getEmbedText).join("\n");
-    if (clearedScheduleTimePattern.test(embedText)) {
-      clearedBotIds.add(message.author.id);
+    for (const message of scheduleMessages) {
+      const isClearedBot = clearedBotIds.has(message.author.id);
+      if (isClearedBot && !timeWindow) continue;
+
+      const schedule = message.embeds.flatMap((embed) => {
+        const embedText = getEmbedText(embed);
+        const timestamp = getActiveScheduleTimestamp(
+          embedText,
+          timeWindow,
+          includePast,
+        );
+        const isReserve = isMemberReserve(embedText, displayNamePattern);
+        return timestamp && embed.title
+          ? [
+              {
+                title: embed.title,
+                timestamp,
+                channelName: channel.name,
+                channelUrl: channel.url,
+                isSignedUp:
+                  !isReserve && isMemberSignedUp(embedText, displayNamePattern),
+                isReserve,
+                charNote: getMemberCharNote(embedText, displayNamePattern),
+                isRoleRestricted,
+              },
+            ]
+          : [];
+      })[0];
+      if (schedule && (!isClearedBot || isPastTimestamp(schedule.timestamp))) {
+        return schedule;
+      }
+
+      const embedText = message.embeds.map(getEmbedText).join("\n");
+      if (clearedScheduleTimePattern.test(embedText)) {
+        clearedBotIds.add(message.author.id);
+      }
     }
+
+    const oldestMessage = pageMessages.reduce((oldest, current) =>
+      current.createdTimestamp < oldest.createdTimestamp ? current : oldest,
+    );
+    const hasMorePages = pageMessages.length === SCHEDULE_MESSAGE_PAGE_LIMIT;
+    if (
+      !timeWindow ||
+      !hasMorePages ||
+      oldestMessage.createdTimestamp < timeWindow.start.getTime()
+    ) {
+      break;
+    }
+    before = oldestMessage.id;
   }
 
   return undefined;
@@ -173,8 +225,9 @@ const getNewestChannelSchedule = async (
  * active schedule there.
  * Results are ordered from earliest to latest scheduled time.
  * When a time window is provided, schedules inside that window are included even
- * when their scheduled time has already passed; a newer scheduled reply outside the
- * window does not hide an older in-window schedule.
+ * when their scheduled time has already passed; neither a newer scheduled reply
+ * outside the window nor a newer cleared reply hides an older in-window schedule
+ * that already happened.
  * @param guild The guild to search for schedules
  * @param member The member requesting schedules (used for permission checks)
  * @param categoryIds Array of category IDs to search within

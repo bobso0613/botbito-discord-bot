@@ -56,6 +56,7 @@ const getAccessibleGuildSchedules = async (
     source.categoryIds,
     [],
     getScheduleWeekWindow(),
+    source.roleRestrictedChannels,
   );
   return {
     schedules: schedules

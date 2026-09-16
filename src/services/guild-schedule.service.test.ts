@@ -339,6 +339,135 @@ describe("getActiveGuildSchedules", () => {
     ]);
   });
 
+  it("keeps a finished in-window run when a newer embed clears the schedule", async () => {
+    const member = { displayName: "Lucian Blight" };
+    const channel = {
+      type: ChannelType.GuildText,
+      id: "cleared-after-run",
+      parentId: "schedule-category",
+      name: "cleared-after-run",
+      url: "https://discord.com/channels/guild/cleared-after-run",
+      permissionsFor: jest.fn().mockReturnValue({
+        has: jest.fn().mockReturnValue(true),
+      }),
+      messages: {
+        fetch: jest.fn().mockResolvedValue(
+          new Map([
+            [
+              "finished-run",
+              {
+                author: { id: DISCORD_SETTINGS.guildScheduleBotIds[0] },
+                createdTimestamp: 1,
+                embeds: [
+                  {
+                    title: "Finished run",
+                    description: `- **Lucian Blight**\nYour Time: ${getDiscordTimestamp("2020-01-01T08:00:00Z")}`,
+                    fields: [],
+                  },
+                ],
+              },
+            ],
+            [
+              "cleared-for-next-run",
+              {
+                author: { id: DISCORD_SETTINGS.guildScheduleBotIds[0] },
+                createdTimestamp: 2,
+                embeds: [
+                  {
+                    title: "use the new bot on this channel for signup",
+                    description: "Your Time: TBD",
+                    fields: [],
+                  },
+                ],
+              },
+            ],
+          ]) as never,
+        ),
+      },
+    };
+    const guild = { channels: { cache: new Map([[channel.id, channel]]) } };
+    const timeWindow: GuildScheduleTimeWindow = {
+      start: new Date("2019-12-30T06:00:00Z"),
+      end: new Date("2020-01-06T06:00:00Z"),
+    };
+
+    const schedules = await getActiveGuildSchedules(
+      guild as never,
+      member as never,
+      ["schedule-category"],
+      [],
+      timeWindow,
+    );
+
+    expect(schedules.map((schedule) => schedule.title)).toEqual([
+      "Finished run",
+    ]);
+  });
+
+  it("hides an upcoming in-window run when a newer embed clears the schedule", async () => {
+    const member = { displayName: "Lucian Blight" };
+    const upcoming = new Date(Date.now() + 86_400_000).toISOString();
+    const channel = {
+      type: ChannelType.GuildText,
+      id: "cancelled-run",
+      parentId: "schedule-category",
+      name: "cancelled-run",
+      url: "https://discord.com/channels/guild/cancelled-run",
+      permissionsFor: jest.fn().mockReturnValue({
+        has: jest.fn().mockReturnValue(true),
+      }),
+      messages: {
+        fetch: jest.fn().mockResolvedValue(
+          new Map([
+            [
+              "upcoming-run",
+              {
+                author: { id: DISCORD_SETTINGS.guildScheduleBotIds[0] },
+                createdTimestamp: 1,
+                embeds: [
+                  {
+                    title: "Cancelled run",
+                    description: `- **Lucian Blight**\nYour Time: ${getDiscordTimestamp(upcoming)}`,
+                    fields: [],
+                  },
+                ],
+              },
+            ],
+            [
+              "cleared",
+              {
+                author: { id: DISCORD_SETTINGS.guildScheduleBotIds[0] },
+                createdTimestamp: 2,
+                embeds: [
+                  {
+                    title: "Cancelled run",
+                    description: "Your Time: TBD",
+                    fields: [],
+                  },
+                ],
+              },
+            ],
+          ]) as never,
+        ),
+      },
+    };
+    const guild = { channels: { cache: new Map([[channel.id, channel]]) } };
+    const timeWindow: GuildScheduleTimeWindow = {
+      start: new Date(Date.now() - 86_400_000),
+      end: new Date(Date.now() + 7 * 86_400_000),
+    };
+
+    const schedules = await getActiveGuildSchedules(
+      guild as never,
+      member as never,
+      ["schedule-category"],
+      [],
+      timeWindow,
+    );
+
+    expect(schedules).toEqual([]);
+  });
+
   it("includes past schedules when requested for an announcement refresh", async () => {
     const member = { displayName: "Lucian Blight" };
     const channel = {
@@ -639,5 +768,118 @@ describe("getActiveGuildSchedules", () => {
       "Active schedule",
     ]);
     expect(channel.messages.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("fetches an older page when an in-window schedule was pushed past the first 100 messages", async () => {
+    const member = { displayName: "Lucian Blight" };
+    const fillerMessage = (id: number) => ({
+      id: `filler-${id}`,
+      author: { id: "chatty-user" },
+      createdTimestamp: new Date("2026-09-05T00:00:00Z").getTime() - id,
+      embeds: [],
+    });
+    const firstPage = new Map(
+      Array.from({ length: 100 }, (_, index) => [
+        `filler-${index}`,
+        fillerMessage(index),
+      ]),
+    );
+    const secondPage = new Map([
+      [
+        "in-window-schedule",
+        {
+          author: { id: DISCORD_SETTINGS.guildScheduleBotIds[0] },
+          createdTimestamp: 1,
+          embeds: [
+            {
+              title: "In-window schedule",
+              description: `- **Lucian Blight**\nYour Time: ${getDiscordTimestamp("2026-09-01T08:00:00Z")}`,
+              fields: [],
+            },
+          ],
+        },
+      ],
+    ]);
+    const fetch = jest
+      .fn()
+      .mockResolvedValueOnce(firstPage as never)
+      .mockResolvedValueOnce(secondPage as never);
+    const channel = {
+      type: ChannelType.GuildText,
+      id: "busy-channel",
+      parentId: "schedule-category",
+      name: "busy-channel",
+      url: "https://discord.com/channels/guild/busy-channel",
+      permissionsFor: jest.fn().mockReturnValue({
+        has: jest.fn().mockReturnValue(true),
+      }),
+      messages: { fetch },
+    };
+    const guild = { channels: { cache: new Map([[channel.id, channel]]) } };
+    const timeWindow: GuildScheduleTimeWindow = {
+      start: new Date("2026-08-31T06:00:00Z"),
+      end: new Date("2026-09-07T06:00:00Z"),
+    };
+
+    const schedules = await getActiveGuildSchedules(
+      guild as never,
+      member as never,
+      ["schedule-category"],
+      [],
+      timeWindow,
+    );
+
+    expect(schedules.map((schedule) => schedule.title)).toEqual([
+      "In-window schedule",
+    ]);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenNthCalledWith(2, {
+      limit: 100,
+      before: "filler-99",
+    });
+  });
+
+  it("stops paginating once the oldest fetched message is before the time window start", async () => {
+    const member = { displayName: "Lucian Blight" };
+    const fillerMessage = (id: number) => ({
+      id: `filler-${id}`,
+      author: { id: "chatty-user" },
+      createdTimestamp: new Date("2026-08-20T00:00:00Z").getTime() - id,
+      embeds: [],
+    });
+    const firstPage = new Map(
+      Array.from({ length: 100 }, (_, index) => [
+        `filler-${index}`,
+        fillerMessage(index),
+      ]),
+    );
+    const fetch = jest.fn().mockResolvedValueOnce(firstPage as never);
+    const channel = {
+      type: ChannelType.GuildText,
+      id: "old-busy-channel",
+      parentId: "schedule-category",
+      name: "old-busy-channel",
+      url: "https://discord.com/channels/guild/old-busy-channel",
+      permissionsFor: jest.fn().mockReturnValue({
+        has: jest.fn().mockReturnValue(true),
+      }),
+      messages: { fetch },
+    };
+    const guild = { channels: { cache: new Map([[channel.id, channel]]) } };
+    const timeWindow: GuildScheduleTimeWindow = {
+      start: new Date("2026-08-31T06:00:00Z"),
+      end: new Date("2026-09-07T06:00:00Z"),
+    };
+
+    const schedules = await getActiveGuildSchedules(
+      guild as never,
+      member as never,
+      ["schedule-category"],
+      [],
+      timeWindow,
+    );
+
+    expect(schedules).toEqual([]);
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 });
