@@ -74,6 +74,7 @@ const createInteraction = (which: string | null, message = "hello") => ({
   guildId: "guild-1",
   channelId: "channel-1",
   guild: { id: "guild-1" },
+  channel: { name: "general" },
   user: { id: "invoker-1", displayName: "Invoker" },
   reply: jest.fn(),
   options: {
@@ -97,7 +98,8 @@ describe("/ping", () => {
     await pingCommand.execute(interaction as never);
 
     expect(interaction.reply).toHaveBeenCalledWith({
-      content: "Ping from **Invoker**: hello\n\n<@user-1> <@user-2>",
+      content:
+        "-# Ping from **Invoker** to **All**:\n\n**hello**\n\n-# <@user-1> , <@user-2>\n-# sent from __Test Run__ in __general__",
     });
   });
 
@@ -108,7 +110,8 @@ describe("/ping", () => {
     await pingCommand.execute(interaction as never);
 
     expect(interaction.reply).toHaveBeenCalledWith({
-      content: "Ping from **Invoker**: hello\n\n<@user-1>",
+      content:
+        "-# Ping from **Invoker** to **Main Roster**:\n\n**hello**\n\n-# <@user-1>\n-# sent from __Test Run__ in __general__",
     });
   });
 
@@ -119,7 +122,8 @@ describe("/ping", () => {
     await pingCommand.execute(interaction as never);
 
     expect(interaction.reply).toHaveBeenCalledWith({
-      content: "Ping from **Invoker**: hello\n\n<@user-2>",
+      content:
+        "-# Ping from **Invoker** to **Reserves**:\n\n**hello**\n\n-# <@user-2>\n-# sent from __Test Run__ in __general__",
     });
   });
 
@@ -159,7 +163,8 @@ describe("/ping", () => {
     await pingCommand.execute(interaction as never);
 
     expect(interaction.reply).toHaveBeenCalledWith({
-      content: "Ping from **Invoker**: hello\n\n<@user-1> <@user-2>",
+      content:
+        "-# Ping from **Invoker** to **TBC**:\n\n**hello**\n\n-# <@user-1> , <@user-2>\n-# sent from __Test Run__ in __general__",
     });
   });
 });

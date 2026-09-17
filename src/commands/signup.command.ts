@@ -673,9 +673,20 @@ const signupCommandDefinitions: Command[] = [
         ...(which === "reserves" || which === "all" ? reserveIds : []),
         ...(which === "tbc" ? tbcIds : []),
       ];
+      const whichLabels: Record<string, string> = {
+        main: "Main Roster",
+        reserves: "Reserves",
+        tbc: "TBC",
+        all: "All",
+      };
+      const message = i.options.getString("message", true);
+      const mentions = ids.map((id) => `<@${id}>`).join(" , ");
+      const channelName =
+        i.channel && "name" in i.channel && i.channel.name
+          ? i.channel.name
+          : "this channel";
       await i.reply({
-        content:
-          `Ping from **${i.user.displayName}**: ${i.options.getString("message", true)}\n\n${ids.map((id) => `<@${id}>`).join(" ")}`.trim(),
+        content: `-# Ping from **${i.user.displayName}** to **${whichLabels[which] ?? which}**:\n\n**${message}**\n\n-# ${mentions}\n-# sent from __${s.title}__ in __${channelName}__`,
       });
     },
   },

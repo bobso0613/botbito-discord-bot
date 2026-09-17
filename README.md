@@ -261,7 +261,8 @@ Channel-scoped signup sheets (created with `/newrun`) provide an interactive par
   - `/removecharnote` (alias `/rc`): Clear character notes for your own positions or specified slot/reserve numbers.
   - `/tbc`: Toggle To Be Confirmed (TBC) status for yourself or specified slot/reserve numbers. Marked with a `❓` emoji on the roster.
   - `/removetbc` (alias `/rtbc`): Remove TBC markings from your own positions or specified slot/reserve numbers.
-  - `/ping`: Ping participants with a message. The `which` option selects `Main Roster`, `Reserves`, `TBC`, or `All`.
+  - `/ping`: Ping participants with a message. The `which` option selects `Main Roster`, `Reserves`, `TBC`, or `All`. The reply shows a small-text header with the invoker and target group, the bolded message, and small-text lines with the pinged mentions and the run title/channel.
+  - After `/add`, `/remove`, `/swap`, `/tbc`, `/charnote`, and `/removecharnote` update and re-post the sheet embed, the bot posts a public log message in the channel: a plain display-name line for the invoker's own action (e.g. `**DisplayName** added as **01: Role**.`), or an @mention line when someone else was affected.
 - **Schedule Management**:
   - `/sdt`: Set or clear (`TBD`) run date and time.
   - `/when`: Display the localized run time and server time.

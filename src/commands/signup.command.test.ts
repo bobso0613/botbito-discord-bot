@@ -127,6 +127,7 @@ const createInteraction = (input: string | null = null, userId = "user-1") => ({
   guild: { id: "guild-1", name: "Guild 1", iconURL: () => null },
   user: { id: userId, displayName: "Invoker" },
   reply: jest.fn(),
+  followUp: jest.fn(),
   deferred: false,
   options: {
     getString: jest.fn((name: string) => {
@@ -147,6 +148,7 @@ describe("/charnote", () => {
     guild: { id: "guild-1", name: "Guild 1", iconURL: () => null },
     user: { id: userId, displayName: "Invoker" },
     reply: jest.fn(),
+    followUp: jest.fn(),
     deferred: false,
     options: {
       getString: jest.fn((name: string) => {
@@ -722,6 +724,9 @@ describe("signup modal submissions for action buttons", () => {
         slots: [expect.objectContaining({ number: 1, signupUserId: "user-1" })],
       }),
     );
+    expect(interaction.followUp).toHaveBeenCalledWith({
+      content: "**Invoker** added as **01: Tank**.",
+    });
   });
 
   it("handles SIGNUP_MODAL_ADD_ID with username or @tag resolved via guild members", async () => {
@@ -789,6 +794,9 @@ describe("signup modal submissions for action buttons", () => {
         ]),
       }),
     );
+    expect(interaction.followUp).toHaveBeenCalledWith({
+      content: "**Invoker** removed from **01: Tank**.",
+    });
   });
 
   it("handles SIGNUP_MODAL_TBC_ID", async () => {
@@ -807,6 +815,9 @@ describe("signup modal submissions for action buttons", () => {
         ]),
       }),
     );
+    expect(interaction.followUp).toHaveBeenCalledWith({
+      content: "**Invoker** marked as **TBC**.",
+    });
   });
 
   it("handles SIGNUP_MODAL_CHARNOTE_ID", async () => {
@@ -826,6 +837,9 @@ describe("signup modal submissions for action buttons", () => {
         ]),
       }),
     );
+    expect(interaction.followUp).toHaveBeenCalledWith({
+      content: "**Invoker** put **New Note** in **01: Tank**.",
+    });
   });
 
   it("handles SIGNUP_MODAL_CHARNOTE_ID for reserve slot", async () => {
@@ -867,6 +881,9 @@ describe("signup modal submissions for action buttons", () => {
         ]),
       }),
     );
+    expect(interaction.followUp).toHaveBeenCalledWith({
+      content: "**Invoker** removed the char note from **01: Tank**.",
+    });
   });
 
   it("handles SIGNUP_MODAL_SWAP_ID", async () => {
@@ -887,6 +904,13 @@ describe("signup modal submissions for action buttons", () => {
         ],
       }),
     );
+    expect(interaction.followUp).toHaveBeenCalledWith({
+      content: "**Invoker** swapped to **02: DPS**.",
+    });
+    expect(interaction.followUp).toHaveBeenCalledWith({
+      content:
+        "<@user-2>, you got swapped by <@user-1> to **01: Tank** on Test Run.",
+    });
   });
 });
 

@@ -293,27 +293,70 @@ export const update = async (
   return sheet;
 };
 
-/** Reports each affected slot/reserve change as an ephemeral note to the invoker (if it was their own signup) or a public mention to whoever else was affected. */
+export type NoticeAction =
+  | "added"
+  | "removed"
+  | "swapped"
+  | "tbc"
+  | "untbc"
+  | "charnote"
+  | "uncharnote";
+
+/** Posts one public log message per affected user to the channel: a plain display-name line for the invoker's own action, or an @mention line when someone else was affected. */
 export const sendActionNotices = async (
   interaction: SignupInteraction,
-  action: "added" | "removed" | "swapped",
+  action: NoticeAction,
   notices: ActionNotice[],
   runTitle: string,
+  detail?: string,
 ): Promise<void> => {
-  const preposition = action === "removed" ? "from" : "to";
   for (const notice of notices) {
     if (!notice.labels.length) continue;
     const labelText = notice.labels.join(", ");
-    if (notice.userId === interaction.user.id) {
-      await interaction.followUp({
-        content: `You ${action} yourself ${preposition} ${labelText}.`,
-        flags: MessageFlags.Ephemeral,
-      });
-    } else {
-      await interaction.followUp({
-        content: `<@${notice.userId}>, you got ${action} by <@${interaction.user.id}> ${preposition} ${labelText} on ${runTitle}.`,
-      });
+    const isSelf = notice.userId === interaction.user.id;
+    const invokerMention = `<@${interaction.user.id}>`;
+    const target = isSelf
+      ? `**${interaction.user.displayName}**`
+      : `<@${notice.userId}>`;
+    let content: string;
+    switch (action) {
+      case "added":
+        content = isSelf
+          ? `${target} added as **${labelText}**.`
+          : `${target}, you got added by ${invokerMention} as **${labelText}** on ${runTitle}.`;
+        break;
+      case "removed":
+        content = isSelf
+          ? `${target} removed from **${labelText}**.`
+          : `${target}, you got removed by ${invokerMention} from **${labelText}** on ${runTitle}.`;
+        break;
+      case "swapped":
+        content = isSelf
+          ? `${target} swapped to **${labelText}**.`
+          : `${target}, you got swapped by ${invokerMention} to **${labelText}** on ${runTitle}.`;
+        break;
+      case "tbc":
+        content = isSelf
+          ? `${target} marked as **TBC**.`
+          : `${target}, you got marked as **TBC** by ${invokerMention} on ${runTitle}.`;
+        break;
+      case "untbc":
+        content = isSelf
+          ? `${target} unmarked as **TBC**.`
+          : `${target}, you got unmarked as **TBC** by ${invokerMention} on ${runTitle}.`;
+        break;
+      case "charnote":
+        content = isSelf
+          ? `${target} put **${detail}** in **${labelText}**.`
+          : `${target}, ${invokerMention} put **${detail}** in **${labelText}** for you on ${runTitle}.`;
+        break;
+      case "uncharnote":
+        content = isSelf
+          ? `${target} removed the char note from **${labelText}**.`
+          : `${target}, ${invokerMention} removed your char note from **${labelText}** on ${runTitle}.`;
+        break;
     }
+    await interaction.followUp({ content });
   }
 };
 
@@ -831,13 +874,18 @@ export const executeSwap = async (
       const previousCharNote =
         currentSlot?.charNote ?? reserve?.charNote ?? null;
       const previousIsTbc = currentSlot?.isTbc ?? reserve?.isTbc ?? false;
+      const previousFirstUserId = first.signupUserId;
+      const previousFirstDisplayName = first.signupDisplayName;
+      const previousFirstCharNote = first.charNote;
+      const previousFirstIsTbc = first.isTbc;
+      const invokerWasReserve = reserveIndex !== -1;
       if (currentSlot && currentSlot !== first) {
         currentSlot.signupUserId = null;
         currentSlot.signupDisplayName = null;
         currentSlot.charNote = null;
         currentSlot.isTbc = false;
       }
-      if (reserveIndex !== -1) s.reserves.splice(reserveIndex, 1);
+      if (invokerWasReserve) s.reserves.splice(reserveIndex, 1);
       [
         first.signupUserId,
         first.signupDisplayName,
@@ -848,6 +896,29 @@ export const executeSwap = async (
         userId: i.user.id,
         label: formatSlotLabel(first),
       });
+      if (previousFirstUserId && previousFirstUserId !== i.user.id) {
+        if (currentSlot && currentSlot !== first) {
+          currentSlot.signupUserId = previousFirstUserId;
+          currentSlot.signupDisplayName = previousFirstDisplayName;
+          currentSlot.charNote = previousFirstCharNote;
+          currentSlot.isTbc = previousFirstIsTbc;
+          swapEntries.push({
+            userId: previousFirstUserId,
+            label: formatSlotLabel(currentSlot),
+          });
+        } else {
+          s.reserves.push({
+            userId: previousFirstUserId,
+            displayName: previousFirstDisplayName ?? "Unknown user",
+            charNote: previousFirstCharNote,
+            isTbc: previousFirstIsTbc,
+          });
+          swapEntries.push({
+            userId: previousFirstUserId,
+            label: "Reserve",
+          });
+        }
+      }
     }
     return null;
   });
@@ -866,7 +937,9 @@ export const executeCharNote = async (
   note: string,
   positionValue?: number | string | null,
 ): Promise<void> => {
-  await update(i, (s) => {
+  let noticeUserId: string | null = null;
+  let noticeLabel: string | null = null;
+  const sheetAfterUpdate = await update(i, (s) => {
     const rawPos =
       typeof positionValue === "string" ? positionValue.trim() : positionValue;
     const position =
@@ -878,6 +951,10 @@ export const executeCharNote = async (
       const slot = s.slots.find((candidate) => candidate.number === position);
       if (slot) {
         slot.charNote = note.trim();
+        if (slot.signupUserId) {
+          noticeUserId = slot.signupUserId;
+          noticeLabel = formatSlotLabel(slot);
+        }
         return null;
       }
       const reserveIndex = position - s.slots.length - 1;
@@ -889,6 +966,8 @@ export const executeCharNote = async (
         const reserve = s.reserves[reserveIndex];
         if (reserve) {
           reserve.charNote = note.trim();
+          noticeUserId = reserve.userId;
+          noticeLabel = "Reserve";
           return null;
         }
       }
@@ -898,15 +977,27 @@ export const executeCharNote = async (
     const slot = getInvokingUserSlot(s, i.user.id);
     if (slot) {
       slot.charNote = note.trim();
+      noticeUserId = i.user.id;
+      noticeLabel = formatSlotLabel(slot);
       return null;
     }
     const reserve = s.reserves.find((r) => r.userId === i.user.id);
     if (reserve) {
       reserve.charNote = note.trim();
+      noticeUserId = i.user.id;
+      noticeLabel = "Reserve";
       return null;
     }
     return "You must be signed up in a party slot or reserve when no position is provided.";
   });
+  if (sheetAfterUpdate && noticeUserId && noticeLabel)
+    await sendActionNotices(
+      i,
+      "charnote",
+      [{ userId: noticeUserId, labels: [noticeLabel] }],
+      sheetAfterUpdate.title,
+      note.trim(),
+    );
 };
 
 /** Removes character notes from slots or reserves. */
@@ -914,7 +1005,8 @@ export const executeRemoveCharNote = async (
   i: SignupInteraction,
   inputValue?: string | null,
 ): Promise<void> => {
-  await update(i, (s) => {
+  const removedEntries: { userId: string; label: string }[] = [];
+  const sheetAfterUpdate = await update(i, (s) => {
     const input = inputValue?.trim();
     if (!input) {
       const isSignedUp =
@@ -923,11 +1015,18 @@ export const executeRemoveCharNote = async (
       if (!isSignedUp) return "You are not signed up or a reserve.";
       for (const slot of s.slots) {
         if (slot.signupUserId === i.user.id) {
+          if (slot.charNote)
+            removedEntries.push({
+              userId: i.user.id,
+              label: formatSlotLabel(slot),
+            });
           slot.charNote = null;
         }
       }
       for (const reserve of s.reserves) {
         if (reserve.userId === i.user.id) {
+          if (reserve.charNote)
+            removedEntries.push({ userId: i.user.id, label: "Reserve" });
           reserve.charNote = null;
         }
       }
@@ -971,15 +1070,31 @@ export const executeRemoveCharNote = async (
     }
     for (const slot of s.slots) {
       if (slotNumbersToRemove.has(slot.number)) {
+        if (slot.signupUserId && slot.charNote)
+          removedEntries.push({
+            userId: slot.signupUserId,
+            label: formatSlotLabel(slot),
+          });
         slot.charNote = null;
       }
     }
     for (const index of reserveIndexesToRemove) {
       const reserve = s.reserves[index];
-      if (reserve) reserve.charNote = null;
+      if (reserve) {
+        if (reserve.charNote)
+          removedEntries.push({ userId: reserve.userId, label: "Reserve" });
+        reserve.charNote = null;
+      }
     }
     return null;
   });
+  if (sheetAfterUpdate)
+    await sendActionNotices(
+      i,
+      "uncharnote",
+      mergeActionNotices(removedEntries),
+      sheetAfterUpdate.title,
+    );
 };
 
 /** Toggles or sets TBC status on slots or reserves. */
@@ -987,7 +1102,12 @@ export const executeTbc = async (
   i: SignupInteraction,
   inputValue?: string | null,
 ): Promise<void> => {
-  await update(i, (s) => {
+  const tbcOnEntries: { userId: string; label: string }[] = [];
+  const tbcOffEntries: { userId: string; label: string }[] = [];
+  const recordToggle = (userId: string, label: string, isTbc: boolean) => {
+    (isTbc ? tbcOnEntries : tbcOffEntries).push({ userId, label });
+  };
+  const sheetAfterUpdate = await update(i, (s) => {
     const input = inputValue?.trim();
     if (!input) {
       const userSlots = s.slots.filter(
@@ -1001,9 +1121,11 @@ export const executeTbc = async (
       }
       for (const slot of userSlots) {
         slot.isTbc = !slot.isTbc;
+        recordToggle(i.user.id, formatSlotLabel(slot), slot.isTbc);
       }
       for (const reserve of userReserves) {
         reserve.isTbc = !reserve.isTbc;
+        recordToggle(i.user.id, "Reserve", reserve.isTbc);
       }
       return null;
     }
@@ -1046,14 +1168,35 @@ export const executeTbc = async (
     for (const slot of s.slots) {
       if (slotNumbersToToggle.has(slot.number)) {
         slot.isTbc = !slot.isTbc;
+        if (slot.signupUserId)
+          recordToggle(slot.signupUserId, formatSlotLabel(slot), slot.isTbc);
       }
     }
     for (const index of reserveIndexesToToggle) {
       const reserve = s.reserves[index];
-      if (reserve) reserve.isTbc = !reserve.isTbc;
+      if (reserve) {
+        reserve.isTbc = !reserve.isTbc;
+        recordToggle(reserve.userId, "Reserve", reserve.isTbc);
+      }
     }
     return null;
   });
+  if (sheetAfterUpdate) {
+    if (tbcOnEntries.length)
+      await sendActionNotices(
+        i,
+        "tbc",
+        mergeActionNotices(tbcOnEntries),
+        sheetAfterUpdate.title,
+      );
+    if (tbcOffEntries.length)
+      await sendActionNotices(
+        i,
+        "untbc",
+        mergeActionNotices(tbcOffEntries),
+        sheetAfterUpdate.title,
+      );
+  }
 };
 
 /** Removes TBC markings from slots or reserves. */
