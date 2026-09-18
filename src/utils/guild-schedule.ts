@@ -20,7 +20,7 @@ export const getGuildIcon = (guildId: string): string | undefined => {
 
 /** Extracts Unix timestamp seconds from a schedule's Discord timestamp mention. */
 export const getScheduleUnixSeconds = (schedule: GuildSchedule): number =>
-  Number(schedule.timestamp.match(/\d+/)?.[0] ?? 0);
+  Number(/\d+/.exec(schedule.timestamp)?.[0] ?? 0);
 
 /** Returns the title icon for a schedule based on whether its time has passed. */
 export const getScheduleTitleIcon = (schedule: GuildSchedule): string =>

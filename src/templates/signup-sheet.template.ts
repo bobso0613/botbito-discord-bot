@@ -65,10 +65,22 @@ export const SIGNUP_COMMANDS_HELP_TEXT = [
 
 /** Formats a single party slot as `NN: Role -` optionally followed by the signed-up member and character note. */
 const formatSlot = (slot: SignupSheet["slots"][number]): string => {
+  const tbcSuffix = slot.isTbc ? " ❓" : "";
+  const charNoteSuffix = slot.charNote ? ` *(${slot.charNote})*` : "";
   const signedUp = slot.signupDisplayName
-    ? ` **${slot.signupDisplayName}**${slot.charNote ? ` *(${slot.charNote})*` : ""}${slot.isTbc ? " ❓" : ""}`
-    : `${slot.isTbc ? " ❓" : ""}`;
+    ? ` **${slot.signupDisplayName}**${charNoteSuffix}${tbcSuffix}`
+    : tbcSuffix;
   return `\`${String(slot.number).padStart(2, "0")}\`: ${slot.role} -${signedUp}`;
+};
+
+/** Formats a single reserve entry as `NN: **Name** (note)` with an optional TBC marker. */
+const formatReserve = (
+  reserve: SignupSheet["reserves"][number],
+  position: number,
+): string => {
+  const charNoteSuffix = reserve.charNote ? ` *(${reserve.charNote})*` : "";
+  const tbcSuffix = reserve.isTbc ? " ❓" : "";
+  return `\`${String(position).padStart(2, "0")}\`: **${reserve.displayName}**${charNoteSuffix}${tbcSuffix}`;
 };
 
 /**
@@ -102,9 +114,8 @@ export const buildSignupSheetEmbed = (
   });
   const reserveText = sheet.reserves.length
     ? sheet.reserves
-        .map(
-          (reserve, index) =>
-            `\`${String(sheet.slots.length + index + 1).padStart(2, "0")}\`: **${reserve.displayName}**${reserve.charNote ? ` *(${reserve.charNote})*` : ""}${reserve.isTbc ? " ❓" : ""}`,
+        .map((reserve, index) =>
+          formatReserve(reserve, sheet.slots.length + index + 1),
         )
         .join("\n")
     : "None - *to add as reserve, type `/add input=reserve`*";

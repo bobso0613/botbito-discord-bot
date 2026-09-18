@@ -1498,7 +1498,7 @@ describe("parseSetup party size changes", () => {
     const result = parseSetup(interaction as never, existingSheet);
     expect("sheet" in result).toBe(true);
     if ("sheet" in result) {
-      expect(result.sheet.slots.length).toBe(1);
+      expect(result.sheet.slots).toHaveLength(1);
       expect(result.sheet.slots[0]?.signupUserId).toBe("user-1");
     }
   });

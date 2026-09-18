@@ -17,11 +17,13 @@ describe("guild schedule command", () => {
     });
   });
 
-  it("rejects a guild with no tracked schedule category", async () => {
+  it("rejects a guild with no tracked schedule category and no schedule channels", async () => {
     const guildId = Object.keys(DISCORD_SETTINGS.guildScheduleSourceByGuild)[0];
     const source = DISCORD_SETTINGS.guildScheduleSourceByGuild[guildId];
     const categoryIds = source.categoryIds;
+    const scheduleTextChannelIds = source.scheduleTextChannelIds;
     source.categoryIds = [];
+    source.scheduleTextChannelIds = [];
 
     try {
       const interaction = {
@@ -35,6 +37,49 @@ describe("guild schedule command", () => {
           "No schedule category is being tracked. Ask a server administrator to set one with /guildsetting set tracked-category.",
         flags: MessageFlags.Ephemeral,
       });
+    } finally {
+      source.categoryIds = categoryIds;
+      source.scheduleTextChannelIds = scheduleTextChannelIds;
+    }
+  });
+
+  it("tracks all categories when none are set but schedule channels are configured", async () => {
+    const guildId = Object.keys(DISCORD_SETTINGS.guildScheduleSourceByGuild)[0];
+    const source = DISCORD_SETTINGS.guildScheduleSourceByGuild[guildId];
+    const categoryIds = source.categoryIds;
+    source.categoryIds = [];
+    if (!source.scheduleTextChannelIds.length) {
+      source.scheduleTextChannelIds = ["schedule-channel-id"];
+    }
+
+    try {
+      const member = { id: "user-id" };
+      const guild = {
+        id: guildId,
+        name: "Test Guild",
+        iconURL: jest.fn().mockReturnValue(null),
+        members: { fetch: jest.fn().mockResolvedValue(member) },
+        channels: { cache: new Map() },
+      };
+      const interaction = {
+        guildId,
+        guild,
+        user: {
+          id: "user-id",
+          username: "member",
+          tag: "member#0001",
+          displayName: "Member",
+          displayAvatarURL: jest.fn().mockReturnValue("avatar-url"),
+        },
+        options: {
+          getBoolean: jest.fn().mockReturnValue(false),
+        },
+        deferReply: jest.fn(),
+        editReply: jest.fn(),
+      };
+      await guildSchedCommand.execute(interaction as never);
+      expect(guild.members.fetch).toHaveBeenCalledWith("user-id");
+      expect(interaction.editReply).toHaveBeenCalled();
     } finally {
       source.categoryIds = categoryIds;
     }

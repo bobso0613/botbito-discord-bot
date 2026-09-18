@@ -9,17 +9,18 @@ import type { GuildSchedule } from "../types/guild-schedule.js";
 
 describe("Cooldowns Utils", () => {
   describe("parseInstanceTypes", () => {
-    it("should parse single instance type with abbreviation", () => {
-      const result = parseInstanceTypes("ET speedrun trial");
-      expect(result).toHaveLength(1);
-      expect(result[0]?.name).toBe("Endless Tower");
-    });
-
-    it("should parse single instance type with full name", () => {
-      const result = parseInstanceTypes("Endless Tower run");
-      expect(result).toHaveLength(1);
-      expect(result[0]?.name).toBe("Endless Tower");
-    });
+    it.each([
+      { input: "ET speedrun trial", expectedName: "Endless Tower" },
+      { input: "Endless Tower run", expectedName: "Endless Tower" },
+      { input: "Eternal Bastion", expectedName: "Eternal Bastion" },
+    ])(
+      "parses a single instance type from $input",
+      ({ input, expectedName }) => {
+        const result = parseInstanceTypes(input);
+        expect(result).toHaveLength(1);
+        expect(result[0]?.name).toBe(expectedName);
+      },
+    );
 
     it("should parse multiple matching instance types", () => {
       const result = parseInstanceTypes("ET EC speedrun");
@@ -28,12 +29,6 @@ describe("Cooldowns Utils", () => {
         "Endless Tower",
         "Endless Cellar",
       ]);
-    });
-
-    it("should not match partial abbreviations", () => {
-      const result = parseInstanceTypes("Eternal Bastion");
-      expect(result).toHaveLength(1);
-      expect(result[0]?.name).toBe("Eternal Bastion");
     });
 
     it("should return empty array if no match", () => {

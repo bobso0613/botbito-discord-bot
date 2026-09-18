@@ -53,8 +53,7 @@ import {
   mutateSignupSheet,
   saveSignupSheet,
 } from "./signup-sheet.service.js";
-import { buildSignupSheetEmbed } from "../templates/signup-sheet.template.js";
-import type { SignupSheet, SignupSlot } from "../types/signup-sheet.js";
+import type { SignupSheet } from "../types/signup-sheet.js";
 import {
   createEmptySlots,
   ExpiringMap,
@@ -312,6 +311,74 @@ export const showSetup = async (
 };
 
 /** Handles the create/change-all setup modal submission, staging the parsed sheet as a pending draft. */
+const handleSetupModal = async (
+  interaction: ModalSubmitInteraction,
+): Promise<void> => {
+  await interaction.deferReply({
+    flags: MessageFlags.Ephemeral,
+  });
+  if (!interaction.guildId || !interaction.channelId) return;
+  const key = signupSheetKey(interaction.guildId, interaction.channelId);
+  // Reopening "Edit Party Setup" mid-session reuses the in-progress draft so roster/notes/instance type edits aren't lost.
+  const pendingDraft = pendingSetupDrafts.get(key);
+  const isReopeningPendingSetup =
+    interaction.customId === CHANGE_ALL_MODAL_ID && Boolean(pendingDraft);
+  const existingSheet =
+    interaction.customId === CHANGE_ALL_MODAL_ID
+      ? (pendingDraft ??
+        (await getSignupSheet(interaction.guildId, interaction.channelId)))
+      : undefined;
+  const setup = parseSetup(interaction, existingSheet ?? undefined);
+  if ("error" in setup) {
+    await interaction.editReply(setup.error);
+    return;
+  }
+  if (!isReopeningPendingSetup)
+    pendingSetupSnapshots.set(
+      key,
+      existingSheet ? structuredClone(existingSheet) : null,
+    );
+  pendingSetupDrafts.set(key, setup.sheet);
+  pendingRosterUsers.set(key, interaction.user.id);
+  await interaction.editReply({
+    content: SETUP_PROMPT_CONTENT,
+    components: [buildSetupPromptButtons()],
+  });
+};
+
+/** Simple modal submissions that just forward their field values to a signup action. */
+const SIMPLE_SIGNUP_MODAL_HANDLERS: Readonly<
+  Record<string, (interaction: ModalSubmitInteraction) => Promise<void>>
+> = {
+  [SIGNUP_MODAL_ADD_ID]: (interaction) =>
+    executeAdd(interaction, interaction.fields.getTextInputValue("input")),
+  [SIGNUP_MODAL_REMOVE_ID]: (interaction) =>
+    executeRemove(
+      interaction,
+      interaction.fields.getTextInputValue("position"),
+    ),
+  [SIGNUP_MODAL_TBC_ID]: (interaction) =>
+    executeTbc(interaction, interaction.fields.getTextInputValue("input")),
+  [SIGNUP_MODAL_CHARNOTE_ID]: (interaction) =>
+    executeCharNote(
+      interaction,
+      interaction.fields.getTextInputValue("note"),
+      interaction.fields.getTextInputValue("position"),
+    ),
+  [SIGNUP_MODAL_REMOVE_CHARNOTE_ID]: (interaction) =>
+    executeRemoveCharNote(
+      interaction,
+      interaction.fields.getTextInputValue("input"),
+    ),
+  [SIGNUP_MODAL_SWAP_ID]: (interaction) =>
+    executeSwap(
+      interaction,
+      interaction.fields.getTextInputValue("first"),
+      interaction.fields.getTextInputValue("second"),
+    ),
+};
+
+/** Dispatches a signup modal submission to its setup or simple-action handler. */
 export const handleSignupModal = async (
   interaction: ModalSubmitInteraction,
 ): Promise<void> => {
@@ -319,70 +386,10 @@ export const handleSignupModal = async (
     interaction.customId === SETUP_MODAL_ID ||
     interaction.customId === CHANGE_ALL_MODAL_ID
   ) {
-    await interaction.deferReply({
-      flags: MessageFlags.Ephemeral,
-    });
-    if (!interaction.guildId || !interaction.channelId) return;
-    const key = signupSheetKey(interaction.guildId, interaction.channelId);
-    // Reopening "Edit Party Setup" mid-session reuses the in-progress draft so roster/notes/instance type edits aren't lost.
-    const pendingDraft = pendingSetupDrafts.get(key);
-    const isReopeningPendingSetup =
-      interaction.customId === CHANGE_ALL_MODAL_ID && Boolean(pendingDraft);
-    const existingSheet =
-      interaction.customId === CHANGE_ALL_MODAL_ID
-        ? (pendingDraft ??
-          (await getSignupSheet(interaction.guildId, interaction.channelId)))
-        : undefined;
-    const setup = parseSetup(interaction, existingSheet ?? undefined);
-    if ("error" in setup) {
-      await interaction.editReply(setup.error);
-      return;
-    }
-    if (!isReopeningPendingSetup)
-      pendingSetupSnapshots.set(
-        key,
-        existingSheet ? structuredClone(existingSheet) : null,
-      );
-    pendingSetupDrafts.set(key, setup.sheet);
-    pendingRosterUsers.set(key, interaction.user.id);
-    await interaction.editReply({
-      content: SETUP_PROMPT_CONTENT,
-      components: [buildSetupPromptButtons()],
-    });
+    await handleSetupModal(interaction);
     return;
   }
-  if (interaction.customId === SIGNUP_MODAL_ADD_ID) {
-    const rawInput = interaction.fields.getTextInputValue("input");
-    await executeAdd(interaction, rawInput);
-    return;
-  }
-  if (interaction.customId === SIGNUP_MODAL_REMOVE_ID) {
-    const position = interaction.fields.getTextInputValue("position");
-    await executeRemove(interaction, position);
-    return;
-  }
-  if (interaction.customId === SIGNUP_MODAL_TBC_ID) {
-    const inputVal = interaction.fields.getTextInputValue("input");
-    await executeTbc(interaction, inputVal);
-    return;
-  }
-  if (interaction.customId === SIGNUP_MODAL_CHARNOTE_ID) {
-    const note = interaction.fields.getTextInputValue("note");
-    const position = interaction.fields.getTextInputValue("position");
-    await executeCharNote(interaction, note, position);
-    return;
-  }
-  if (interaction.customId === SIGNUP_MODAL_REMOVE_CHARNOTE_ID) {
-    const inputVal = interaction.fields.getTextInputValue("input");
-    await executeRemoveCharNote(interaction, inputVal);
-    return;
-  }
-  if (interaction.customId === SIGNUP_MODAL_SWAP_ID) {
-    const first = interaction.fields.getTextInputValue("first");
-    const second = interaction.fields.getTextInputValue("second");
-    await executeSwap(interaction, first, second);
-    return;
-  }
+  await SIMPLE_SIGNUP_MODAL_HANDLERS[interaction.customId]?.(interaction);
 };
 
 /** Prompts the setup owner to send their edited roster text as their next channel message. */

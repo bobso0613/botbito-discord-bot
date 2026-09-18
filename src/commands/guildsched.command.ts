@@ -7,7 +7,10 @@ import {
   DISCORD_SETTINGS,
   GUILD_SCHEDULE_GUILD_IDS,
 } from "../config/discord-settings.js";
-import { getActiveGuildSchedules } from "../services/guild-schedule.service.js";
+import {
+  getActiveGuildSchedules,
+  resolveCategoryDisplayNames,
+} from "../services/guild-schedule.service.js";
 import {
   buildGuildScheduleEmbed,
   buildScheduleActionRow,
@@ -48,7 +51,10 @@ export const guildSchedCommand: Command = {
       });
       return;
     }
-    if (source.categoryIds.length === 0) {
+    if (
+      source.categoryIds.length === 0 &&
+      !source.scheduleTextChannelIds.length
+    ) {
       await interaction.reply({
         content:
           "No schedule category is being tracked. Ask a server administrator to set one with /guildsetting set tracked-category.",
@@ -84,13 +90,14 @@ export const guildSchedCommand: Command = {
       source.roleRestrictedChannels,
     );
     const context = getInteractionContext(interaction);
-    const categoryNames = source.categoryIds
-      .map((id) => guild.channels.cache.get(id)?.name)
-      .filter((name): name is string => Boolean(name));
+    const categoryNames = resolveCategoryDisplayNames(
+      guild,
+      source.categoryIds,
+    );
     const embed = buildGuildScheduleEmbed(
       schedules,
       context,
-      categoryNames.length > 0 ? categoryNames : ["configured categories"],
+      categoryNames,
       isForAnnouncementOnly,
       isPublic,
     );

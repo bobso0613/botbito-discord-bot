@@ -22,7 +22,6 @@ import {
   executeTbc,
   executeWhen,
   getSheet,
-  publish,
   replyMissing,
   signupSheetKey,
   update,

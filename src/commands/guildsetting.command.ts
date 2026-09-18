@@ -7,6 +7,7 @@ import {
   SlashCommandBuilder,
   type ChatInputCommandInteraction,
   type Collection,
+  type Guild,
   type NonThreadGuildBasedChannel,
   type Role,
 } from "discord.js";
@@ -49,15 +50,16 @@ const parseInstanceType = (
   };
 };
 
-/** Resolves a channel mention, channel link, or #channel name to an ID of the expected type. */
+/** Resolves a channel mention, channel link, raw ID, or #channel name to an ID of the expected type. */
 const resolveChannel = (
   channels: Collection<string, NonThreadGuildBasedChannel | null>,
   value: string,
   type: ChannelType.GuildCategory | ChannelType.GuildText,
 ): string | undefined => {
   const id =
-    value.match(/^<#(\d+)>$/)?.[1] ??
-    value.match(/discord\.com\/channels\/\d+\/(\d+)/)?.[1];
+    /^<#(\d+)>$/.exec(value)?.[1] ??
+    /discord\.com\/channels\/\d+\/(\d+)/.exec(value)?.[1] ??
+    (/^\d+$/.test(value) ? value : undefined);
   const name = value.replace(/^#/, "").toLowerCase();
   const channel = id
     ? channels.get(id)
@@ -88,7 +90,7 @@ const resolveRole = (
   roles: Collection<string, Role>,
   value: string,
 ): string | undefined => {
-  const id = value.match(/^<@&(\d+)>$/)?.[1];
+  const id = /^<@&(\d+)>$/.exec(value)?.[1];
   const name = value.replace(/^@/, "").toLowerCase();
   const role = id
     ? roles.get(id)
@@ -108,8 +110,21 @@ const guildOnlyReply = async (
   });
 };
 
+/** Formats the "Tracked categories" summary line, resolving IDs to names; empty tracks every category when schedule channels are set. */
+const formatTrackedCategories = (
+  guild: Guild,
+  source: GuildSettings["guildScheduleSource"] | undefined,
+): string => {
+  if (source?.categoryIds.length) {
+    return source.categoryIds
+      .map((id) => guild.channels.cache.get(id)?.name ?? `<#${id}>`)
+      .join(", ");
+  }
+  return source?.scheduleTextChannelIds.length ? "All categories" : "none";
+};
+
 /** Builds the ephemeral summary shown by `/guildsetting show`. */
-const buildGuildSettingsSummary = (guildId: string): string => {
+const buildGuildSettingsSummary = (guild: Guild, guildId: string): string => {
   const source = DISCORD_SETTINGS.guildScheduleSourceByGuild[guildId];
   const cooldownTypes =
     DISCORD_SETTINGS.cooldownInstanceTypesByGuild[guildId] ?? [];
@@ -120,11 +135,7 @@ const buildGuildSettingsSummary = (guildId: string): string => {
   );
 
   return [
-    `**Tracked categories:** ${
-      source?.categoryIds.length
-        ? source.categoryIds.map((id) => `<#${id}>`).join(", ")
-        : "none"
-    }`,
+    `**Tracked categories:** ${formatTrackedCategories(guild, source)}`,
     `**Schedule channels:** ${
       source?.scheduleTextChannelIds.length
         ? source.scheduleTextChannelIds.map((id) => `<#${id}>`).join(", ")
@@ -155,6 +166,306 @@ const buildGuildSettingsSummary = (guildId: string): string => {
       multiplierTypes.length ? multiplierTypes.join(", ") : "none"
     }`,
   ].join("\n");
+};
+
+/** Maps a "set" subcommand to the string option name that holds its value. */
+const getSetValueOptionName = (subcommand: string): string => {
+  switch (subcommand) {
+    case "cooldown-instance-types":
+      return "name";
+    case "tracked-category":
+      return "categories";
+    case "role-restricted-channels":
+      return "mappings";
+    case "multiplier-instance-types":
+      return "types";
+    default:
+      return "channels";
+  }
+};
+
+/** Replies with a validation error's message, falling back to a generic one. */
+const replyWithError = async (
+  interaction: ChatInputCommandInteraction,
+  error: unknown,
+  fallback: string,
+): Promise<void> => {
+  await interaction.reply({
+    content: error instanceof Error ? error.message : fallback,
+    flags: MessageFlags.Ephemeral,
+  });
+};
+
+const handleShow = async (
+  interaction: ChatInputCommandInteraction,
+  guild: Guild,
+  guildId: string,
+): Promise<void> => {
+  await interaction.reply({
+    content: buildGuildSettingsSummary(guild, guildId),
+    flags: MessageFlags.Ephemeral,
+  });
+};
+
+const handleRemoveCooldownInstanceType = async (
+  interaction: ChatInputCommandInteraction,
+  guildId: string,
+): Promise<void> => {
+  const name = interaction.options.getString("name", true);
+  try {
+    await updateGuildCooldownSettings(guildId, (settings) => {
+      if (!settings.cooldownInstanceTypes.some((type) => type.name === name)) {
+        throw new Error(`No instance type named "${name}" exists.`);
+      }
+      settings.cooldownInstanceTypes = settings.cooldownInstanceTypes.filter(
+        (type) => type.name !== name,
+      );
+      settings.multiplierInstanceTypes =
+        settings.multiplierInstanceTypes.filter(
+          (multiplierName) => multiplierName !== name,
+        );
+    });
+  } catch (error) {
+    await replyWithError(interaction, error, "Invalid cooldown setting.");
+    return;
+  }
+  await interaction.reply({
+    content: `Removed cooldown instance type "${name}".`,
+    flags: MessageFlags.Ephemeral,
+  });
+};
+
+/** Applies a "clear" subcommand to the guild's schedule source in place. */
+const clearScheduleSource = (
+  source: GuildSettings["guildScheduleSource"],
+  subcommand: string,
+): void => {
+  if (subcommand === "tracked-category") source.categoryIds = [];
+  else if (subcommand === "excluded-channels") source.excludedChannelIds = [];
+  else if (subcommand === "schedule-channels")
+    source.scheduleTextChannelIds = [];
+  else source.roleRestrictedChannels = {};
+};
+
+const handleClear = async (
+  interaction: ChatInputCommandInteraction,
+  guildId: string,
+  subcommand: string,
+): Promise<void> => {
+  const isCooldownSetting =
+    subcommand === "cooldown-instance-types" ||
+    subcommand === "multiplier-instance-types";
+
+  if (subcommand === "cooldown-instance-types") {
+    await updateGuildCooldownSettings(guildId, (settings) => {
+      settings.cooldownInstanceTypes = [];
+    });
+  } else if (subcommand === "multiplier-instance-types") {
+    await updateGuildCooldownSettings(guildId, (settings) => {
+      settings.multiplierInstanceTypes = [];
+    });
+  } else {
+    await updateGuildScheduleSource(guildId, (source) =>
+      clearScheduleSource(source, subcommand),
+    );
+  }
+
+  await interaction.reply({
+    content: isCooldownSetting
+      ? "Guild cooldown setting cleared."
+      : "Guild schedule setting cleared.",
+    flags: MessageFlags.Ephemeral,
+  });
+};
+
+const setCooldownInstanceType = async (
+  interaction: ChatInputCommandInteraction,
+  guildId: string,
+): Promise<void> => {
+  const type = parseInstanceType(
+    interaction.options.getString("name", true),
+    interaction.options.getString("keywords", true),
+    interaction.options.getString("maxattempts", true),
+    interaction.options.getString("emoji", true),
+  );
+  await updateGuildCooldownSettings(guildId, (settings) => {
+    settings.cooldownInstanceTypes = settings.cooldownInstanceTypes.some(
+      ({ name }) => name === type.name,
+    )
+      ? settings.cooldownInstanceTypes.map((existing) =>
+          existing.name === type.name ? type : existing,
+        )
+      : [...settings.cooldownInstanceTypes, type];
+  });
+};
+
+const setMultiplierInstanceTypes = async (
+  guildId: string,
+  value: string,
+): Promise<void> => {
+  const types = splitValues(value);
+  await updateGuildCooldownSettings(guildId, (settings) => {
+    const configuredNames = new Set(
+      settings.cooldownInstanceTypes.map(({ name }) => name),
+    );
+    if (types.some((type) => !configuredNames.has(type))) {
+      throw new Error(
+        "Every multiplier type must be a configured instance type.",
+      );
+    }
+    settings.multiplierInstanceTypes = types;
+  });
+};
+
+const handleSetCooldownOrMultiplier = async (
+  interaction: ChatInputCommandInteraction,
+  guildId: string,
+  subcommand: string,
+  value: string,
+): Promise<void> => {
+  try {
+    if (subcommand === "cooldown-instance-types") {
+      await setCooldownInstanceType(interaction, guildId);
+    } else {
+      await setMultiplierInstanceTypes(guildId, value);
+    }
+  } catch (error) {
+    await replyWithError(interaction, error, "Invalid cooldown setting.");
+    return;
+  }
+  await interaction.reply({
+    content: "Guild cooldown setting updated.",
+    flags: MessageFlags.Ephemeral,
+  });
+};
+
+/** Parses a single "#channel=@role" (or `:`/`->`) mapping entry. */
+const parseRoleRestrictedEntry = (
+  channels: Collection<string, NonThreadGuildBasedChannel | null>,
+  roles: Collection<string, Role>,
+  entry: string,
+): { channelId: string; roleId: string } | undefined => {
+  const [channelValue, roleValue, ...extra] = entry
+    .split(/=|:|->/)
+    .map((part) => part.trim());
+  const channelId = channelValue
+    ? resolveChannel(channels, channelValue, ChannelType.GuildText)
+    : undefined;
+  const roleId = roleValue ? resolveRole(roles, roleValue) : undefined;
+  return extra.length || !channelId || !roleId
+    ? undefined
+    : { channelId, roleId };
+};
+
+const handleSetRoleRestrictedChannels = async (
+  interaction: ChatInputCommandInteraction,
+  guild: Guild,
+  guildId: string,
+  value: string,
+): Promise<void> => {
+  const [channels, roles] = await Promise.all([
+    guild.channels.fetch(),
+    guild.roles.fetch(),
+  ]);
+  const mappings: Record<string, string> = {};
+  const invalid: string[] = [];
+  for (const entry of splitValues(value)) {
+    const parsed = parseRoleRestrictedEntry(channels, roles, entry);
+    if (parsed) mappings[parsed.channelId] = parsed.roleId;
+    else invalid.push(entry);
+  }
+  if (invalid.length) {
+    await interaction.reply({
+      content: `Could not resolve: ${invalid.join(", ")}`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  await updateGuildScheduleSource(guildId, (source) => {
+    source.roleRestrictedChannels = mappings;
+  });
+  await interaction.reply({
+    content: "Guild schedule setting updated.",
+    flags: MessageFlags.Ephemeral,
+  });
+};
+
+/** Applies a resolved channel id list to the matching schedule-source field. */
+const applyChannelListUpdate = (
+  source: GuildSettings["guildScheduleSource"],
+  subcommand: string,
+  ids: string[],
+): void => {
+  if (subcommand === "tracked-category") source.categoryIds = ids;
+  else if (subcommand === "excluded-channels") source.excludedChannelIds = ids;
+  else source.scheduleTextChannelIds = ids;
+};
+
+/** Announces newly added schedule channels, if this update added any. */
+const announceAddedScheduleChannels = async (
+  interaction: ChatInputCommandInteraction,
+  guild: Guild,
+  source: GuildSettings["guildScheduleSource"],
+  previousScheduleTextChannelIds: string[],
+): Promise<void> => {
+  const addedChannelIds = source.scheduleTextChannelIds.filter(
+    (channelId) => !previousScheduleTextChannelIds.includes(channelId),
+  );
+  if (!addedChannelIds.length) return;
+
+  await publishGuildScheduleAnnouncement(
+    guild,
+    addedChannelIds,
+    source.categoryIds,
+    (source.excludedChannelIds ?? []).filter(
+      (channelId) => !source.roleRestrictedChannels?.[channelId],
+    ),
+    source.roleRestrictedChannels,
+    getInteractionContext(interaction),
+  );
+};
+
+const handleSetChannelList = async (
+  interaction: ChatInputCommandInteraction,
+  guild: Guild,
+  guildId: string,
+  subcommand: string,
+  value: string,
+  previousScheduleTextChannelIds: string[],
+): Promise<void> => {
+  const type =
+    subcommand === "tracked-category"
+      ? ChannelType.GuildCategory
+      : ChannelType.GuildText;
+  const channels = await guild.channels.fetch();
+  const { ids, invalid } = resolveChannels(channels, value, type);
+  if (invalid.length) {
+    await interaction.reply({
+      content: `Could not resolve: ${invalid.join(", ")}`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  let updatedSource: GuildSettings["guildScheduleSource"] | undefined;
+  await updateGuildScheduleSource(guildId, (source) => {
+    applyChannelListUpdate(source, subcommand, ids);
+    updatedSource = source;
+  });
+
+  if (subcommand === "schedule-channels" && updatedSource) {
+    await announceAddedScheduleChannels(
+      interaction,
+      guild,
+      updatedSource,
+      previousScheduleTextChannelIds,
+    );
+  }
+
+  await interaction.reply({
+    content: "Guild schedule setting updated.",
+    flags: MessageFlags.Ephemeral,
+  });
 };
 
 /** Administrator-only commands for configuring the current guild's schedule sources. */
@@ -331,14 +642,13 @@ export const guildSettingCommand: Command = {
       return;
     }
 
+    const guild = interaction.guild;
+    const guildId = interaction.guildId;
     const subcommand = interaction.options.getSubcommand();
     const subcommandGroup = interaction.options.getSubcommandGroup();
 
     if (!subcommandGroup && subcommand === "show") {
-      await interaction.reply({
-        content: buildGuildSettingsSummary(interaction.guildId),
-        flags: MessageFlags.Ephemeral,
-      });
+      await handleShow(interaction, guild, guildId);
       return;
     }
 
@@ -346,81 +656,17 @@ export const guildSettingCommand: Command = {
       subcommandGroup === "remove" &&
       subcommand === "cooldown-instance-type"
     ) {
-      const name = interaction.options.getString("name", true);
-      try {
-        await updateGuildCooldownSettings(interaction.guildId, (settings) => {
-          if (
-            !settings.cooldownInstanceTypes.some((type) => type.name === name)
-          ) {
-            throw new Error(`No instance type named "${name}" exists.`);
-          }
-          settings.cooldownInstanceTypes =
-            settings.cooldownInstanceTypes.filter((type) => type.name !== name);
-          settings.multiplierInstanceTypes =
-            settings.multiplierInstanceTypes.filter(
-              (multiplierName) => multiplierName !== name,
-            );
-        });
-      } catch (error) {
-        await interaction.reply({
-          content:
-            error instanceof Error
-              ? error.message
-              : "Invalid cooldown setting.",
-          flags: MessageFlags.Ephemeral,
-        });
-        return;
-      }
-      await interaction.reply({
-        content: `Removed cooldown instance type "${name}".`,
-        flags: MessageFlags.Ephemeral,
-      });
+      await handleRemoveCooldownInstanceType(interaction, guildId);
       return;
     }
 
-    const previousScheduleTextChannelIds =
-      DISCORD_SETTINGS.guildScheduleSourceByGuild[interaction.guildId]
-        ?.scheduleTextChannelIds ?? [];
-    let updatedSource: GuildSettings["guildScheduleSource"] | undefined;
     if (subcommandGroup === "clear") {
-      if (subcommand === "cooldown-instance-types") {
-        await updateGuildCooldownSettings(interaction.guildId, (settings) => {
-          settings.cooldownInstanceTypes = [];
-        });
-      } else if (subcommand === "multiplier-instance-types") {
-        await updateGuildCooldownSettings(interaction.guildId, (settings) => {
-          settings.multiplierInstanceTypes = [];
-        });
-      } else
-        await updateGuildScheduleSource(interaction.guildId, (source) => {
-          if (subcommand === "tracked-category") source.categoryIds = [];
-          else if (subcommand === "excluded-channels")
-            source.excludedChannelIds = [];
-          else if (subcommand === "schedule-channels")
-            source.scheduleTextChannelIds = [];
-          else source.roleRestrictedChannels = {};
-        });
-      await interaction.reply({
-        content:
-          subcommand === "cooldown-instance-types" ||
-          subcommand === "multiplier-instance-types"
-            ? "Guild cooldown setting cleared."
-            : "Guild schedule setting cleared.",
-        flags: MessageFlags.Ephemeral,
-      });
+      await handleClear(interaction, guildId, subcommand);
       return;
     }
 
     const value = interaction.options.getString(
-      subcommand === "cooldown-instance-types"
-        ? "name"
-        : subcommand === "tracked-category"
-          ? "categories"
-          : subcommand === "role-restricted-channels"
-            ? "mappings"
-            : subcommand === "multiplier-instance-types"
-              ? "types"
-              : "channels",
+      getSetValueOptionName(subcommand),
       true,
     );
 
@@ -428,128 +674,30 @@ export const guildSettingCommand: Command = {
       subcommand === "cooldown-instance-types" ||
       subcommand === "multiplier-instance-types"
     ) {
-      try {
-        if (subcommand === "cooldown-instance-types") {
-          const type = parseInstanceType(
-            interaction.options.getString("name", true),
-            interaction.options.getString("keywords", true),
-            interaction.options.getString("maxattempts", true),
-            interaction.options.getString("emoji", true),
-          );
-          await updateGuildCooldownSettings(interaction.guildId, (settings) => {
-            settings.cooldownInstanceTypes =
-              settings.cooldownInstanceTypes.some(
-                ({ name }) => name === type.name,
-              )
-                ? settings.cooldownInstanceTypes.map((existing) =>
-                    existing.name === type.name ? type : existing,
-                  )
-                : [...settings.cooldownInstanceTypes, type];
-          });
-        } else {
-          const types = splitValues(value);
-          await updateGuildCooldownSettings(interaction.guildId, (settings) => {
-            const configuredNames = new Set(
-              settings.cooldownInstanceTypes.map(({ name }) => name),
-            );
-            if (types.some((type) => !configuredNames.has(type))) {
-              throw new Error(
-                "Every multiplier type must be a configured instance type.",
-              );
-            }
-            settings.multiplierInstanceTypes = types;
-          });
-        }
-      } catch (error) {
-        await interaction.reply({
-          content:
-            error instanceof Error
-              ? error.message
-              : "Invalid cooldown setting.",
-          flags: MessageFlags.Ephemeral,
-        });
-        return;
-      }
-      await interaction.reply({
-        content: "Guild cooldown setting updated.",
-        flags: MessageFlags.Ephemeral,
-      });
+      await handleSetCooldownOrMultiplier(
+        interaction,
+        guildId,
+        subcommand,
+        value,
+      );
       return;
     }
 
     if (subcommand === "role-restricted-channels") {
-      const [channels, roles] = await Promise.all([
-        interaction.guild.channels.fetch(),
-        interaction.guild.roles.fetch(),
-      ]);
-      const mappings: Record<string, string> = {};
-      const invalid: string[] = [];
-      for (const entry of splitValues(value)) {
-        const [channelValue, roleValue, ...extra] =
-          entry.split(/\s*(?:=|:|->)\s*/);
-        const channelId = channelValue
-          ? resolveChannel(channels, channelValue, ChannelType.GuildText)
-          : undefined;
-        const roleId = roleValue ? resolveRole(roles, roleValue) : undefined;
-        if (extra.length || !channelId || !roleId) invalid.push(entry);
-        else mappings[channelId] = roleId;
-      }
-      if (invalid.length) {
-        await interaction.reply({
-          content: `Could not resolve: ${invalid.join(", ")}`,
-          flags: MessageFlags.Ephemeral,
-        });
-        return;
-      }
-      await updateGuildScheduleSource(interaction.guildId, (source) => {
-        source.roleRestrictedChannels = mappings;
-      });
-    } else {
-      const type =
-        subcommand === "tracked-category"
-          ? ChannelType.GuildCategory
-          : ChannelType.GuildText;
-      const channels = await interaction.guild.channels.fetch();
-      const { ids, invalid } = resolveChannels(channels, value, type);
-      if (invalid.length) {
-        await interaction.reply({
-          content: `Could not resolve: ${invalid.join(", ")}`,
-          flags: MessageFlags.Ephemeral,
-        });
-        return;
-      }
-      await updateGuildScheduleSource(interaction.guildId, (source) => {
-        if (subcommand === "tracked-category") source.categoryIds = ids;
-        else if (subcommand === "excluded-channels")
-          source.excludedChannelIds = ids;
-        else source.scheduleTextChannelIds = ids;
-        updatedSource = source;
-      });
-
-      if (subcommand === "schedule-channels") {
-        const source = updatedSource;
-        if (!source) return;
-        const addedChannelIds = source.scheduleTextChannelIds.filter(
-          (channelId) => !previousScheduleTextChannelIds.includes(channelId),
-        );
-        if (addedChannelIds.length) {
-          await publishGuildScheduleAnnouncement(
-            interaction.guild,
-            addedChannelIds,
-            source.categoryIds,
-            (source.excludedChannelIds ?? []).filter(
-              (channelId) => !source.roleRestrictedChannels?.[channelId],
-            ),
-            source.roleRestrictedChannels,
-            getInteractionContext(interaction),
-          );
-        }
-      }
+      await handleSetRoleRestrictedChannels(interaction, guild, guildId, value);
+      return;
     }
 
-    await interaction.reply({
-      content: "Guild schedule setting updated.",
-      flags: MessageFlags.Ephemeral,
-    });
+    const previousScheduleTextChannelIds =
+      DISCORD_SETTINGS.guildScheduleSourceByGuild[guildId]
+        ?.scheduleTextChannelIds ?? [];
+    await handleSetChannelList(
+      interaction,
+      guild,
+      guildId,
+      subcommand,
+      value,
+      previousScheduleTextChannelIds,
+    );
   },
 };

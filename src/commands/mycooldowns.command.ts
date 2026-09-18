@@ -48,7 +48,12 @@ const getAccessibleGuildSchedules = async (
     instanceTypes: [],
     multiplierInstanceTypes: [],
   } satisfies GuildCooldownSchedules;
-  if (!source || source.categoryIds.length === 0) return empty;
+  if (
+    !source ||
+    (source.categoryIds.length === 0 &&
+      source.scheduleTextChannelIds.length === 0)
+  )
+    return empty;
 
   const schedules = await getActiveGuildSchedules(
     guild,

@@ -91,41 +91,23 @@ describe("/ping", () => {
     jest.clearAllMocks();
   });
 
-  it("pings both main roster and reserves when which=all", async () => {
-    getSignupSheet.mockResolvedValue(buildSheet());
-    const interaction = createInteraction("all");
+  it.each([
+    { which: "all", label: "All", mentions: "<@user-1> , <@user-2>" },
+    { which: "main", label: "Main Roster", mentions: "<@user-1>" },
+    { which: "reserves", label: "Reserves", mentions: "<@user-2>" },
+  ])(
+    "pings the expected roster when which=$which",
+    async ({ which, label, mentions }) => {
+      getSignupSheet.mockResolvedValue(buildSheet());
+      const interaction = createInteraction(which);
 
-    await pingCommand.execute(interaction as never);
+      await pingCommand.execute(interaction as never);
 
-    expect(interaction.reply).toHaveBeenCalledWith({
-      content:
-        "-# Ping from **Invoker** to **All**:\n\n**hello**\n\n-# <@user-1> , <@user-2>\n-# sent from __Test Run__ in __general__",
-    });
-  });
-
-  it("only pings the main roster when which=main", async () => {
-    getSignupSheet.mockResolvedValue(buildSheet());
-    const interaction = createInteraction("main");
-
-    await pingCommand.execute(interaction as never);
-
-    expect(interaction.reply).toHaveBeenCalledWith({
-      content:
-        "-# Ping from **Invoker** to **Main Roster**:\n\n**hello**\n\n-# <@user-1>\n-# sent from __Test Run__ in __general__",
-    });
-  });
-
-  it("only pings reserves when which=reserves", async () => {
-    getSignupSheet.mockResolvedValue(buildSheet());
-    const interaction = createInteraction("reserves");
-
-    await pingCommand.execute(interaction as never);
-
-    expect(interaction.reply).toHaveBeenCalledWith({
-      content:
-        "-# Ping from **Invoker** to **Reserves**:\n\n**hello**\n\n-# <@user-2>\n-# sent from __Test Run__ in __general__",
-    });
-  });
+      expect(interaction.reply).toHaveBeenCalledWith({
+        content: `-# Ping from **Invoker** to **${label}**:\n\n**hello**\n\n-# ${mentions}\n-# sent from __Test Run__ in __general__`,
+      });
+    },
+  );
 
   it("only pings TBC participants across slots and reserves when which=tbc", async () => {
     getSignupSheet.mockResolvedValue(

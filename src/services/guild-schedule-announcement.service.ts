@@ -6,7 +6,10 @@ import {
   type TextChannel,
 } from "discord.js";
 import { DISCORD_SETTINGS } from "../config/discord-settings.js";
-import { getActiveGuildSchedules } from "./guild-schedule.service.js";
+import {
+  getActiveGuildSchedules,
+  resolveCategoryDisplayNames,
+} from "./guild-schedule.service.js";
 import {
   buildGuildScheduleEmbed,
   buildScheduleActionRow,
@@ -34,7 +37,7 @@ export const getScheduleTitle = (message: Message): string | undefined =>
 
 /** Returns the scheduled Unix timestamp from a schedule response embed. */
 export const getScheduleTimestamp = (message: Message): string | undefined => {
-  const match = getEmbedText(message).match(scheduleTimestampPattern);
+  const match = scheduleTimestampPattern.exec(getEmbedText(message));
   return match?.[1];
 };
 
@@ -76,7 +79,8 @@ export const isGuildScheduleSourceMessage = (message: Message): boolean => {
   const source = DISCORD_SETTINGS.guildScheduleSourceByGuild[message.guildId];
   return Boolean(
     source?.scheduleTextChannelIds.length &&
-    source?.categoryIds.includes(message.channel.parentId ?? "") &&
+    (source.categoryIds.length === 0 ||
+      source.categoryIds.includes(message.channel.parentId ?? "")) &&
     !source.scheduleTextChannelIds.includes(message.channel.id) &&
     !isExcludedScheduleChannel(source, message.channel.id),
   );
@@ -209,13 +213,14 @@ const refreshGuildScheduleAnnouncement = async (
     undefined,
     source.roleRestrictedChannels,
   );
-  const categoryNames = source.categoryIds
-    .map((categoryId) => message.guild?.channels.cache.get(categoryId)?.name)
-    .filter((name): name is string => Boolean(name));
+  const categoryNames = resolveCategoryDisplayNames(
+    message.guild,
+    source.categoryIds,
+  );
   const embed = buildGuildScheduleEmbed(
     schedules,
     getMessageContext(message),
-    categoryNames.length > 0 ? categoryNames : ["configured categories"],
+    categoryNames,
     true,
     true,
     getScheduleTitle(message),
@@ -224,7 +229,7 @@ const refreshGuildScheduleAnnouncement = async (
 
   for (const channelId of source.scheduleTextChannelIds) {
     const channel = await message.guild.channels.fetch(channelId);
-    if (!channel || channel.type !== ChannelType.GuildText) continue;
+    if (channel?.type !== ChannelType.GuildText) continue;
 
     announcementChannels.push(channel);
   }
@@ -274,20 +279,18 @@ export const publishGuildScheduleAnnouncement = async (
     undefined,
     roleRestrictedChannels,
   );
-  const categoryNames = categoryIds
-    .map((categoryId) => guild.channels.cache.get(categoryId)?.name)
-    .filter((name): name is string => Boolean(name));
+  const categoryNames = resolveCategoryDisplayNames(guild, categoryIds);
   const embed = buildGuildScheduleEmbed(
     schedules,
     context,
-    categoryNames.length > 0 ? categoryNames : ["configured categories"],
+    categoryNames,
     true,
     true,
   );
 
   for (const channelId of scheduleTextChannelIds) {
     const channel = await guild.channels.fetch(channelId).catch(() => null);
-    if (!channel || channel.type !== ChannelType.GuildText) continue;
+    if (channel?.type !== ChannelType.GuildText) continue;
 
     await channel.send({
       embeds: [embed],
@@ -304,7 +307,7 @@ export const isIdentifierAnnounced = async (
 ): Promise<boolean> => {
   for (const channelId of scheduleTextChannelIds) {
     const channel = await guild.channels.fetch(channelId).catch(() => null);
-    if (!channel || channel.type !== ChannelType.GuildText) continue;
+    if (channel?.type !== ChannelType.GuildText) continue;
 
     const messages = await channel.messages.fetch({ limit: 1 });
     const latestText = messages
@@ -330,7 +333,7 @@ export const getAnnouncedTitleForChannel = async (
 ): Promise<string | undefined> => {
   for (const channelId of scheduleTextChannelIds) {
     const channel = await guild.channels.fetch(channelId).catch(() => null);
-    if (!channel || channel.type !== ChannelType.GuildText) continue;
+    if (channel?.type !== ChannelType.GuildText) continue;
 
     const messages = await channel.messages.fetch({ limit: 1 });
     const description = messages.first()?.embeds[0]?.description;
@@ -466,7 +469,8 @@ export const registerGuildScheduleAnnouncementListener = (
       DISCORD_SETTINGS.guildScheduleSourceByGuild[newChannel.guildId];
     if (
       !source?.scheduleTextChannelIds.length ||
-      !source.categoryIds.includes(newChannel.parentId ?? "") ||
+      (source.categoryIds.length > 0 &&
+        !source.categoryIds.includes(newChannel.parentId ?? "")) ||
       isExcludedScheduleChannel(source, newChannel.id)
     )
       return;

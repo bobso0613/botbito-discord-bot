@@ -100,13 +100,13 @@ const getMemberCharNote = (
   return match?.[1];
 };
 
-/** Checks whether a member can view and read a candidate schedule channel. */
+/** Checks whether a member can view and read a candidate schedule channel. An empty `categoryIds` tracks every category. */
 const isAccessibleScheduleChannel = (
   channel: TextChannel,
   member: GuildMember,
   categoryIds: string[],
 ): boolean =>
-  categoryIds.includes(channel.parentId ?? "") &&
+  (categoryIds.length === 0 || categoryIds.includes(channel.parentId ?? "")) &&
   channel
     .permissionsFor(member)
     ?.has([
@@ -302,4 +302,16 @@ export const getActiveGuildSchedules = async (
       const secondTime = Number(/\d+/.exec(second.timestamp)?.[0] ?? "0");
       return firstTime - secondTime;
     });
+};
+
+/** Resolves tracked category IDs to display names; an empty list means every category is tracked. */
+export const resolveCategoryDisplayNames = (
+  guild: Guild,
+  categoryIds: readonly string[],
+): string[] => {
+  if (categoryIds.length === 0) return ["all categories"];
+  const names = categoryIds
+    .map((categoryId) => guild.channels.cache.get(categoryId)?.name)
+    .filter((name): name is string => Boolean(name));
+  return names.length > 0 ? names : ["configured categories"];
 };

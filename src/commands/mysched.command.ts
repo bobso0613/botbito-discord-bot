@@ -46,7 +46,10 @@ const getAccessibleGuildSchedules = async (
   if (!source) {
     return [];
   }
-  if (source.categoryIds.length === 0) {
+  if (
+    source.categoryIds.length === 0 &&
+    source.scheduleTextChannelIds.length === 0
+  ) {
     return [];
   }
 

@@ -156,6 +156,21 @@ describe("guild setting command", () => {
     });
   });
 
+  it("sets tracked categories from a raw category ID", async () => {
+    updateGuildScheduleSource.mockImplementation(
+      async (_guildId, update: (value: typeof source) => void) =>
+        update(source),
+    );
+    const interaction = createInteraction(
+      "tracked-category",
+      "100000000000000001",
+    );
+
+    await guildSettingCommand.execute(interaction as never);
+
+    expect(source.categoryIds).toEqual(["100000000000000001"]);
+  });
+
   it("sets role-restricted channel mappings from channel and role mentions", async () => {
     updateGuildScheduleSource.mockImplementation(
       async (_guildId, update: (value: typeof source) => void) =>
@@ -385,6 +400,47 @@ describe("guild setting command", () => {
       content: expect.stringContaining("Tracked categories:"),
       flags: MessageFlags.Ephemeral,
     });
+  });
+
+  it("resolves tracked category IDs to names on show", async () => {
+    DISCORD_SETTINGS.guildScheduleSourceByGuild["guild-id"] = {
+      ...source,
+      categoryIds: ["100000000000000001"],
+    };
+    try {
+      const interaction = createInteraction("show", "", null);
+
+      await guildSettingCommand.execute(interaction as never);
+
+      expect(interaction.reply).toHaveBeenCalledWith({
+        content: expect.stringContaining("**Tracked categories:** run-signups"),
+        flags: MessageFlags.Ephemeral,
+      });
+    } finally {
+      delete DISCORD_SETTINGS.guildScheduleSourceByGuild["guild-id"];
+    }
+  });
+
+  it("shows all categories tracked when none are set but schedule channels are", async () => {
+    DISCORD_SETTINGS.guildScheduleSourceByGuild["guild-id"] = {
+      ...source,
+      categoryIds: [],
+      scheduleTextChannelIds: ["100000000000000002"],
+    };
+    try {
+      const interaction = createInteraction("show", "", null);
+
+      await guildSettingCommand.execute(interaction as never);
+
+      expect(interaction.reply).toHaveBeenCalledWith({
+        content: expect.stringContaining(
+          "**Tracked categories:** All categories",
+        ),
+        flags: MessageFlags.Ephemeral,
+      });
+    } finally {
+      delete DISCORD_SETTINGS.guildScheduleSourceByGuild["guild-id"];
+    }
   });
 
   it("clears multiplier instance types", async () => {
