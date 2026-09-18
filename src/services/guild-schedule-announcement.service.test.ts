@@ -40,6 +40,7 @@ const {
   isGuildScheduleTimestampChanged,
   isIdentifierAnnounced,
   isTitleChangeConfirmed,
+  registerGuildScheduleAnnouncementListener,
 } = await import("./guild-schedule-announcement.service.js");
 
 const createMessage = ({
@@ -76,6 +77,52 @@ const createMessage = ({
   }) as unknown as Message;
 
 describe("isGuildScheduleChangeMessage", () => {
+  it("serializes concurrent schedule message events for the same guild", async () => {
+    let resolveFirstFetch:
+      | ((messages: Map<string, Message>) => void)
+      | undefined;
+    const firstFetch = new Promise<Map<string, Message>>((resolve) => {
+      resolveFirstFetch = resolve;
+    });
+    const fetch = jest
+      .fn<() => Promise<Map<string, Message>>>()
+      .mockReturnValueOnce(firstFetch)
+      .mockResolvedValueOnce(new Map());
+    const message = {
+      ...createMessage(),
+      id: "source-message-id",
+      guild: null,
+      channel: {
+        isTextBased: () => true,
+        parentId: categoryId,
+        id: "source-channel-id",
+        messages: { fetch },
+      },
+    } as unknown as Message;
+    const listeners = new Map<string, (...args: Message[]) => Promise<void>>();
+    const client = {
+      on: jest.fn(
+        (event: string, listener: (...args: Message[]) => Promise<void>) => {
+          listeners.set(event, listener);
+        },
+      ),
+    };
+
+    registerGuildScheduleAnnouncementListener(client as never);
+    const handleMessage = listeners.get("messageCreate");
+    expect(handleMessage).toBeDefined();
+
+    const firstEvent = handleMessage!(message);
+    const secondEvent = handleMessage!(message);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    resolveFirstFetch!(new Map());
+    await Promise.all([firstEvent, secondEvent]);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
   it("accepts schedule responses from the configured bot in a source category", () => {
     expect(isGuildScheduleMessage(createMessage())).toBe(true);
   });

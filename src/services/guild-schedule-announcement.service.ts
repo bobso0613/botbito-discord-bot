@@ -433,6 +433,27 @@ const getNewestGuildScheduleMessage = async (
     )[0];
 };
 
+const pendingGuildScheduleRefreshes = new Map<string, Promise<void>>();
+
+const enqueueGuildScheduleRefresh = async (
+  guildId: string,
+  refresh: () => Promise<void>,
+): Promise<void> => {
+  const previousRefresh = pendingGuildScheduleRefreshes.get(guildId);
+  const currentRefresh = (previousRefresh ?? Promise.resolve())
+    .catch(() => undefined)
+    .then(refresh);
+  pendingGuildScheduleRefreshes.set(guildId, currentRefresh);
+
+  try {
+    await currentRefresh;
+  } finally {
+    if (pendingGuildScheduleRefreshes.get(guildId) === currentRefresh) {
+      pendingGuildScheduleRefreshes.delete(guildId);
+    }
+  }
+};
+
 /**
  * Registers automatic public schedule announcements for schedule changes.
  * Refreshes announcements on scheduled-time changes, run title changes, and
@@ -446,17 +467,21 @@ export const registerGuildScheduleAnnouncementListener = (
     message: Message,
     previousMessage?: Message,
   ): Promise<void> => {
-    const trigger = await getGuildScheduleRefreshTrigger(
-      message,
-      previousMessage,
-    );
-    if (!trigger) return;
+    if (!message.guildId) return;
 
-    try {
-      await refreshGuildScheduleAnnouncement(message, trigger);
-    } catch (error) {
-      logger.error("Failed to refresh guild schedule announcement:", error);
-    }
+    await enqueueGuildScheduleRefresh(message.guildId, async () => {
+      try {
+        const trigger = await getGuildScheduleRefreshTrigger(
+          message,
+          previousMessage,
+        );
+        if (!trigger) return;
+
+        await refreshGuildScheduleAnnouncement(message, trigger);
+      } catch (error) {
+        logger.error("Failed to refresh guild schedule announcement:", error);
+      }
+    });
   };
 
   const handleChannelRename = async (
@@ -465,34 +490,36 @@ export const registerGuildScheduleAnnouncementListener = (
   ): Promise<void> => {
     if (oldChannel.name === newChannel.name || !newChannel.guildId) return;
 
-    const source =
-      DISCORD_SETTINGS.guildScheduleSourceByGuild[newChannel.guildId];
-    if (
-      !source?.scheduleTextChannelIds.length ||
-      (source.categoryIds.length > 0 &&
-        !source.categoryIds.includes(newChannel.parentId ?? "")) ||
-      isExcludedScheduleChannel(source, newChannel.id)
-    )
-      return;
+    await enqueueGuildScheduleRefresh(newChannel.guildId, async () => {
+      try {
+        const source =
+          DISCORD_SETTINGS.guildScheduleSourceByGuild[newChannel.guildId];
+        if (
+          !source?.scheduleTextChannelIds.length ||
+          (source.categoryIds.length > 0 &&
+            !source.categoryIds.includes(newChannel.parentId ?? "")) ||
+          isExcludedScheduleChannel(source, newChannel.id)
+        )
+          return;
 
-    const wasAnnounced = await isIdentifierAnnounced(
-      newChannel.guild,
-      source.scheduleTextChannelIds,
-      oldChannel.name,
-    );
-    if (!wasAnnounced) return;
+        const wasAnnounced = await isIdentifierAnnounced(
+          newChannel.guild,
+          source.scheduleTextChannelIds,
+          oldChannel.name,
+        );
+        if (!wasAnnounced) return;
 
-    const scheduleMessage = await getNewestGuildScheduleMessage(newChannel);
-    if (!scheduleMessage) return;
+        const scheduleMessage = await getNewestGuildScheduleMessage(newChannel);
+        if (!scheduleMessage) return;
 
-    try {
-      await refreshGuildScheduleAnnouncement(scheduleMessage, {
-        type: "channel-rename",
-        previousChannelName: oldChannel.name,
-      });
-    } catch (error) {
-      logger.error("Failed to refresh guild schedule announcement:", error);
-    }
+        await refreshGuildScheduleAnnouncement(scheduleMessage, {
+          type: "channel-rename",
+          previousChannelName: oldChannel.name,
+        });
+      } catch (error) {
+        logger.error("Failed to refresh guild schedule announcement:", error);
+      }
+    });
   };
 
   client.on("messageCreate", handleMessage);
