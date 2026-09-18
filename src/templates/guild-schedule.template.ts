@@ -15,7 +15,8 @@ import { getEmbedFooter } from "../utils/payout-embed.js";
 
 const getScheduleStatusIndicator = (schedule: GuildSchedule): string => {
   if (schedule.isReserve) return " - 🪑";
-  return schedule.isSignedUp ? " - 📝 " : "";
+  if (schedule.isSignedUp) return " - 📝 ";
+  return "";
 };
 
 const getScheduleStatusWithNote = (schedule: GuildSchedule): string => {
@@ -57,10 +58,13 @@ export const buildScheduleActionRow = (): ActionRowBuilder<ButtonBuilder> =>
 const getGuildHeading = (
   schedule: GuildSchedule,
   { isLarge = false }: { isLarge?: boolean } = {},
-): string | undefined =>
-  schedule.guildName
-    ? `${isLarge ? "### " : ""}${schedule.guildIcon ? `${schedule.guildIcon} - ` : ""}${schedule.guildName}`
-    : undefined;
+): string | undefined => {
+  if (!schedule.guildName) return undefined;
+
+  const headingPrefix = isLarge ? "### " : "";
+  const guildIcon = schedule.guildIcon ? `${schedule.guildIcon} - ` : "";
+  return `${headingPrefix}${guildIcon}${schedule.guildName}`;
+};
 
 /**
  * Formats a single schedule row with title, timestamp, channel, and status.
@@ -92,14 +96,19 @@ const formatGuildSchedule = (
     ? `**${schedule.title} (Private run)**`
     : `**[${schedule.title}](${schedule.channelUrl})**`;
   const scheduleTitleLine = `${getScheduleTitleIcon(schedule)} ${scheduleTitle}`;
+  let channelLine: string | undefined;
+  if (!isPrivateRun) {
+    const statusText = showPersonalDetails
+      ? getScheduleStatusWithNote(schedule)
+      : "";
+    channelLine = `↪ [#${schedule.channelName}](${schedule.channelUrl})${statusText}`;
+  }
 
   return [
     guildHeading ?? scheduleTitleLine,
     guildHeading ? scheduleTitleLine : undefined,
     `${schedule.timestamp} (${relativeTimestamp})`,
-    !isPrivateRun
-      ? `↪ [#${schedule.channelName}](${schedule.channelUrl})${showPersonalDetails ? getScheduleStatusWithNote(schedule) : ""}`
-      : undefined,
+    channelLine,
   ]
     .filter((line): line is string => Boolean(line))
     .join("\n");
@@ -176,17 +185,19 @@ const formatMySchedules = (
   schedules: GuildSchedule[],
   grouping: MyScheduleGrouping,
   isPublic = false,
-): string =>
-  [
-    personalScheduleLegend,
-    grouping === "guild"
-      ? formatGuildGroupedSchedules(schedules, isPublic)
-      : grouping === "instance"
-        ? formatInstanceGroupedSchedules(schedules, isPublic)
-        : schedules
-            .map((schedule) => formatGuildSchedule(schedule, { isPublic }))
-            .join("\n\n"),
-  ].join("\n\n");
+): string => {
+  let groupedScheduleText = schedules
+    .map((schedule) => formatGuildSchedule(schedule, { isPublic }))
+    .join("\n\n");
+
+  if (grouping === "guild") {
+    groupedScheduleText = formatGuildGroupedSchedules(schedules, isPublic);
+  } else if (grouping === "instance") {
+    groupedScheduleText = formatInstanceGroupedSchedules(schedules, isPublic);
+  }
+
+  return [personalScheduleLegend, groupedScheduleText].join("\n\n");
+};
 
 const formatScheduleGroup = (
   heading: string,
@@ -261,25 +272,25 @@ export const buildGuildScheduleEmbed = (
     categoryNames.length === 1
       ? `Only showing signup channels within __${categoryNames[0]}__ category.`
       : `Only showing signup channels within __${categoryNames.join("__, __")}__ categories.`;
+  let scheduleDescription = "No active schedules found.";
+  if (schedules.length) {
+    scheduleDescription = forAnnouncementOnly
+      ? formatAnnouncementSchedules(schedules, isPublic)
+      : formatGuildSchedules(schedules, isPublic);
+  }
+  const summaryText =
+    forAnnouncementOnly && updatedScheduleTitle
+      ? `schedule automatically updated because of changes in:\n__${updatedScheduleTitle}__`
+      : `command invoked by <@${context.userId}>`;
   return new EmbedBuilder()
     .setTitle(`Upcoming Runs of ${context.guildName}`)
     .setColor("#d1b500")
     .setThumbnail(context.guildIconUrl)
 
-    .setDescription(
-      schedules.length
-        ? forAnnouncementOnly
-          ? formatAnnouncementSchedules(schedules, isPublic)
-          : formatGuildSchedules(schedules, isPublic)
-        : "No active schedules found.",
-    )
+    .setDescription(scheduleDescription)
     .addFields({
       name: "\u200b",
-      value: `${categoryText}\n${
-        forAnnouncementOnly && updatedScheduleTitle
-          ? `schedule automatically updated because of changes in:\n\_\_${updatedScheduleTitle}\_\_`
-          : `command invoked by <@${context.userId}>`
-      }`,
+      value: `${categoryText}\n${summaryText}`,
     })
     .setTimestamp()
     .setFooter(footer);

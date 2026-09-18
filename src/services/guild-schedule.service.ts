@@ -4,6 +4,7 @@ import {
   type Embed,
   type Guild,
   type GuildMember,
+  type Message,
   type TextChannel,
 } from "discord.js";
 import { DISCORD_SETTINGS } from "../config/discord-settings.js";
@@ -17,7 +18,7 @@ const clearedScheduleTimePattern = /Your\s+Time:\s*TBD\b/i;
 
 /** Escapes a value for literal use in a regular expression. */
 const escapeRegularExpression = (value: string): string =>
-  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  value.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 
 /** Combines all searchable embed text, including fields. */
 const getEmbedText = (embed: Embed): string =>
@@ -34,7 +35,7 @@ const getActiveScheduleTimestamp = (
   timeWindow?: GuildScheduleTimeWindow,
   includePast = false,
 ): string | undefined => {
-  const match = embedText.match(scheduleTimestampPattern);
+  const match = scheduleTimestampPattern.exec(embedText);
   if (!match) return undefined;
 
   const [, timestamp, unixSeconds] = match;
@@ -56,7 +57,7 @@ const getActiveScheduleTimestamp = (
 /** Checks whether a roster line has a name entry (bold or plain) matching the pattern after a dash/comma. */
 const isNameOnLine = (line: string, displayNamePattern: string): boolean => {
   const pattern = new RegExp(
-    `[-,]\\s*\\*{0,2}${displayNamePattern}\\*{0,2}(?=\\s|,|\\(|$)`,
+    String.raw`[-,]\s*\*{0,2}${displayNamePattern}\*{0,2}(?=\s|,|\(|$)`,
     "i",
   );
   return pattern.test(line);
@@ -92,10 +93,10 @@ const getMemberCharNote = (
   displayNamePattern: string,
 ): string | undefined => {
   const charNotePattern = new RegExp(
-    `\\*{0,2}${displayNamePattern}\\*{0,2}\\s*\\(([^)]+)\\)`,
+    String.raw`\*{0,2}${displayNamePattern}\*{0,2}\s*\(([^)]+)\)`,
     "i",
   );
-  const match = embedText.match(charNotePattern);
+  const match = charNotePattern.exec(embedText);
   return match?.[1];
 };
 
@@ -114,11 +115,61 @@ const isAccessibleScheduleChannel = (
     ]) === true;
 
 /** Returns whether a Discord timestamp (`<t:unix:F>`) is already in the past. */
-const isPastTimestamp = (timestamp: string): boolean =>
-  Number(timestamp.match(/\d+/)?.[0]) * 1_000 < Date.now();
+const isPastTimestamp = (timestamp: string): boolean => {
+  const match = /\d+/.exec(timestamp);
+  return Number(match?.[0] ?? "0") * 1_000 < Date.now();
+};
 
 const SCHEDULE_MESSAGE_PAGE_LIMIT = 100;
 const MAX_SCHEDULE_MESSAGE_PAGES = 5;
+
+const getScheduleFromMessage = (
+  message: Message,
+  channel: TextChannel,
+  displayNamePattern: string,
+  timeWindow: GuildScheduleTimeWindow | undefined,
+  isRoleRestricted: boolean | undefined,
+  includePast: boolean,
+  clearedBotIds: Set<string>,
+): GuildSchedule | undefined => {
+  if (clearedBotIds.has(message.author.id) && !timeWindow) return undefined;
+  const schedule = message.embeds.flatMap((embed) => {
+    const embedText = getEmbedText(embed);
+    const timestamp = getActiveScheduleTimestamp(
+      embedText,
+      timeWindow,
+      includePast,
+    );
+    const isReserve = isMemberReserve(embedText, displayNamePattern);
+    return timestamp && embed.title
+      ? [
+          {
+            title: embed.title,
+            timestamp,
+            channelName: channel.name,
+            channelUrl: channel.url,
+            isSignedUp:
+              !isReserve && isMemberSignedUp(embedText, displayNamePattern),
+            isReserve,
+            charNote: getMemberCharNote(embedText, displayNamePattern),
+            isRoleRestricted,
+          },
+        ]
+      : [];
+  })[0];
+  if (
+    schedule &&
+    (!clearedBotIds.has(message.author.id) ||
+      isPastTimestamp(schedule.timestamp))
+  ) {
+    return schedule;
+  }
+  const embedText = message.embeds.map(getEmbedText).join("\n");
+  if (clearedScheduleTimePattern.test(embedText)) {
+    clearedBotIds.add(message.author.id);
+  }
+  return undefined;
+};
 
 /**
  * Gets the newest active schedule within the requested time window from the configured
@@ -164,45 +215,22 @@ const getNewestChannelSchedule = async (
       );
 
     for (const message of scheduleMessages) {
-      const isClearedBot = clearedBotIds.has(message.author.id);
-      if (isClearedBot && !timeWindow) continue;
-
-      const schedule = message.embeds.flatMap((embed) => {
-        const embedText = getEmbedText(embed);
-        const timestamp = getActiveScheduleTimestamp(
-          embedText,
-          timeWindow,
-          includePast,
-        );
-        const isReserve = isMemberReserve(embedText, displayNamePattern);
-        return timestamp && embed.title
-          ? [
-              {
-                title: embed.title,
-                timestamp,
-                channelName: channel.name,
-                channelUrl: channel.url,
-                isSignedUp:
-                  !isReserve && isMemberSignedUp(embedText, displayNamePattern),
-                isReserve,
-                charNote: getMemberCharNote(embedText, displayNamePattern),
-                isRoleRestricted,
-              },
-            ]
-          : [];
-      })[0];
-      if (schedule && (!isClearedBot || isPastTimestamp(schedule.timestamp))) {
-        return schedule;
-      }
-
-      const embedText = message.embeds.map(getEmbedText).join("\n");
-      if (clearedScheduleTimePattern.test(embedText)) {
-        clearedBotIds.add(message.author.id);
-      }
+      const schedule = getScheduleFromMessage(
+        message,
+        channel,
+        displayNamePattern,
+        timeWindow,
+        isRoleRestricted,
+        includePast,
+        clearedBotIds,
+      );
+      if (schedule) return schedule;
     }
 
-    const oldestMessage = pageMessages.reduce((oldest, current) =>
-      current.createdTimestamp < oldest.createdTimestamp ? current : oldest,
+    const oldestMessage = pageMessages.reduce(
+      (oldest, current) =>
+        current.createdTimestamp < oldest.createdTimestamp ? current : oldest,
+      pageMessages[0]!,
     );
     const hasMorePages = pageMessages.length === SCHEDULE_MESSAGE_PAGE_LIMIT;
     if (
@@ -269,9 +297,9 @@ export const getActiveGuildSchedules = async (
 
   return schedules
     .filter((schedule): schedule is GuildSchedule => Boolean(schedule))
-    .sort(
-      (first, second) =>
-        Number(first.timestamp.match(/\d+/)?.[0]) -
-        Number(second.timestamp.match(/\d+/)?.[0]),
-    );
+    .sort((first, second) => {
+      const firstTime = Number(/\d+/.exec(first.timestamp)?.[0] ?? "0");
+      const secondTime = Number(/\d+/.exec(second.timestamp)?.[0] ?? "0");
+      return firstTime - secondTime;
+    });
 };

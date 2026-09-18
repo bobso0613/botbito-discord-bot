@@ -302,7 +302,37 @@ export type NoticeAction =
   | "charnote"
   | "uncharnote";
 
-/** Posts one public log message per affected user to the channel: a plain display-name line for the invoker's own action, or an @mention line when someone else was affected. */
+const formatActionNotice = (
+  action: NoticeAction,
+  isSelf: boolean,
+  target: string,
+  labelText: string,
+  invokerMention: string,
+  runTitle: string,
+  detail?: string,
+): string => {
+  const selfText = {
+    added: `${target} added as **${labelText}**.`,
+    removed: `${target} removed from **${labelText}**.`,
+    swapped: `${target} swapped to **${labelText}**.`,
+    tbc: `${target} marked as **TBC**.`,
+    untbc: `${target} unmarked as **TBC**.`,
+    charnote: `${target} put **${detail}** in **${labelText}**.`,
+    uncharnote: `${target} removed the char note from **${labelText}**.`,
+  } satisfies Record<NoticeAction, string>;
+  const otherText = {
+    added: `${target}, you got added by ${invokerMention} as **${labelText}** on ${runTitle}.`,
+    removed: `${target}, you got removed by ${invokerMention} from **${labelText}** on ${runTitle}.`,
+    swapped: `${target}, you got swapped by ${invokerMention} to **${labelText}** on ${runTitle}.`,
+    tbc: `${target}, you got marked as **TBC** by ${invokerMention} on ${runTitle}.`,
+    untbc: `${target}, you got unmarked as **TBC** by ${invokerMention} on ${runTitle}.`,
+    charnote: `${target}, ${invokerMention} put **${detail}** in **${labelText}** for you on ${runTitle}.`,
+    uncharnote: `${target}, ${invokerMention} removed your char note from **${labelText}** on ${runTitle}.`,
+  } satisfies Record<NoticeAction, string>;
+  return (isSelf ? selfText : otherText)[action];
+};
+
+/** Posts one public log message per affected user: a plain display-name line for the invoker's own action, or a Discord mention when someone else was affected. */
 export const sendActionNotices = async (
   interaction: SignupInteraction,
   action: NoticeAction,
@@ -318,45 +348,17 @@ export const sendActionNotices = async (
     const target = isSelf
       ? `**${interaction.user.displayName}**`
       : `<@${notice.userId}>`;
-    let content: string;
-    switch (action) {
-      case "added":
-        content = isSelf
-          ? `${target} added as **${labelText}**.`
-          : `${target}, you got added by ${invokerMention} as **${labelText}** on ${runTitle}.`;
-        break;
-      case "removed":
-        content = isSelf
-          ? `${target} removed from **${labelText}**.`
-          : `${target}, you got removed by ${invokerMention} from **${labelText}** on ${runTitle}.`;
-        break;
-      case "swapped":
-        content = isSelf
-          ? `${target} swapped to **${labelText}**.`
-          : `${target}, you got swapped by ${invokerMention} to **${labelText}** on ${runTitle}.`;
-        break;
-      case "tbc":
-        content = isSelf
-          ? `${target} marked as **TBC**.`
-          : `${target}, you got marked as **TBC** by ${invokerMention} on ${runTitle}.`;
-        break;
-      case "untbc":
-        content = isSelf
-          ? `${target} unmarked as **TBC**.`
-          : `${target}, you got unmarked as **TBC** by ${invokerMention} on ${runTitle}.`;
-        break;
-      case "charnote":
-        content = isSelf
-          ? `${target} put **${detail}** in **${labelText}**.`
-          : `${target}, ${invokerMention} put **${detail}** in **${labelText}** for you on ${runTitle}.`;
-        break;
-      case "uncharnote":
-        content = isSelf
-          ? `${target} removed the char note from **${labelText}**.`
-          : `${target}, ${invokerMention} removed your char note from **${labelText}** on ${runTitle}.`;
-        break;
-    }
-    await interaction.followUp({ content });
+    await interaction.followUp({
+      content: formatActionNotice(
+        action,
+        isSelf,
+        target,
+        labelText,
+        invokerMention,
+        runTitle,
+        detail,
+      ),
+    });
   }
 };
 
@@ -396,202 +398,752 @@ export const resolveTargetUser = async (
           .catch(() => null)
       : null);
 
-  if (guild && typeof guild.members?.fetch === "function") {
-    const members = await guild.members
-      .fetch({ query: queryName, limit: 100 })
-      .catch(() => null);
+  if (!guild || typeof guild.members?.fetch !== "function") return null;
+  const members = await guild.members
+    .fetch({ query: queryName, limit: 100 })
+    .catch(() => null);
+  if (!members || members.size === 0) return null;
+  const memberList = Array.from(members.values());
+  const normalizedQuery = queryName.toLowerCase();
+  const exactMatch = memberList.find((member) =>
+    [
+      member.displayName,
+      member.user.displayName,
+      member.user.globalName,
+      member.user.username,
+      member.nickname,
+    ]
+      .filter((val): val is string => Boolean(val))
+      .some((val) => val.toLowerCase() === normalizedQuery),
+  );
+  return (
+    exactMatch?.user ?? (memberList.length === 1 ? memberList[0]!.user : null)
+  );
+};
 
-    if (members && members.size > 0) {
-      const memberList = Array.from(members.values());
-      const normalizedQuery = queryName.toLowerCase();
-      const exactMatch = memberList.find((member) =>
-        [
-          member.displayName,
-          member.user.displayName,
-          member.user.globalName,
-          member.user.username,
-          member.nickname,
-        ]
-          .filter((val): val is string => Boolean(val))
-          .some((val) => val.toLowerCase() === normalizedQuery),
-      );
-      if (exactMatch) return exactMatch.user;
+const parseAddInput = (
+  rawInput: string,
+): { positionInput: string; mentionText: string } => {
+  const trimmed = rawInput.trim();
+  const lower = trimmed.toLowerCase();
 
-      if (memberList.length === 1) {
-        return memberList[0]!.user;
-      }
-    }
+  if (lower.startsWith("reserve")) {
+    return {
+      positionInput: "reserve",
+      mentionText: trimmed.slice("reserve".length).trim(),
+    };
   }
 
+  if (lower.startsWith("random")) {
+    return {
+      positionInput: "random",
+      mentionText: trimmed.slice("random".length).trim(),
+    };
+  }
+
+  const numberMatch = /^\d(?:[\d\s,]*\d)?/.exec(trimmed);
+  if (numberMatch?.[0]) {
+    return {
+      positionInput: numberMatch[0].trim(),
+      mentionText: trimmed.slice(numberMatch[0].length).trim(),
+    };
+  }
+
+  const [first, ...rest] = trimmed.split(/\s+/);
+  return {
+    positionInput: first?.toLowerCase() ?? "",
+    mentionText: rest.join(" ").trim(),
+  };
+};
+
+const resolveAddSlotNumbers = (
+  positionInput: string,
+  sheet: SignupSheet,
+  interaction: SignupInteraction,
+): number[] | null => {
+  const replyError = (message: string): null => {
+    if (interaction.deferred || interaction.replied) {
+      void interaction.editReply(message);
+    } else {
+      void interaction.reply({
+        content: message,
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+    return null;
+  };
+  if (positionInput === "random") {
+    const openSlot = pickRandomOpenSlot(sheet);
+    if (!openSlot) return replyError("There are no open slots available.");
+    return [openSlot.number];
+  }
+
+  const parts = positionInput
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const invalid: string[] = [];
+  const numbers: number[] = [];
+
+  for (const part of parts) {
+    const number = Number(part);
+    if (
+      !Number.isInteger(number) ||
+      !sheet.slots.some((slot) => slot.number === number)
+    ) {
+      invalid.push(part);
+      continue;
+    }
+    numbers.push(number);
+  }
+
+  if (invalid.length || !numbers.length) {
+    const msg = invalid.length
+      ? `These slot numbers do not exist: ${invalid.join(", ")}.`
+      : "Provide at least one valid slot number.";
+    return replyError(msg);
+  }
+
+  return [...new Set(numbers)];
+};
+
+const parseRemovePositions = (
+  input: string,
+  slotCount: number,
+  reserveCount: number,
+): { numbers: Set<number>; reserveIndexes: Set<number>; invalid: string[] } => {
+  const parts = input
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const invalid: string[] = [];
+  const numbers = new Set<number>();
+  const reserveIndexes = new Set<number>();
+
+  for (const part of parts) {
+    const num = Number(part);
+    if (!Number.isInteger(num)) {
+      invalid.push(part);
+      continue;
+    }
+
+    if (num > 0 && num <= slotCount) {
+      numbers.add(num);
+      continue;
+    }
+
+    const reserveIndex = num - slotCount - 1;
+    if (
+      Number.isInteger(reserveIndex) &&
+      reserveIndex >= 0 &&
+      reserveIndex < reserveCount
+    ) {
+      reserveIndexes.add(reserveIndex);
+      continue;
+    }
+
+    invalid.push(part);
+  }
+
+  return { numbers, reserveIndexes, invalid };
+};
+
+type PositionSelection = {
+  slotNumbers: Set<number>;
+  reserveIndexes: Set<number>;
+  invalid: string[];
+};
+
+const parsePositionSelection = (
+  input: string,
+  sheet: SignupSheet,
+): PositionSelection => {
+  const slotNumbers = new Set<number>();
+  const reserveIndexes = new Set<number>();
+  const invalid: string[] = [];
+  for (const part of input
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)) {
+    const number = Number(part);
+    if (!Number.isInteger(number)) {
+      invalid.push(part);
+      continue;
+    }
+    if (sheet.slots.some((slot) => slot.number === number)) {
+      slotNumbers.add(number);
+      continue;
+    }
+    const reserveIndex = number - sheet.slots.length - 1;
+    if (reserveIndex >= 0 && reserveIndex < sheet.reserves.length) {
+      reserveIndexes.add(reserveIndex);
+      continue;
+    }
+    invalid.push(part);
+  }
+  return { slotNumbers, reserveIndexes, invalid };
+};
+
+const selectionError = ({
+  slotNumbers,
+  reserveIndexes,
+  invalid,
+}: PositionSelection): string | null => {
+  if (invalid.length)
+    return `These slot numbers do not exist: ${invalid.join(", ")}.`;
+  return slotNumbers.size || reserveIndexes.size
+    ? null
+    : "Provide at least one valid slot number.";
+};
+
+const clearUserCharNotes = (
+  sheet: SignupSheet,
+  userId: string,
+  removedEntries: { userId: string; label: string }[],
+): string | null => {
+  const signedUp =
+    sheet.slots.some((slot) => slot.signupUserId === userId) ||
+    sheet.reserves.some((reserve) => reserve.userId === userId);
+  if (!signedUp) return "You are not signed up or a reserve.";
+  for (const slot of sheet.slots) {
+    if (slot.signupUserId === userId) {
+      if (slot.charNote)
+        removedEntries.push({ userId, label: formatSlotLabel(slot) });
+      slot.charNote = null;
+    }
+  }
+  for (const reserve of sheet.reserves) {
+    if (reserve.userId === userId) {
+      if (reserve.charNote) removedEntries.push({ userId, label: "Reserve" });
+      reserve.charNote = null;
+    }
+  }
   return null;
 };
 
-/** Signs up a user for one or more slots, random open slot, or reserves. */
-export const executeAdd = async (
-  interaction: SignupInteraction,
-  rawInput: string,
-): Promise<void> => {
-  const sheet = await getSheet(interaction);
-  if (!sheet) {
-    await replyMissing(interaction);
-    return;
-  }
-  const trimmed = rawInput.trim();
-  const lower = trimmed.toLowerCase();
-  let positionInput = "";
-  let mentionText = "";
-
-  if (lower.startsWith("reserve")) {
-    positionInput = "reserve";
-    mentionText = trimmed.slice("reserve".length).trim();
-  } else if (lower.startsWith("random")) {
-    positionInput = "random";
-    mentionText = trimmed.slice("random".length).trim();
-  } else {
-    const numMatch = /^([\d\s,]+)(.*)$/.exec(trimmed);
-    if (numMatch && numMatch[1].trim()) {
-      positionInput = numMatch[1].trim();
-      mentionText = numMatch[2].trim();
-    } else {
-      const [first, ...rest] = trimmed.split(/\s+/);
-      positionInput = first?.toLowerCase() ?? "";
-      mentionText = rest.join(" ").trim();
-    }
-  }
-
-  if (!positionInput) {
-    const msg =
-      "Provide a slot number, `random`, comma-separated slot numbers, or `reserve` to add a user.";
-    if (interaction.deferred || interaction.replied) {
-      await interaction.editReply(msg);
-    } else {
-      await interaction.reply({ content: msg, flags: MessageFlags.Ephemeral });
-    }
-    return;
-  }
-
-  let targetUser = interaction.user;
-  if (mentionText) {
-    const resolvedUser = await resolveTargetUser(interaction, mentionText);
-    if (!resolvedUser) {
-      const msg =
-        "Provide a valid user mention after the slot, e.g. `2 @user`.";
-      if (interaction.deferred || interaction.replied) {
-        await interaction.editReply(msg);
-      } else {
-        await interaction.reply({
-          content: msg,
-          flags: MessageFlags.Ephemeral,
-        });
-      }
-      return;
-    }
-    targetUser = resolvedUser;
-  }
-  if (positionInput === "reserve") {
-    const sheetAfterUpdate = await update(interaction, (s) => {
-      if (s.reserves.some((r) => r.userId === targetUser.id))
-        return "That user is already a reserve.";
-      s.reserves.push({
-        userId: targetUser.id,
-        displayName: targetUser.displayName,
-        charNote: null,
-        isTbc: false,
+const clearSelectedCharNotes = (
+  sheet: SignupSheet,
+  selection: PositionSelection,
+  removedEntries: { userId: string; label: string }[],
+): void => {
+  for (const slot of sheet.slots) {
+    if (!selection.slotNumbers.has(slot.number)) continue;
+    if (slot.signupUserId && slot.charNote) {
+      removedEntries.push({
+        userId: slot.signupUserId,
+        label: formatSlotLabel(slot),
       });
-      return null;
+    }
+    slot.charNote = null;
+  }
+  for (const index of selection.reserveIndexes) {
+    const reserve = sheet.reserves[index];
+    if (!reserve) continue;
+    if (reserve.charNote)
+      removedEntries.push({ userId: reserve.userId, label: "Reserve" });
+    reserve.charNote = null;
+  }
+};
+
+const toggleSelectedTbc = (
+  sheet: SignupSheet,
+  selection: PositionSelection,
+  recordToggle: (userId: string, label: string, isTbc: boolean) => void,
+): void => {
+  for (const slot of sheet.slots) {
+    if (!selection.slotNumbers.has(slot.number)) continue;
+    slot.isTbc = !slot.isTbc;
+    if (slot.signupUserId)
+      recordToggle(slot.signupUserId, formatSlotLabel(slot), slot.isTbc);
+  }
+  for (const index of selection.reserveIndexes) {
+    const reserve = sheet.reserves[index];
+    if (!reserve) continue;
+    reserve.isTbc = !reserve.isTbc;
+    recordToggle(reserve.userId, "Reserve", reserve.isTbc);
+  }
+};
+
+const clearSelectedTbc = (
+  sheet: SignupSheet,
+  selection: PositionSelection,
+): void => {
+  for (const slot of sheet.slots) {
+    if (selection.slotNumbers.has(slot.number)) slot.isTbc = false;
+  }
+  for (const index of selection.reserveIndexes) {
+    const reserve = sheet.reserves[index];
+    if (reserve) reserve.isTbc = false;
+  }
+};
+
+const applySelfRemoveFromSheet = (
+  sheet: SignupSheet,
+  userId: string,
+  removedEntries: { userId: string; label: string }[],
+): string | null => {
+  let removedAny = false;
+  for (const slot of sheet.slots) {
+    if (slot.signupUserId !== userId) continue;
+    removedEntries.push({
+      userId: slot.signupUserId,
+      label: formatSlotLabel(slot),
     });
-    if (sheetAfterUpdate)
-      await sendActionNotices(
-        interaction,
-        "added",
-        [{ userId: targetUser.id, labels: ["Reserve"] }],
-        sheetAfterUpdate.title,
-      );
-    return;
+    slot.signupUserId = null;
+    slot.signupDisplayName = null;
+    slot.charNote = null;
+    slot.isTbc = false;
+    removedAny = true;
   }
-  let slotNumbers: number[];
-  if (positionInput === "random") {
-    const openSlot = pickRandomOpenSlot(sheet);
-    if (!openSlot) {
-      const msg = "There are no open slots available.";
-      if (interaction.deferred || interaction.replied) {
-        await interaction.editReply(msg);
-      } else {
-        await interaction.reply({
-          content: msg,
-          flags: MessageFlags.Ephemeral,
-        });
-      }
-      return;
+
+  const beforeReserveCount = sheet.reserves.length;
+  for (const reserve of sheet.reserves) {
+    if (reserve.userId === userId) {
+      removedEntries.push({ userId: reserve.userId, label: "Reserve" });
     }
-    slotNumbers = [openSlot.number];
-  } else {
-    const parts = positionInput
-      .split(",")
-      .map((part) => part.trim())
-      .filter(Boolean);
-    const invalid: string[] = [];
-    const numbers: number[] = [];
-    for (const part of parts) {
-      const num = Number(part);
-      if (
-        !Number.isInteger(num) ||
-        !sheet.slots.some((slot) => slot.number === num)
-      ) {
-        invalid.push(part);
-        continue;
-      }
-      numbers.push(num);
-    }
-    if (invalid.length || !numbers.length) {
-      const msg = invalid.length
-        ? `These slot numbers do not exist: ${invalid.join(", ")}.`
-        : "Provide at least one valid slot number.";
-      if (interaction.deferred || interaction.replied) {
-        await interaction.editReply(msg);
-      } else {
-        await interaction.reply({
-          content: msg,
-          flags: MessageFlags.Ephemeral,
-        });
-      }
-      return;
-    }
-    slotNumbers = [...new Set(numbers)];
   }
-  const occupiedSlotNumbers = slotNumbers.filter(
-    (num) => sheet.slots.find((slot) => slot.number === num)?.signupUserId,
+  sheet.reserves = sheet.reserves.filter(
+    (reserve) => reserve.userId !== userId,
   );
-  if (!occupiedSlotNumbers.length) {
-    const appliedLabels: string[] = [];
-    const sheetAfterUpdate = await update(interaction, (s) => {
-      // Re-check against the freshly loaded sheet so a concurrent signup can't be silently overwritten.
-      const raceOccupied = slotNumbers.filter(
-        (num) => s.slots.find((slot) => slot.number === num)?.signupUserId,
-      );
-      if (raceOccupied.length) {
-        const plural = raceOccupied.length > 1;
-        return `Slot${plural ? "s" : ""} ${raceOccupied.join(", ")} ${plural ? "were" : "was"} just signed up by someone else. Try again.`;
+  if (sheet.reserves.length !== beforeReserveCount) removedAny = true;
+  return removedAny ? null : "You are not signed up or a reserve.";
+};
+
+const removeUserReserve = (
+  sheet: SignupSheet,
+  userId: string,
+  removedEntries: { userId: string; label: string }[],
+): string | null => {
+  const before = sheet.reserves.length;
+  for (const reserve of sheet.reserves) {
+    if (reserve.userId === userId) {
+      removedEntries.push({ userId: reserve.userId, label: "Reserve" });
+    }
+  }
+  sheet.reserves = sheet.reserves.filter(
+    (reserve) => reserve.userId !== userId,
+  );
+  return before === sheet.reserves.length ? "You are not a reserve." : null;
+};
+
+const applySlotTearDown = (
+  sheet: SignupSheet,
+  numbers: Set<number>,
+  reserveIndexes: Set<number>,
+  removedEntries: { userId: string; label: string }[],
+): void => {
+  for (const slot of sheet.slots) {
+    if (!numbers.has(slot.number)) continue;
+    if (slot.signupUserId) {
+      removedEntries.push({
+        userId: slot.signupUserId,
+        label: formatSlotLabel(slot),
+      });
+    }
+    slot.signupUserId = null;
+    slot.signupDisplayName = null;
+    slot.charNote = null;
+    slot.isTbc = false;
+  }
+
+  for (const index of reserveIndexes) {
+    const reserve = sheet.reserves[index];
+    if (reserve) {
+      removedEntries.push({ userId: reserve.userId, label: "Reserve" });
+    }
+  }
+  sheet.reserves = sheet.reserves.filter(
+    (_, index) => !reserveIndexes.has(index),
+  );
+};
+
+const parsePositionValue = (
+  rawPos: number | string | null | undefined,
+): number | null => {
+  if (typeof rawPos === "number") return rawPos;
+  if (rawPos) return Number(rawPos);
+  return null;
+};
+
+const resolvePositionTarget = (
+  sheet: SignupSheet,
+  position: number,
+):
+  | {
+      signupUserId: string | null;
+      signupDisplayName: string | null;
+      charNote: string | null;
+      isTbc?: boolean;
+      number: number;
+      role: string;
+    }
+  | {
+      userId: string;
+      displayName: string;
+      charNote: string | null;
+      isTbc?: boolean;
+    }
+  | null => {
+  const slot = sheet.slots.find((candidate) => candidate.number === position);
+  if (slot) return slot;
+
+  const reserveIndex = position - sheet.slots.length - 1;
+  const reserve = sheet.reserves[reserveIndex];
+  return reserve ?? null;
+};
+
+const applyUserCharNote = (
+  sheet: SignupSheet,
+  userId: string,
+  note: string,
+): {
+  noticeUserId: string | null;
+  noticeLabel: string | null;
+  error: string | null;
+} => {
+  const slot = getInvokingUserSlot(sheet, userId);
+  if (slot) {
+    slot.charNote = note;
+    return {
+      noticeUserId: userId,
+      noticeLabel: formatSlotLabel(slot),
+      error: null,
+    };
+  }
+
+  const reserve = sheet.reserves.find((entry) => entry.userId === userId);
+  if (reserve) {
+    reserve.charNote = note;
+    return {
+      noticeUserId: userId,
+      noticeLabel: "Reserve",
+      error: null,
+    };
+  }
+
+  return {
+    noticeUserId: null,
+    noticeLabel: null,
+    error:
+      "You must be signed up in a party slot or reserve when no position is provided.",
+  };
+};
+
+type SwapEntry = { userId: string; label: string };
+
+const moveSlotToReserve = (
+  sheet: SignupSheet,
+  slot: SignupSheet["slots"][number],
+  swapEntries: SwapEntry[],
+): void => {
+  const userId = slot.signupUserId!;
+  sheet.reserves.push({
+    userId,
+    displayName: slot.signupDisplayName ?? "Unknown user",
+    charNote: slot.charNote,
+    isTbc: slot.isTbc,
+  });
+  slot.signupUserId = null;
+  slot.signupDisplayName = null;
+  slot.charNote = null;
+  slot.isTbc = false;
+  swapEntries.push({ userId, label: "Reserve" });
+};
+
+const swapWithReserve = (
+  sheet: SignupSheet,
+  slot: SignupSheet["slots"][number],
+  reserveIndex: number,
+  swapEntries: SwapEntry[],
+): void => {
+  const reserve = sheet.reserves[reserveIndex]!;
+  const previousSignup = slot.signupUserId
+    ? {
+        userId: slot.signupUserId,
+        displayName: slot.signupDisplayName ?? "Unknown user",
+        charNote: slot.charNote,
+        isTbc: slot.isTbc,
       }
-      for (const num of slotNumbers) {
-        const slot = s.slots.find((candidate) => candidate.number === num)!;
-        slot.signupUserId = targetUser.id;
-        slot.signupDisplayName = targetUser.displayName;
-        slot.charNote = null;
-        slot.isTbc = false;
-        appliedLabels.push(formatSlotLabel(slot));
+    : null;
+  slot.signupUserId = reserve.userId;
+  slot.signupDisplayName = reserve.displayName;
+  slot.charNote = reserve.charNote;
+  slot.isTbc = reserve.isTbc;
+  if (previousSignup) sheet.reserves[reserveIndex] = previousSignup;
+  else sheet.reserves.splice(reserveIndex, 1);
+  swapEntries.push({ userId: reserve.userId, label: formatSlotLabel(slot) });
+  if (previousSignup)
+    swapEntries.push({ userId: previousSignup.userId, label: "Reserve" });
+};
+
+const swapSlots = (
+  first: SignupSheet["slots"][number],
+  second: SignupSheet["slots"][number],
+  swapEntries: SwapEntry[],
+): void => {
+  const firstUserId = first.signupUserId;
+  const secondUserId = second.signupUserId;
+  [first.signupUserId, second.signupUserId] = [
+    second.signupUserId,
+    first.signupUserId,
+  ];
+  [first.signupDisplayName, second.signupDisplayName] = [
+    second.signupDisplayName,
+    first.signupDisplayName,
+  ];
+  [first.charNote, second.charNote] = [second.charNote, first.charNote];
+  [first.isTbc, second.isTbc] = [second.isTbc, first.isTbc];
+  if (firstUserId)
+    swapEntries.push({ userId: firstUserId, label: formatSlotLabel(second) });
+  if (secondUserId)
+    swapEntries.push({ userId: secondUserId, label: formatSlotLabel(first) });
+};
+
+const joinSlotAsInvoker = (
+  sheet: SignupSheet,
+  interaction: SignupInteraction,
+  first: SignupSheet["slots"][number],
+  swapEntries: SwapEntry[],
+): string | null => {
+  const userSlots = sheet.slots.filter(
+    (slot) => slot.signupUserId === interaction.user.id,
+  );
+  const reserveIndex = sheet.reserves.findIndex(
+    (reserve) => reserve.userId === interaction.user.id,
+  );
+  if (userSlots.length + (reserveIndex === -1 ? 0 : 1) > 1) {
+    return "You have multiple signups. Specify the second slot or reserve to swap.";
+  }
+  const currentSlot = userSlots[0];
+  const currentReserve =
+    reserveIndex === -1 ? null : sheet.reserves[reserveIndex]!;
+  const previousUserId = first.signupUserId;
+  const previousSignup = previousUserId
+    ? {
+        userId: previousUserId,
+        displayName: first.signupDisplayName ?? "Unknown user",
+        charNote: first.charNote,
+        isTbc: first.isTbc,
       }
-      return null;
-    });
-    if (sheetAfterUpdate)
-      await sendActionNotices(
-        interaction,
-        "added",
-        [{ userId: targetUser.id, labels: appliedLabels }],
-        sheetAfterUpdate.title,
-      );
+    : null;
+  const currentCharNote =
+    currentSlot?.charNote ?? currentReserve?.charNote ?? null;
+  const currentIsTbc = currentSlot?.isTbc ?? currentReserve?.isTbc ?? false;
+  if (currentSlot && currentSlot !== first) {
+    currentSlot.signupUserId = null;
+    currentSlot.signupDisplayName = null;
+    currentSlot.charNote = null;
+    currentSlot.isTbc = false;
+  }
+  if (reserveIndex !== -1) sheet.reserves.splice(reserveIndex, 1);
+  first.signupUserId = interaction.user.id;
+  first.signupDisplayName = interaction.user.displayName;
+  first.charNote = currentCharNote;
+  first.isTbc = currentIsTbc;
+  swapEntries.push({
+    userId: interaction.user.id,
+    label: formatSlotLabel(first),
+  });
+  if (previousSignup && previousSignup.userId !== interaction.user.id) {
+    if (currentSlot && currentSlot !== first) {
+      Object.assign(currentSlot, {
+        signupUserId: previousSignup.userId,
+        signupDisplayName: previousSignup.displayName,
+        charNote: previousSignup.charNote,
+        isTbc: previousSignup.isTbc,
+      });
+      swapEntries.push({
+        userId: previousSignup.userId,
+        label: formatSlotLabel(currentSlot),
+      });
+    } else {
+      sheet.reserves.push(previousSignup);
+      swapEntries.push({ userId: previousSignup.userId, label: "Reserve" });
+    }
+  }
+  return null;
+};
+
+const executeReserveFirstSwap = (
+  sheet: SignupSheet,
+  interaction: SignupInteraction,
+  secondValue: string | undefined,
+  swapEntries: SwapEntry[],
+): string | null => {
+  if (secondValue) return "Use `/swap first:reserve` without a second slot.";
+  const userSlots = sheet.slots.filter(
+    (slot) => slot.signupUserId === interaction.user.id,
+  );
+  if (userSlots.length > 1) {
+    return "You have multiple slot signups. Specify which slot to move to reserves, e.g. `/swap first:1 second:reserve`.";
+  }
+  const currentSlot = userSlots[0];
+  if (!currentSlot)
+    return "You must be signed up in a party slot to move to reserves.";
+  if (
+    sheet.reserves.some((reserve) => reserve.userId === interaction.user.id)
+  ) {
+    return "You are already a reserve.";
+  }
+  moveSlotToReserve(sheet, currentSlot, swapEntries);
+  return null;
+};
+
+const executeTargetSlotSwap = (
+  sheet: SignupSheet,
+  interaction: SignupInteraction,
+  first: SignupSheet["slots"][number],
+  secondValue: string | undefined,
+  swapEntries: SwapEntry[],
+): string | null => {
+  if (!secondValue)
+    return joinSlotAsInvoker(sheet, interaction, first, swapEntries);
+  if (secondValue === "reserve") {
+    if (!first.signupUserId)
+      return "That party slot does not have a signup to move to reserves.";
+    if (
+      sheet.reserves.some((reserve) => reserve.userId === first.signupUserId)
+    ) {
+      return "That user is already a reserve.";
+    }
+    moveSlotToReserve(sheet, first, swapEntries);
+    return null;
+  }
+  const second = sheet.slots.find(
+    (slot) => slot.number === Number(secondValue),
+  );
+  if (second) {
+    swapSlots(first, second, swapEntries);
+    return null;
+  }
+  const reserveIndex = Number(secondValue) - sheet.slots.length - 1;
+  if (reserveIndex >= 0 && reserveIndex < sheet.reserves.length) {
+    swapWithReserve(sheet, first, reserveIndex, swapEntries);
+    return null;
+  }
+  return "One of those slots does not exist.";
+};
+
+const executeSwapMutation = (
+  sheet: SignupSheet,
+  interaction: SignupInteraction,
+  firstValue: string,
+  secondValue: string | undefined,
+  swapEntries: SwapEntry[],
+): string | null => {
+  if (firstValue === "reserve") {
+    return executeReserveFirstSwap(
+      sheet,
+      interaction,
+      secondValue,
+      swapEntries,
+    );
+  }
+  const first =
+    firstValue === "random"
+      ? pickRandomOpenSlot(sheet)
+      : sheet.slots.find((slot) => slot.number === Number(firstValue));
+  if (!first)
+    return firstValue === "random"
+      ? "There are no open slots available."
+      : "One of those slots does not exist.";
+  return executeTargetSlotSwap(
+    sheet,
+    interaction,
+    first,
+    secondValue,
+    swapEntries,
+  );
+};
+
+const replyAddInputError = async (
+  interaction: SignupInteraction,
+  content: string,
+): Promise<void> => {
+  if (interaction.deferred || interaction.replied) {
+    await interaction.editReply(content);
     return;
   }
+  await interaction.reply({ content, flags: MessageFlags.Ephemeral });
+};
+
+const resolveAddTarget = async (
+  interaction: SignupInteraction,
+  mentionText: string,
+): Promise<User | null> => {
+  if (!mentionText) return interaction.user;
+  return resolveTargetUser(interaction, mentionText);
+};
+
+const addUserToReserve = async (
+  interaction: SignupInteraction,
+  targetUser: User,
+): Promise<void> => {
+  const sheetAfterUpdate = await update(interaction, (sheet) => {
+    if (sheet.reserves.some((reserve) => reserve.userId === targetUser.id)) {
+      return "That user is already a reserve.";
+    }
+    sheet.reserves.push({
+      userId: targetUser.id,
+      displayName: targetUser.displayName,
+      charNote: null,
+      isTbc: false,
+    });
+    return null;
+  });
+  if (sheetAfterUpdate) {
+    await sendActionNotices(
+      interaction,
+      "added",
+      [{ userId: targetUser.id, labels: ["Reserve"] }],
+      sheetAfterUpdate.title,
+    );
+  }
+};
+
+const addUserToOpenSlots = async (
+  interaction: SignupInteraction,
+  targetUser: User,
+  slotNumbers: number[],
+): Promise<boolean> => {
+  const appliedLabels: string[] = [];
+  const sheetAfterUpdate = await update(interaction, (sheet) => {
+    const raceOccupied = slotNumbers.filter(
+      (number) =>
+        sheet.slots.find((slot) => slot.number === number)?.signupUserId,
+    );
+    if (raceOccupied.length) {
+      const plural = raceOccupied.length > 1;
+      return `Slot${plural ? "s" : ""} ${raceOccupied.join(", ")} ${plural ? "were" : "was"} just signed up by someone else. Try again.`;
+    }
+    for (const number of slotNumbers) {
+      const slot = sheet.slots.find(
+        (candidate) => candidate.number === number,
+      )!;
+      slot.signupUserId = targetUser.id;
+      slot.signupDisplayName = targetUser.displayName;
+      slot.charNote = null;
+      slot.isTbc = false;
+      appliedLabels.push(formatSlotLabel(slot));
+    }
+    return null;
+  });
+  if (!sheetAfterUpdate) return false;
+  await sendActionNotices(
+    interaction,
+    "added",
+    [{ userId: targetUser.id, labels: appliedLabels }],
+    sheetAfterUpdate.title,
+  );
+  return true;
+};
+
+const requestAddConfirmation = async (
+  interaction: SignupInteraction,
+  targetUser: User,
+  slotNumbers: number[],
+  occupiedSlotNumbers: number[],
+): Promise<void> => {
   if (!interaction.guildId || !interaction.channelId) return;
   pendingAddConfirmations.set(
     addConfirmationKey(
@@ -624,13 +1176,63 @@ export const executeAdd = async (
       content: confirmContent,
       components: confirmComponents,
     });
-  } else {
-    await interaction.reply({
-      content: confirmContent,
-      components: confirmComponents,
-      flags: MessageFlags.Ephemeral,
-    });
+    return;
   }
+  await interaction.reply({
+    content: confirmContent,
+    components: confirmComponents,
+    flags: MessageFlags.Ephemeral,
+  });
+};
+
+/**
+ * Adds the invoking user, or a resolved mentioned user, to one or more slots.
+ *
+ * Input supports comma-separated slot numbers, `random`, and `reserve`.
+ * Occupied slots require confirmation before replacement, and open-slot adds
+ * are rechecked against the freshly loaded sheet before they are saved.
+ */
+export const executeAdd = async (
+  interaction: SignupInteraction,
+  rawInput: string,
+): Promise<void> => {
+  const sheet = await getSheet(interaction);
+  if (!sheet) return replyMissing(interaction);
+  const { positionInput, mentionText } = parseAddInput(rawInput);
+  if (!positionInput) {
+    await replyAddInputError(
+      interaction,
+      "Provide a slot number, `random`, comma-separated slot numbers, or `reserve` to add a user.",
+    );
+    return;
+  }
+  const targetUser = await resolveAddTarget(interaction, mentionText);
+  if (!targetUser) {
+    await replyAddInputError(
+      interaction,
+      "Provide a valid user mention after the slot, e.g. `2 @user`.",
+    );
+    return;
+  }
+  if (positionInput === "reserve") {
+    await addUserToReserve(interaction, targetUser);
+    return;
+  }
+  const slotNumbers = resolveAddSlotNumbers(positionInput, sheet, interaction);
+  if (!slotNumbers) return;
+  const occupiedSlotNumbers = slotNumbers.filter(
+    (num) => sheet.slots.find((slot) => slot.number === num)?.signupUserId,
+  );
+  if (!occupiedSlotNumbers.length) {
+    await addUserToOpenSlots(interaction, targetUser, slotNumbers);
+    return;
+  }
+  await requestAddConfirmation(
+    interaction,
+    targetUser,
+    slotNumbers,
+    occupiedSlotNumbers,
+  );
 };
 
 /** Removes signups and/or reserve positions from the sheet. */
@@ -642,87 +1244,20 @@ export const executeRemove = async (
   const sheetAfterUpdate = await update(i, (s) => {
     const position = positionInput?.toLowerCase().trim();
     if (!position) {
-      let removedAny = false;
-      for (const slot of s.slots) {
-        if (slot.signupUserId === i.user.id) {
-          removedEntries.push({
-            userId: slot.signupUserId,
-            label: formatSlotLabel(slot),
-          });
-          slot.signupUserId = null;
-          slot.signupDisplayName = null;
-          slot.charNote = null;
-          slot.isTbc = false;
-          removedAny = true;
-        }
-      }
-      const beforeReserveCount = s.reserves.length;
-      for (const reserve of s.reserves)
-        if (reserve.userId === i.user.id)
-          removedEntries.push({ userId: reserve.userId, label: "Reserve" });
-      s.reserves = s.reserves.filter((r) => r.userId !== i.user.id);
-      if (s.reserves.length !== beforeReserveCount) removedAny = true;
-      return removedAny ? null : "You are not signed up or a reserve.";
+      return applySelfRemoveFromSheet(s, i.user.id, removedEntries);
     }
     if (position === "reserve") {
-      const before = s.reserves.length;
-      for (const reserve of s.reserves)
-        if (reserve.userId === i.user.id)
-          removedEntries.push({ userId: reserve.userId, label: "Reserve" });
-      s.reserves = s.reserves.filter((r) => r.userId !== i.user.id);
-      return before === s.reserves.length ? "You are not a reserve." : null;
+      return removeUserReserve(s, i.user.id, removedEntries);
     }
-    const parts = position
-      .split(",")
-      .map((part) => part.trim())
-      .filter(Boolean);
-    const invalid: string[] = [];
-    const slotNumbersToRemove = new Set<number>();
-    const reserveIndexesToRemove = new Set<number>();
-    for (const part of parts) {
-      const num = Number(part);
-      if (!Number.isInteger(num)) {
-        invalid.push(part);
-        continue;
-      }
-      if (s.slots.some((slot) => slot.number === num)) {
-        slotNumbersToRemove.add(num);
-        continue;
-      }
-      const reserveIndex = num - s.slots.length - 1;
-      if (
-        Number.isInteger(reserveIndex) &&
-        reserveIndex >= 0 &&
-        reserveIndex < s.reserves.length
-      ) {
-        reserveIndexesToRemove.add(reserveIndex);
-        continue;
-      }
-      invalid.push(part);
-    }
-    if (invalid.length)
-      return `These positions do not exist: ${invalid.join(", ")}.`;
-    for (const slot of s.slots) {
-      if (slotNumbersToRemove.has(slot.number)) {
-        if (slot.signupUserId)
-          removedEntries.push({
-            userId: slot.signupUserId,
-            label: formatSlotLabel(slot),
-          });
-        slot.signupUserId = null;
-        slot.signupDisplayName = null;
-        slot.charNote = null;
-        slot.isTbc = false;
-      }
-    }
-    for (const index of reserveIndexesToRemove) {
-      const reserve = s.reserves[index];
-      if (reserve)
-        removedEntries.push({ userId: reserve.userId, label: "Reserve" });
-    }
-    s.reserves = s.reserves.filter(
-      (_, index) => !reserveIndexesToRemove.has(index),
+    const { numbers, reserveIndexes, invalid } = parseRemovePositions(
+      position,
+      s.slots.length,
+      s.reserves.length,
     );
+    if (invalid.length) {
+      return `These positions do not exist: ${invalid.join(", ")}.`;
+    }
+    applySlotTearDown(s, numbers, reserveIndexes, removedEntries);
     return null;
   });
   if (sheetAfterUpdate)
@@ -734,7 +1269,14 @@ export const executeRemove = async (
     );
 };
 
-/** Swaps two slots or joins a slot as oneself. */
+/**
+ * Swaps signup positions or joins an open position as the invoking user.
+ *
+ * The first value may be a slot number, `random`, or `reserve`. A second
+ * value can identify another party slot or reserve position; omitting it
+ * joins the first slot as the invoking user. Users with multiple signups
+ * must provide the second value to keep the operation unambiguous.
+ */
 export const executeSwap = async (
   i: SignupInteraction,
   firstValueInput: string,
@@ -744,183 +1286,14 @@ export const executeSwap = async (
   const sheetAfterUpdate = await update(i, (s) => {
     const firstValue = firstValueInput.toLowerCase().trim();
     const secondValue = secondValueInput?.toLowerCase().trim() || undefined;
-    if (firstValue === "reserve") {
-      if (secondValue)
-        return "Use `/swap first:reserve` without a second slot.";
-      const userSlots = s.slots.filter(
-        (slot) => slot.signupUserId === i.user.id,
-      );
-      if (userSlots.length > 1) {
-        return "You have multiple slot signups. Specify which slot to move to reserves, e.g. `/swap first:1 second:reserve`.";
-      }
-      const currentSlot = userSlots[0];
-      if (!currentSlot)
-        return "You must be signed up in a party slot to move to reserves.";
-      if (s.reserves.some((reserve) => reserve.userId === i.user.id))
-        return "You are already a reserve.";
-      s.reserves.push({
-        userId: i.user.id,
-        displayName: i.user.displayName,
-        charNote: currentSlot.charNote,
-        isTbc: currentSlot.isTbc,
-      });
-      currentSlot.signupUserId = null;
-      currentSlot.signupDisplayName = null;
-      currentSlot.charNote = null;
-      currentSlot.isTbc = false;
-      swapEntries.push({ userId: i.user.id, label: "Reserve" });
-      return null;
-    }
-    const first =
-      firstValue === "random"
-        ? pickRandomOpenSlot(s)
-        : s.slots.find((slot) => slot.number === Number(firstValue));
-    if (firstValue === "random" && !first)
-      return "There are no open slots available.";
-    const second = secondValue
-      ? s.slots.find((slot) => slot.number === Number(secondValue))
-      : undefined;
-    const reserveIndex = secondValue
-      ? Number(secondValue) - s.slots.length - 1
-      : -1;
-    const secondReserve =
-      reserveIndex >= 0 ? (s.reserves[reserveIndex] ?? null) : null;
-    if (
-      !first ||
-      (secondValue && secondValue !== "reserve" && !second && !secondReserve)
-    )
-      return "One of those slots does not exist.";
-    if (secondValue === "reserve") {
-      if (!first.signupUserId)
-        return "That party slot does not have a signup to move to reserves.";
-      if (s.reserves.some((reserve) => reserve.userId === first.signupUserId))
-        return "That user is already a reserve.";
-      const movedUserId = first.signupUserId;
-      s.reserves.push({
-        userId: first.signupUserId,
-        displayName: first.signupDisplayName ?? "Unknown user",
-        charNote: first.charNote,
-        isTbc: first.isTbc,
-      });
-      first.signupUserId = null;
-      first.signupDisplayName = null;
-      first.charNote = null;
-      first.isTbc = false;
-      swapEntries.push({ userId: movedUserId, label: "Reserve" });
-      return null;
-    }
-    if (secondReserve) {
-      const firstSignup = first.signupUserId
-        ? {
-            userId: first.signupUserId,
-            displayName: first.signupDisplayName ?? "Unknown user",
-            charNote: first.charNote,
-            isTbc: first.isTbc,
-          }
-        : null;
-      first.signupUserId = secondReserve.userId;
-      first.signupDisplayName = secondReserve.displayName;
-      first.charNote = secondReserve.charNote;
-      first.isTbc = secondReserve.isTbc;
-      if (firstSignup) s.reserves[reserveIndex] = firstSignup;
-      else s.reserves.splice(reserveIndex, 1);
-      swapEntries.push({
-        userId: secondReserve.userId,
-        label: formatSlotLabel(first),
-      });
-      if (firstSignup)
-        swapEntries.push({ userId: firstSignup.userId, label: "Reserve" });
-      return null;
-    }
-    if (second) {
-      const previousFirstUserId = first.signupUserId;
-      const previousSecondUserId = second.signupUserId;
-      [first.signupUserId, second.signupUserId] = [
-        second.signupUserId,
-        first.signupUserId,
-      ];
-      [first.signupDisplayName, second.signupDisplayName] = [
-        second.signupDisplayName,
-        first.signupDisplayName,
-      ];
-      [first.charNote, second.charNote] = [second.charNote, first.charNote];
-      [first.isTbc, second.isTbc] = [second.isTbc, first.isTbc];
-      if (previousFirstUserId)
-        swapEntries.push({
-          userId: previousFirstUserId,
-          label: formatSlotLabel(second),
-        });
-      if (previousSecondUserId)
-        swapEntries.push({
-          userId: previousSecondUserId,
-          label: formatSlotLabel(first),
-        });
-    } else {
-      const userSlots = s.slots.filter(
-        (slot) => slot.signupUserId === i.user.id,
-      );
-      const userReserves = s.reserves.filter(
-        (reserve) => reserve.userId === i.user.id,
-      );
-      if (userSlots.length + userReserves.length > 1) {
-        return "You have multiple signups. Specify the second slot or reserve to swap.";
-      }
-      const currentSlot = userSlots[0];
-      const reserveIndex = s.reserves.findIndex(
-        (reserve) => reserve.userId === i.user.id,
-      );
-      const reserve =
-        reserveIndex === -1 ? null : (s.reserves[reserveIndex] ?? null);
-      const previousCharNote =
-        currentSlot?.charNote ?? reserve?.charNote ?? null;
-      const previousIsTbc = currentSlot?.isTbc ?? reserve?.isTbc ?? false;
-      const previousFirstUserId = first.signupUserId;
-      const previousFirstDisplayName = first.signupDisplayName;
-      const previousFirstCharNote = first.charNote;
-      const previousFirstIsTbc = first.isTbc;
-      const invokerWasReserve = reserveIndex !== -1;
-      if (currentSlot && currentSlot !== first) {
-        currentSlot.signupUserId = null;
-        currentSlot.signupDisplayName = null;
-        currentSlot.charNote = null;
-        currentSlot.isTbc = false;
-      }
-      if (invokerWasReserve) s.reserves.splice(reserveIndex, 1);
-      [
-        first.signupUserId,
-        first.signupDisplayName,
-        first.charNote,
-        first.isTbc,
-      ] = [i.user.id, i.user.displayName, previousCharNote, previousIsTbc];
-      swapEntries.push({
-        userId: i.user.id,
-        label: formatSlotLabel(first),
-      });
-      if (previousFirstUserId && previousFirstUserId !== i.user.id) {
-        if (currentSlot && currentSlot !== first) {
-          currentSlot.signupUserId = previousFirstUserId;
-          currentSlot.signupDisplayName = previousFirstDisplayName;
-          currentSlot.charNote = previousFirstCharNote;
-          currentSlot.isTbc = previousFirstIsTbc;
-          swapEntries.push({
-            userId: previousFirstUserId,
-            label: formatSlotLabel(currentSlot),
-          });
-        } else {
-          s.reserves.push({
-            userId: previousFirstUserId,
-            displayName: previousFirstDisplayName ?? "Unknown user",
-            charNote: previousFirstCharNote,
-            isTbc: previousFirstIsTbc,
-          });
-          swapEntries.push({
-            userId: previousFirstUserId,
-            label: "Reserve",
-          });
-        }
-      }
-    }
-    return null;
+    const swapResult = executeSwapMutation(
+      s,
+      i,
+      firstValue,
+      secondValue,
+      swapEntries,
+    );
+    return swapResult;
   });
   if (sheetAfterUpdate)
     await sendActionNotices(
@@ -942,53 +1315,32 @@ export const executeCharNote = async (
   const sheetAfterUpdate = await update(i, (s) => {
     const rawPos =
       typeof positionValue === "string" ? positionValue.trim() : positionValue;
-    const position =
-      typeof rawPos === "number" ? rawPos : rawPos ? Number(rawPos) : null;
+    const position = parsePositionValue(rawPos);
     if (rawPos && (position === null || !Number.isInteger(position))) {
       return "That slot does not exist.";
     }
     if (position !== null) {
-      const slot = s.slots.find((candidate) => candidate.number === position);
-      if (slot) {
-        slot.charNote = note.trim();
-        if (slot.signupUserId) {
-          noticeUserId = slot.signupUserId;
-          noticeLabel = formatSlotLabel(slot);
+      const target = resolvePositionTarget(s, position);
+      if (!target) return "That slot does not exist.";
+      target.charNote = note.trim();
+      if ("signupUserId" in target) {
+        if (target.signupUserId) {
+          noticeUserId = target.signupUserId;
+          noticeLabel = formatSlotLabel(target);
         }
-        return null;
+      } else {
+        noticeUserId = target.userId;
+        noticeLabel = "Reserve";
       }
-      const reserveIndex = position - s.slots.length - 1;
-      if (
-        Number.isInteger(reserveIndex) &&
-        reserveIndex >= 0 &&
-        reserveIndex < s.reserves.length
-      ) {
-        const reserve = s.reserves[reserveIndex];
-        if (reserve) {
-          reserve.charNote = note.trim();
-          noticeUserId = reserve.userId;
-          noticeLabel = "Reserve";
-          return null;
-        }
-      }
-      return "That slot does not exist.";
+      return null;
     }
 
-    const slot = getInvokingUserSlot(s, i.user.id);
-    if (slot) {
-      slot.charNote = note.trim();
-      noticeUserId = i.user.id;
-      noticeLabel = formatSlotLabel(slot);
-      return null;
-    }
-    const reserve = s.reserves.find((r) => r.userId === i.user.id);
-    if (reserve) {
-      reserve.charNote = note.trim();
-      noticeUserId = i.user.id;
-      noticeLabel = "Reserve";
-      return null;
-    }
-    return "You must be signed up in a party slot or reserve when no position is provided.";
+    const result = applyUserCharNote(s, i.user.id, note.trim());
+    if (result.error) return result.error;
+
+    noticeUserId = result.noticeUserId;
+    noticeLabel = result.noticeLabel;
+    return null;
   });
   if (sheetAfterUpdate && noticeUserId && noticeLabel)
     await sendActionNotices(
@@ -1008,84 +1360,11 @@ export const executeRemoveCharNote = async (
   const removedEntries: { userId: string; label: string }[] = [];
   const sheetAfterUpdate = await update(i, (s) => {
     const input = inputValue?.trim();
-    if (!input) {
-      const isSignedUp =
-        s.slots.some((slot) => slot.signupUserId === i.user.id) ||
-        s.reserves.some((reserve) => reserve.userId === i.user.id);
-      if (!isSignedUp) return "You are not signed up or a reserve.";
-      for (const slot of s.slots) {
-        if (slot.signupUserId === i.user.id) {
-          if (slot.charNote)
-            removedEntries.push({
-              userId: i.user.id,
-              label: formatSlotLabel(slot),
-            });
-          slot.charNote = null;
-        }
-      }
-      for (const reserve of s.reserves) {
-        if (reserve.userId === i.user.id) {
-          if (reserve.charNote)
-            removedEntries.push({ userId: i.user.id, label: "Reserve" });
-          reserve.charNote = null;
-        }
-      }
-      return null;
-    }
-    const parts = input
-      .split(",")
-      .map((part) => part.trim())
-      .filter(Boolean);
-    const invalid: string[] = [];
-    const slotNumbersToRemove = new Set<number>();
-    const reserveIndexesToRemove = new Set<number>();
-    for (const part of parts) {
-      const num = Number(part);
-      if (!Number.isInteger(num)) {
-        invalid.push(part);
-        continue;
-      }
-      if (s.slots.some((slot) => slot.number === num)) {
-        slotNumbersToRemove.add(num);
-        continue;
-      }
-      const reserveIndex = num - s.slots.length - 1;
-      if (
-        Number.isInteger(reserveIndex) &&
-        reserveIndex >= 0 &&
-        reserveIndex < s.reserves.length
-      ) {
-        reserveIndexesToRemove.add(reserveIndex);
-        continue;
-      }
-      invalid.push(part);
-    }
-    if (
-      invalid.length ||
-      (!slotNumbersToRemove.size && !reserveIndexesToRemove.size)
-    ) {
-      return invalid.length
-        ? `These slot numbers do not exist: ${invalid.join(", ")}.`
-        : "Provide at least one valid slot number.";
-    }
-    for (const slot of s.slots) {
-      if (slotNumbersToRemove.has(slot.number)) {
-        if (slot.signupUserId && slot.charNote)
-          removedEntries.push({
-            userId: slot.signupUserId,
-            label: formatSlotLabel(slot),
-          });
-        slot.charNote = null;
-      }
-    }
-    for (const index of reserveIndexesToRemove) {
-      const reserve = s.reserves[index];
-      if (reserve) {
-        if (reserve.charNote)
-          removedEntries.push({ userId: reserve.userId, label: "Reserve" });
-        reserve.charNote = null;
-      }
-    }
+    if (!input) return clearUserCharNotes(s, i.user.id, removedEntries);
+    const selection = parsePositionSelection(input, s);
+    const error = selectionError(selection);
+    if (error) return error;
+    clearSelectedCharNotes(s, selection, removedEntries);
     return null;
   });
   if (sheetAfterUpdate)
@@ -1129,56 +1408,10 @@ export const executeTbc = async (
       }
       return null;
     }
-    const parts = input
-      .split(",")
-      .map((part) => part.trim())
-      .filter(Boolean);
-    const invalid: string[] = [];
-    const slotNumbersToToggle = new Set<number>();
-    const reserveIndexesToToggle = new Set<number>();
-    for (const part of parts) {
-      const num = Number(part);
-      if (!Number.isInteger(num)) {
-        invalid.push(part);
-        continue;
-      }
-      if (s.slots.some((slot) => slot.number === num)) {
-        slotNumbersToToggle.add(num);
-        continue;
-      }
-      const reserveIndex = num - s.slots.length - 1;
-      if (
-        Number.isInteger(reserveIndex) &&
-        reserveIndex >= 0 &&
-        reserveIndex < s.reserves.length
-      ) {
-        reserveIndexesToToggle.add(reserveIndex);
-        continue;
-      }
-      invalid.push(part);
-    }
-    if (
-      invalid.length ||
-      (!slotNumbersToToggle.size && !reserveIndexesToToggle.size)
-    ) {
-      return invalid.length
-        ? `These slot numbers do not exist: ${invalid.join(", ")}.`
-        : "Provide at least one valid slot number.";
-    }
-    for (const slot of s.slots) {
-      if (slotNumbersToToggle.has(slot.number)) {
-        slot.isTbc = !slot.isTbc;
-        if (slot.signupUserId)
-          recordToggle(slot.signupUserId, formatSlotLabel(slot), slot.isTbc);
-      }
-    }
-    for (const index of reserveIndexesToToggle) {
-      const reserve = s.reserves[index];
-      if (reserve) {
-        reserve.isTbc = !reserve.isTbc;
-        recordToggle(reserve.userId, "Reserve", reserve.isTbc);
-      }
-    }
+    const selection = parsePositionSelection(input, s);
+    const error = selectionError(selection);
+    if (error) return error;
+    toggleSelectedTbc(s, selection, recordToggle);
     return null;
   });
   if (sheetAfterUpdate) {
@@ -1224,51 +1457,10 @@ export const executeRemoveTbc = async (
       }
       return null;
     }
-    const parts = input
-      .split(",")
-      .map((part) => part.trim())
-      .filter(Boolean);
-    const invalid: string[] = [];
-    const slotNumbersToRemove = new Set<number>();
-    const reserveIndexesToRemove = new Set<number>();
-    for (const part of parts) {
-      const num = Number(part);
-      if (!Number.isInteger(num)) {
-        invalid.push(part);
-        continue;
-      }
-      if (s.slots.some((slot) => slot.number === num)) {
-        slotNumbersToRemove.add(num);
-        continue;
-      }
-      const reserveIndex = num - s.slots.length - 1;
-      if (
-        Number.isInteger(reserveIndex) &&
-        reserveIndex >= 0 &&
-        reserveIndex < s.reserves.length
-      ) {
-        reserveIndexesToRemove.add(reserveIndex);
-        continue;
-      }
-      invalid.push(part);
-    }
-    if (
-      invalid.length ||
-      (!slotNumbersToRemove.size && !reserveIndexesToRemove.size)
-    ) {
-      return invalid.length
-        ? `These slot numbers do not exist: ${invalid.join(", ")}.`
-        : "Provide at least one valid slot number.";
-    }
-    for (const slot of s.slots) {
-      if (slotNumbersToRemove.has(slot.number)) {
-        slot.isTbc = false;
-      }
-    }
-    for (const index of reserveIndexesToRemove) {
-      const reserve = s.reserves[index];
-      if (reserve) reserve.isTbc = false;
-    }
+    const selection = parsePositionSelection(input, s);
+    const error = selectionError(selection);
+    if (error) return error;
+    clearSelectedTbc(s, selection);
     return null;
   });
 };

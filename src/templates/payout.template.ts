@@ -96,12 +96,12 @@ export const buildPayoutSummaryEmbed = (
         .join("\n")
     : `No ${amountLabel} payouts.`;
 
-  const description =
-    summary.amount === "shareReady"
-      ? "Available for release:"
-      : summary.amount === "pending"
-        ? "Currently vending:"
-        : "";
+  let description = "";
+  if (summary.amount === "shareReady") {
+    description = "Available for release:";
+  } else if (summary.amount === "pending") {
+    description = "Currently vending:";
+  }
   const embed = new EmbedBuilder()
     .setTitle("Payout Summary")
     .setThumbnail(context.guildIconUrl)
@@ -110,8 +110,9 @@ export const buildPayoutSummaryEmbed = (
     .setTimestamp();
 
   if (description !== undefined) {
+    const descriptionBlock = description ? `${description}\n` : "";
     embed.setDescription(
-      `${description ? `${description}\n` : ""}\`\`\`\n${payoutHeader}\n${payoutDivider}\n${payoutList}\n\`\`\``,
+      `${descriptionBlock}\`\`\`\n${payoutHeader}\n${payoutDivider}\n${payoutList}\n\`\`\``,
     );
   }
 

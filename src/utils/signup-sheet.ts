@@ -1,3 +1,4 @@
+import { randomInt } from "node:crypto";
 import type { Message, User } from "discord.js";
 import type { SignupSheet, SignupSlot } from "../types/signup-sheet.js";
 
@@ -94,10 +95,9 @@ export const getDefaultRoster = (slots: SignupSlot[]): string =>
   slots
     .map((slot) => {
       const tbcSuffix = slot.isTbc ? " ❓" : "";
+      const charNoteSuffix = slot.charNote ? ` (${slot.charNote})` : "";
       const signupContent = slot.signupDisplayName
-        ? ` ${slot.signupDisplayName}${
-            slot.charNote ? ` (${slot.charNote})` : ""
-          }${tbcSuffix}`
+        ? ` ${slot.signupDisplayName}${charNoteSuffix}${tbcSuffix}`
         : tbcSuffix;
       return `${String(slot.number).padStart(2, "0")}: ${slot.role} -${signupContent}`;
     })
@@ -125,12 +125,33 @@ export const normalizeRosterDisplayName = (
  * or name (e.g. "char-name") don't split early. The `❓` emoji marks a slot as TBC.
  * Returns `null` when the text doesn't have one continuous, correctly numbered line per existing slot.
  */
-export const parseRoster = (
-  roster: string,
+const parseRosterLine = (
+  line: string,
+): { role: string; signupValue: string | null } | null => {
+  const trimmed = line.trim();
+  const separatorIndex = trimmed.indexOf(":");
+  if (separatorIndex === -1) return null;
+
+  const numberText = trimmed.slice(0, separatorIndex).trim();
+  const remainder = trimmed.slice(separatorIndex + 1).trim();
+  if (!numberText || !remainder) return null;
+
+  const dashIndex = remainder.indexOf(" - ");
+  const role =
+    dashIndex === -1 ? remainder : remainder.slice(0, dashIndex).trim();
+  const signupValue =
+    dashIndex === -1 ? null : remainder.slice(dashIndex + 3).trim() || null;
+
+  if (!role) return null;
+  return {
+    role,
+    signupValue,
+  };
+};
+
+const buildRosterUserLookup = (
   existingSlots: SignupSlot[],
-): SignupSlot[] | null => {
-  const rosterLines = roster.split("\n").filter(Boolean);
-  if (rosterLines.length !== existingSlots.length) return null;
+): Map<string, string | null> => {
   const userIdsByDisplayName = new Map<string, string | null>();
   for (const slot of existingSlots) {
     const displayName = normalizeRosterDisplayName(slot.signupDisplayName);
@@ -143,37 +164,64 @@ export const parseRoster = (
         : null,
     );
   }
+  return userIdsByDisplayName;
+};
+
+const parseRosterSignupValue = (
+  signupValue: string | null,
+): { displayName: string | null; charNote: string | null; isTbc: boolean } => {
+  let isTbc = false;
+  let cleanedValue = signupValue;
+  if (cleanedValue?.includes("❓")) {
+    isTbc = true;
+    cleanedValue = cleanedValue.replaceAll("❓", "").trim() || null;
+  }
+  const noteStart = cleanedValue?.lastIndexOf(" (");
+  const hasNote =
+    noteStart !== undefined && noteStart > 0 && cleanedValue?.endsWith(")");
+  const displayName = normalizeRosterDisplayName(
+    hasNote ? cleanedValue!.slice(0, noteStart) : cleanedValue,
+  );
+  const charNote = hasNote
+    ? cleanedValue!.slice(noteStart + 2, -1).trim() || null
+    : null;
+  return { displayName, charNote, isTbc };
+};
+
+export const parseRoster = (
+  roster: string,
+  existingSlots: SignupSlot[],
+): SignupSlot[] | null => {
+  const rosterLines = roster.split("\n").filter(Boolean);
+  if (rosterLines.length !== existingSlots.length) return null;
+  const userIdsByDisplayName = buildRosterUserLookup(existingSlots);
   const slots: SignupSlot[] = [];
   for (const [index, line] of rosterLines.entries()) {
-    const match = /^(\d+)\s*:\s*(.+?)(?:\s-(?:\s(.*))?)?$/.exec(line.trim());
-    if (!match || Number(match[1]) !== index + 1 || !match[2]?.trim())
+    const parsedLine = parseRosterLine(line);
+    const lineNumberMatch = /^\d+/.exec(line.trimStart());
+    const lineNumber = lineNumberMatch
+      ? Number(lineNumberMatch[0])
+      : Number.NaN;
+    if (!parsedLine || lineNumber !== index + 1) {
       return null;
-    const signupValue = match[3]?.trim() || null;
-    let isTbc = false;
-    let cleanedSignupValue = signupValue;
-    if (cleanedSignupValue && cleanedSignupValue.includes("❓")) {
-      isTbc = true;
-      cleanedSignupValue = cleanedSignupValue.replace(/❓/g, "").trim() || null;
     }
-    const signupMatch = cleanedSignupValue
-      ? /^(.*?)(?:\s+\((.*)\))?$/.exec(cleanedSignupValue)
-      : null;
-    const signupDisplayName =
-      normalizeRosterDisplayName(signupMatch?.[1] ?? null) ?? null;
+    const { role, signupValue } = parsedLine;
+    const parsedSignup = parseRosterSignupValue(signupValue);
+    const signupDisplayName = parsedSignup.displayName;
     const existingSlot = existingSlots[index];
     const existingSlotName = normalizeRosterDisplayName(
       existingSlot?.signupDisplayName ?? null,
     );
     slots.push({
       number: index + 1,
-      role: match[2].trim(),
+      role,
       signupUserId:
         existingSlotName === signupDisplayName
           ? existingSlot.signupUserId
           : (userIdsByDisplayName.get(signupDisplayName ?? "") ?? null),
       signupDisplayName,
-      charNote: signupMatch?.[2]?.trim() || null,
-      isTbc,
+      charNote: parsedSignup.charNote,
+      isTbc: parsedSignup.isTbc,
     });
   }
   return slots;
@@ -240,7 +288,8 @@ export const formatSlotLabel = (
 export const pickRandomOpenSlot = (sheet: SignupSheet): SignupSlot | null => {
   const openSlots = sheet.slots.filter((slot) => !slot.signupUserId);
   if (!openSlots.length) return null;
-  return openSlots[Math.floor(Math.random() * openSlots.length)]!;
+  const randomIndex = randomInt(0, openSlots.length);
+  return openSlots[randomIndex]!;
 };
 
 export interface ActionNoticeEntry {
@@ -285,24 +334,44 @@ const timeDelta = (amount: number, unit: string): number | null => {
  * into a signed number of seconds. Returns `null` for an invalid value.
  */
 export const parseTimeShift = (value: string): number | null => {
-  const match =
-    /^(next|last|-?(?:\d+(?:\.[05])?|\.5))\s+(minutes?|mins?|hours?|days?|weeks?|months?)$/i.exec(
-      value.trim(),
-    );
-  if (!match) return null;
-  const amount =
-    match[1].toLowerCase() === "next"
-      ? 1
-      : match[1].toLowerCase() === "last"
-        ? -1
-        : Number(match[1]);
-  if (!Number.isFinite(amount) || Math.round(amount * 2) !== amount * 2)
+  const trimmed = value.trim();
+  const tokens = trimmed.split(/\s+/);
+  if (tokens.length !== 2) return null;
+
+  const [rawAmountToken, rawUnitToken] = tokens;
+  const rawAmount = rawAmountToken.toLowerCase();
+  const normalizedUnit = rawUnitToken.toLowerCase();
+  const allowedUnits = new Set([
+    "minute",
+    "minutes",
+    "mins",
+    "min",
+    "hour",
+    "hours",
+    "day",
+    "days",
+    "week",
+    "weeks",
+    "month",
+    "months",
+  ]);
+
+  if (!allowedUnits.has(normalizedUnit.replace(/s$/, ""))) return null;
+
+  let amount: number;
+  if (rawAmount === "next") amount = 1;
+  else if (rawAmount === "last") amount = -1;
+  else if (/^-?(?:\d+(?:\.\d+)?|\.\d+)$/.test(rawAmount))
+    amount = Number(rawAmount);
+  else return null;
+
+  if (!Number.isFinite(amount) || Math.round(amount * 2) !== amount * 2) {
     return null;
-  const normalizedUnit = match[2].toLowerCase().replace(/s$/, "");
-  return timeDelta(
-    amount,
-    normalizedUnit === "min" ? "minute" : normalizedUnit,
-  );
+  }
+
+  const unitKey = normalizedUnit.replace(/s$/, "");
+  const normalizedUnitKey = unitKey === "min" ? "minute" : unitKey;
+  return timeDelta(amount, normalizedUnitKey);
 };
 
 /**
@@ -316,26 +385,26 @@ export const isUserInRosterOrOrganizer = (
   if (sheet.organizerId && sheet.organizerId === user.id) {
     return true;
   }
-  const names = [user.displayName, user.globalName, user.username].filter(
-    (n): n is string => Boolean(n),
+  const names = new Set(
+    [user.displayName, user.globalName, user.username]
+      .filter((value): value is string => Boolean(value))
+      .map((value) => normalizeRosterDisplayName(value) ?? value),
   );
-  if (names.some((name) => sheet.organizerName === name)) {
+  if (sheet.organizerName && names.has(sheet.organizerName)) {
     return true;
   }
   const inSlots = sheet.slots.some(
     (slot) =>
       slot.signupUserId === user.id ||
       (slot.signupDisplayName &&
-        names.includes(
-          normalizeRosterDisplayName(slot.signupDisplayName) ?? "",
-        )),
+        names.has(normalizeRosterDisplayName(slot.signupDisplayName) ?? "")),
   );
   if (inSlots) return true;
   const inReserves = sheet.reserves.some(
     (reserve) =>
       reserve.userId === user.id ||
       (reserve.displayName &&
-        names.includes(normalizeRosterDisplayName(reserve.displayName) ?? "")),
+        names.has(normalizeRosterDisplayName(reserve.displayName) ?? "")),
   );
   return inReserves;
 };

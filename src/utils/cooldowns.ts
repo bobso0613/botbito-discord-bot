@@ -10,6 +10,9 @@ import {
  * Returns an array of all matching instance types or an empty array if none match.
  * Uses word boundaries for abbreviations (1-3 chars) and substring matching for full names.
  */
+const escapeRegularExpression = (value: string): string =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+
 export const parseInstanceTypes = (
   title: string,
   instanceTypes: readonly InstanceType[] = COOLDOWN_INSTANCE_TYPES,
@@ -17,23 +20,21 @@ export const parseInstanceTypes = (
   const matches: InstanceType[] = [];
 
   for (const instanceType of instanceTypes) {
-    // Skip "Others" type as it's only used as a fallback
     if (instanceType.name === "Others") continue;
 
     for (const keyword of instanceType.keywords) {
-      // For abbreviations (1-3 chars), match as whole word using word boundaries
       if (keyword.length <= 3) {
-        const regex = new RegExp(`\\b${keyword}\\b`, "i");
+        const regex = new RegExp(
+          String.raw`(?:^|\s)${escapeRegularExpression(keyword)}(?:\s|$)`,
+          "i",
+        );
         if (regex.test(title)) {
           matches.push(instanceType);
-          break; // Only add this instance type once
+          break;
         }
-      } else {
-        // For longer keywords, do substring match (case-insensitive)
-        if (title.toUpperCase().includes(keyword.toUpperCase())) {
-          matches.push(instanceType);
-          break; // Only add this instance type once
-        }
+      } else if (title.toUpperCase().includes(keyword.toUpperCase())) {
+        matches.push(instanceType);
+        break;
       }
     }
   }
@@ -65,8 +66,8 @@ export const extractMultiplierFromTitle = (
     return 4;
   }
 
-  const match = title.match(/(\d+)x/i);
-  return match ? parseInt(match[1], 10) : 1;
+  const match = /(?:^|\D)(\d+)x\b/i.exec(title);
+  return match ? Number.parseInt(match[1], 10) : 1;
 };
 
 /**

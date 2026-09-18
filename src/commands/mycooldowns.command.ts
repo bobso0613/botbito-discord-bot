@@ -120,7 +120,7 @@ export const sendMyCooldowns = async (
   }
   const guildsWithSignups = Array.from(
     new Set(allSchedules.map((schedule) => schedule.guildName)),
-  ).sort();
+  ).sort((first, second) => first.localeCompare(second));
   const sortedCooldowns = Array.from(cooldownMap.entries()).sort(
     ([first], [second]) => {
       if (first === "Others") return 1;

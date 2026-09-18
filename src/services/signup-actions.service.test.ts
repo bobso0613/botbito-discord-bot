@@ -166,4 +166,17 @@ describe("signup actions service", () => {
     ).resolves.toBe(user);
     expect(fetch).toHaveBeenCalledWith("100000000000000001");
   });
+
+  it("resolves the only guild member returned for a username search", async () => {
+    const user = { id: "100000000000000002", displayName: "Alice" };
+    const fetch = jest.fn(
+      async (_options: { query: string; limit: number }) =>
+        new Map([[user.id, { user, displayName: "Alice", nickname: null }]]),
+    );
+
+    await expect(
+      resolveTargetUser({ guild: { members: { fetch } } } as never, "Alice"),
+    ).resolves.toBe(user);
+    expect(fetch).toHaveBeenCalledWith({ query: "Alice", limit: 100 });
+  });
 });

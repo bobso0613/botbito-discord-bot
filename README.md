@@ -254,9 +254,9 @@ Channel-scoped signup sheets (created with `/newrun`) provide an interactive par
 
 - **Party Setup & Customization**: Create multi-party configurations with customizable party sizes, custom run names, notes, thumbnail icons, embed colors, server timezones, and instance types.
 - **Roster Management**:
-  - `/add` (alias `/a`): Sign up for specific slot numbers (e.g. `1`, `1, 2`), `random` open slot, or `reserve`. Supports signing up other users by mention or username (e.g. `2 @user` or `2 B4D`).
+  - `/add` (alias `/a`): Sign up for specific slot numbers (e.g. `1`, `1, 2`), one `random` open slot, or `reserve`. Supports signing up other users by mention or username (e.g. `2 @user` or `2 B4D`). Occupied slots require confirmation before replacement, and concurrent changes are rechecked before an open-slot add is saved.
   - `/remove` (alias `/r`): Remove your own signups/reserves, or remove specific slot/reserve positions.
-  - `/swap`: Join a slot as yourself, swap two slots/reserves, or move to reserves. If a user holds multiple signups, specifying the second position is required to prevent ambiguity.
+  - `/swap`: Join a slot as yourself, swap two party slots, swap a party slot with a reserve, or move a signup to reserves. Use `reserve` as the first value to move your own single party-slot signup to reserves. If a user holds multiple signups, specifying the second position is required to prevent ambiguity.
   - `/charnote` (alias `/char`): Add character notes (e.g. `HP 3x`, `Alt`, `DPS`) to your own slot/reserve or a specified position number.
   - `/removecharnote` (alias `/rc`): Clear character notes for your own positions or specified slot/reserve numbers.
   - `/tbc`: Toggle To Be Confirmed (TBC) status for yourself or specified slot/reserve numbers. Marked with a `❓` emoji on the roster.

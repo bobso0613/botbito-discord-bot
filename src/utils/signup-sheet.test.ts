@@ -259,6 +259,28 @@ describe("signup-sheet utils", () => {
   });
 
   describe("pickRandomOpenSlot", () => {
+    it("does not rely on Math.random for slot selection", () => {
+      const originalRandom = Math.random;
+      const restore = () => {
+        Math.random = originalRandom;
+      };
+      Math.random = () => {
+        throw new Error("Math.random should not be used");
+      };
+
+      try {
+        const sheet = buildSheet([
+          buildSlot({ number: 1, signupUserId: null }),
+          buildSlot({ number: 2, signupUserId: null }),
+        ]);
+        expect(pickRandomOpenSlot(sheet)).not.toBeNull();
+      } finally {
+        restore();
+      }
+    });
+  });
+
+  describe("pickRandomOpenSlot", () => {
     it("returns null when every slot is occupied", () => {
       const sheet = buildSheet([buildSlot({ signupUserId: "user-1" })]);
       expect(pickRandomOpenSlot(sheet)).toBeNull();
