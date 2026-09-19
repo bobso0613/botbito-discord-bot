@@ -31,6 +31,17 @@ jobs:
           printf '%s\n' '{"guildScheduleSource":{"categoryIds":["1494582316482297887"],"scheduleTextChannelIds":["test-channel"]},"guildIcons":{"DEV":"<:guildIcon_92073842977030144:1545375402833215548>","PROD":"<:guildIcon_92073842977030144:1545374409496207490>"}}' > private/guild-settings/92073842977030144.json
           printf '%s\n' '{"guildScheduleSource":{"categoryIds":["1115484031455346719"],"scheduleTextChannelIds":["test-channel"]},"guildIcons":{"DEV":"","PROD":""}}' > private/guild-settings/1115484031455346718.json
       - run: npm run test:coverage
+      - name: Check Sonar token
+        id: sonar_token
+        shell: bash
+        run: |
+          if [ -n "${{ secrets.SONAR_TOKEN }}" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::SONAR_TOKEN is not configured. Skipping SonarCloud scan."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602
+        if: steps.sonar_token.outputs.available == 'true'
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
