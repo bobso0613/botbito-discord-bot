@@ -21,8 +21,16 @@ jobs:
           cache: npm
 
       - run: npm ci --ignore-scripts
+      - name: Create test settings
+        shell: bash
+        run: |
+          mkdir -p private/guild-settings
+          printf '%s\n' '{"payoutGuildIds":["499171225046876170","92073842977030144","1115484031455346718"],"payoutToPingId":"test-payout-contact","payoutToPingTag":"test-contact"}' > private/discord_settings.json
+          printf '%s\n' '{"guildScheduleBotIds":["836060624911073291","901721382214328350","1544576337346429058"]}' > private/guild_schedule_settings.json
+          printf '%s\n' '{"guildScheduleSource":{"categoryIds":["1481977001811247245"],"scheduleTextChannelIds":["test-channel"]},"guildIcons":{"DEV":"<:guildIcon_499171225046876170:1545375525017755699>","PROD":"<:guildIcon_499171225046876170:1545374710638837810>"}}' > private/guild-settings/499171225046876170.json
+          printf '%s\n' '{"guildScheduleSource":{"categoryIds":["1494582316482297887"],"scheduleTextChannelIds":["test-channel"]},"guildIcons":{"DEV":"<:guildIcon_92073842977030144:1545375402833215548>","PROD":"<:guildIcon_92073842977030144:1545374409496207490>"}}' > private/guild-settings/92073842977030144.json
+          printf '%s\n' '{"guildScheduleSource":{"categoryIds":["1115484031455346719"],"scheduleTextChannelIds":["test-channel"]},"guildIcons":{"DEV":"","PROD":""}}' > private/guild-settings/1115484031455346718.json
       - run: npm run test:coverage
-
       - uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
