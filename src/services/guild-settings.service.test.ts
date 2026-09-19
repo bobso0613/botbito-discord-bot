@@ -1,4 +1,5 @@
 import { describe, expect, it, jest } from "@jest/globals";
+import { resolve } from "node:path";
 import type { GuildSettings } from "../types/discord-settings.js";
 import {
   COOLDOWN_INSTANCE_TYPES,
@@ -43,7 +44,7 @@ const { ensureGuildSettings, updateGuildScheduleSource } =
   await import("./guild-settings.service.js");
 
 const getPath = (guildId: string): string =>
-  `${process.cwd()}\\private\\guild-settings\\${guildId}.json`;
+  resolve(process.cwd(), "private", "guild-settings", `${guildId}.json`);
 
 describe("guild settings service", () => {
   beforeEach(() => {
