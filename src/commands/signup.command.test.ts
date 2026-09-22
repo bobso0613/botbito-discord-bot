@@ -80,6 +80,9 @@ const rtbcCommand = signupCommands.find(
 const swapCommand = signupCommands.find(
   (command) => command.data.name === "swap",
 )!;
+const addCommand = signupCommands.find(
+  (command) => command.data.name === "add",
+)!;
 
 const buildSheet = (overrides: Partial<SignupSheet> = {}): SignupSheet => ({
   guildId: "guild-1",
@@ -121,7 +124,12 @@ const buildSheet = (overrides: Partial<SignupSheet> = {}): SignupSheet => ({
   ...overrides,
 });
 
-const createInteraction = (input: string | null = null, userId = "user-1") => ({
+const createInteraction = (
+  input: string | null = null,
+  userId = "user-1",
+  char: string | null = null,
+  tbc = false,
+) => ({
   guildId: "guild-1",
   channelId: "channel-1",
   guild: { id: "guild-1", name: "Guild 1", iconURL: () => null },
@@ -132,9 +140,46 @@ const createInteraction = (input: string | null = null, userId = "user-1") => ({
   options: {
     getString: jest.fn((name: string) => {
       if (name === "input") return input;
+      if (name === "char") return char;
       return null;
     }),
+    getBoolean: jest.fn((name: string) => (name === "tbc" ? tbc : null)),
   },
+});
+
+describe("/add options", () => {
+  it("applies char and tbc to an open slot", async () => {
+    const sheet = buildSheet({
+      slots: [
+        {
+          number: 1,
+          role: "Tank",
+          signupUserId: null,
+          signupDisplayName: null,
+          charNote: null,
+        },
+      ],
+    });
+    getSignupSheet.mockResolvedValue(sheet);
+    const interaction = createInteraction("1", "user-1", "Paladin", true);
+
+    await addCommand.execute(interaction as never);
+
+    expect(saveSignupSheet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        slots: [
+          expect.objectContaining({
+            signupUserId: "user-1",
+            charNote: "Paladin",
+            isTbc: true,
+          }),
+        ],
+      }),
+    );
+    expect(interaction.followUp).toHaveBeenCalledWith({
+      content: "**Invoker** added as **01: Tank** (Paladin, TBC).",
+    });
+  });
 });
 
 describe("/charnote", () => {
@@ -1598,6 +1643,8 @@ describe("/add overwrite confirmation buttons", () => {
       userId: "user-1",
       displayName: "NewTank",
       slotNumbers: [1],
+      charNote: null,
+      isTbc: false,
     });
 
     const buttonInteraction = {
@@ -1652,6 +1699,8 @@ describe("/add overwrite confirmation buttons", () => {
       userId: "user-1",
       displayName: "NewTank",
       slotNumbers: [1],
+      charNote: null,
+      isTbc: false,
     });
 
     const buttonInteraction = {

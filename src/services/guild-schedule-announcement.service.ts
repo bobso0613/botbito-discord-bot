@@ -121,7 +121,9 @@ export const getLatestSentScheduleTimestamp = async (
     .filter(
       (candidate) =>
         candidate.id !== message.id &&
-        DISCORD_SETTINGS.guildScheduleBotIds.includes(candidate.author.id),
+        DISCORD_SETTINGS.guildScheduleBotIds.includes(candidate.author.id) &&
+        (getScheduleTimestamp(candidate) !== undefined ||
+          isClearedScheduleMessage(candidate)),
     )
     .sort(
       (first, second) => second.createdTimestamp - first.createdTimestamp,
@@ -164,8 +166,8 @@ const deleteChannelMessages = async (channel: TextChannel): Promise<void> => {
 };
 
 export type GuildScheduleRefreshTrigger =
-  | { type: "timestamp-change" }
-  | { type: "title-change" }
+  | { type: "timestamp-change"; from: string | null; to: string | null }
+  | { type: "title-change"; from: string; to: string }
   | { type: "channel-rename"; previousChannelName: string };
 
 /** Builds the log message emitted when an automatic schedule refresh starts. */
@@ -184,6 +186,18 @@ export const buildGuildScheduleRefreshLogMessage = (
     `triggerRunTitle=${JSON.stringify(getScheduleTitle(message) ?? null)}`,
     `previousChannelName=${JSON.stringify(
       trigger.type === "channel-rename" ? trigger.previousChannelName : null,
+    )}`,
+    `timestampFrom=${JSON.stringify(
+      trigger.type === "timestamp-change" ? trigger.from : null,
+    )}`,
+    `timestampTo=${JSON.stringify(
+      trigger.type === "timestamp-change" ? trigger.to : null,
+    )}`,
+    `titleFrom=${JSON.stringify(
+      trigger.type === "title-change" ? trigger.from : null,
+    )}`,
+    `titleTo=${JSON.stringify(
+      trigger.type === "title-change" ? trigger.to : null,
     )}`,
     `guildName=${JSON.stringify(message.guild?.name ?? null)}`,
     `scheduleChannels=${JSON.stringify(scheduleChannels)}`,
@@ -360,6 +374,8 @@ export const getGuildScheduleRefreshTrigger = async (
   previousMessage?: Message,
 ): Promise<GuildScheduleRefreshTrigger | undefined> => {
   if (!isGuildScheduleSourceMessage(message)) return undefined;
+  const guildId = message.guildId;
+  if (!guildId) return undefined;
 
   const timestamp = getScheduleTimestamp(message);
   if (!timestamp && !previousMessage && !isClearedScheduleMessage(message)) {
@@ -369,13 +385,36 @@ export const getGuildScheduleRefreshTrigger = async (
   const previousTimestamp = previousMessage
     ? getScheduleTimestamp(previousMessage)
     : await getLatestSentScheduleTimestamp(message);
+  const isCleared = isClearedScheduleMessage(message);
   const timestampChanged = previousMessage
     ? isGuildScheduleTimestampChanged(previousMessage, message)
-    : previousTimestamp !== timestamp || isClearedScheduleMessage(message);
-  if (timestampChanged) return { type: "timestamp-change" };
+    : previousTimestamp !== timestamp &&
+      (previousTimestamp !== undefined || timestamp !== undefined) &&
+      (Boolean(timestamp) || isCleared);
+  if (timestampChanged) {
+    return {
+      type: "timestamp-change",
+      from: previousTimestamp ?? null,
+      to: timestamp ?? null,
+    };
+  }
 
-  return (await isTitleChangeConfirmed(message, previousMessage))
-    ? { type: "title-change" }
+  if (!(await isTitleChangeConfirmed(message, previousMessage)))
+    return undefined;
+  const previousTitle = previousMessage
+    ? getScheduleTitle(previousMessage)
+    : await getAnnouncedTitleForChannel(
+        message.guild!,
+        DISCORD_SETTINGS.guildScheduleSourceByGuild[guildId]!
+          .scheduleTextChannelIds,
+        getChannelUrl(message),
+      );
+  return previousTitle
+    ? {
+        type: "title-change",
+        from: previousTitle,
+        to: getScheduleTitle(message)!,
+      }
     : undefined;
 };
 

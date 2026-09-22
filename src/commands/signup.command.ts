@@ -153,9 +153,8 @@ const signupCommandDefinitions: Command[] = [
         pendingSetupDrafts.set(key, structuredClone(sheet));
         pendingRosterUsers.set(key, interaction.user.id);
         await interaction.reply({
-          content: getRosterPrompt(sheet.slots),
+          content: getRosterPrompt(sheet.slots, sheet.partySizes),
           components: [buildRosterPromptButtons()],
-          flags: MessageFlags.Ephemeral,
         });
         return;
       }
@@ -310,11 +309,27 @@ const signupCommandDefinitions: Command[] = [
             "Slot number(s), `random`, or `reserve`, optionally followed by @user",
           )
           .setRequired(true),
+      )
+      .addStringOption((option) =>
+        option
+          .setName("char")
+          .setDescription("Character name")
+          .setRequired(false),
+      )
+      .addBooleanOption((option) =>
+        option
+          .setName("tbc")
+          .setDescription("Mark the signup as TBC")
+          .setRequired(false),
       ) as SlashCommandBuilder,
     execute: async (interaction) => {
       await executeAdd(
         interaction,
         interaction.options.getString("input", true),
+        {
+          char: interaction.options.getString("char"),
+          tbc: interaction.options.getBoolean("tbc") ?? false,
+        },
       );
     },
   },

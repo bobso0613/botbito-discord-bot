@@ -90,22 +90,42 @@ export const createEmptySlots = (partySizes: number[]): SignupSlot[] =>
     }),
   );
 
-/** Renders slots as editable `NN: Role - Name (note) ❓` roster text for the roster-edit prompt. */
-export const getDefaultRoster = (slots: SignupSlot[]): string =>
-  slots
-    .map((slot) => {
+/** Renders slots as editable `NN: Role - Name (note) ❓` roster text. */
+export const getDefaultRoster = (
+  slots: SignupSlot[],
+  partySizes?: number[],
+): string => {
+  const partyStartIndexes = new Set<number>();
+  if (partySizes) {
+    let startIndex = 0;
+    for (const partySize of partySizes) {
+      partyStartIndexes.add(startIndex);
+      startIndex += partySize;
+    }
+  }
+
+  let partyNumber = 0;
+  return slots
+    .map((slot, index) => {
+      const partyHeader = partyStartIndexes.has(index)
+        ? `Party ${++partyNumber}:\n`
+        : "";
       const tbcSuffix = slot.isTbc ? " ❓" : "";
       const charNoteSuffix = slot.charNote ? ` (${slot.charNote})` : "";
       const signupContent = slot.signupDisplayName
         ? ` ${slot.signupDisplayName}${charNoteSuffix}${tbcSuffix}`
         : tbcSuffix;
-      return `${String(slot.number).padStart(2, "0")}: ${slot.role} -${signupContent}`;
+      return `${partyHeader}${String(slot.number).padStart(2, "0")}: ${slot.role} -${signupContent}`;
     })
     .join("\n");
+};
 
 /** Builds the prompt message shown when asking the user to send their edited roster text. */
-export const getRosterPrompt = (slots: SignupSlot[]): string =>
-  `Send your completed roster as your next message in this channel. You can use Discord's emoji picker.\nYou don't need to add reserve slots here; those are set up automatically using \`/add input=reserve\`.\n\n\`\`\`\n${getDefaultRoster(slots)}\n\`\`\``;
+export const getRosterPrompt = (
+  slots: SignupSlot[],
+  partySizes: number[] = [slots.length],
+): string =>
+  `Send your completed roster as your next message in this channel. You can use Discord's emoji picker.\nTo change the number of parties, add or remove a \`Party #:\` header and move roster lines under the correct party.\nYou don't need to add reserve slots here; those are set up automatically using \`/add input=reserve\`.\n\n\`\`\`\n${getDefaultRoster(slots, partySizes)}\n\`\`\``;
 
 /** Strips optional bold markdown from a roster display name, returning `null` for blank input. */
 export const normalizeRosterDisplayName = (
@@ -136,11 +156,21 @@ const parseRosterLine = (
   const remainder = trimmed.slice(separatorIndex + 1).trim();
   if (!numberText || !remainder) return null;
 
-  const dashIndex = remainder.indexOf(" - ");
+  const separatorIndexInRemainder = remainder.indexOf(" - ");
+  const emptySignupSeparator = remainder.endsWith(" -")
+    ? remainder.length - 2
+    : -1;
+  const dashIndex =
+    separatorIndexInRemainder === -1
+      ? emptySignupSeparator
+      : separatorIndexInRemainder;
   const role =
     dashIndex === -1 ? remainder : remainder.slice(0, dashIndex).trim();
+  const separatorLength = separatorIndexInRemainder === -1 ? 2 : 3;
   const signupValue =
-    dashIndex === -1 ? null : remainder.slice(dashIndex + 3).trim() || null;
+    dashIndex === -1
+      ? null
+      : remainder.slice(dashIndex + separatorLength).trim() || null;
 
   if (!role) return null;
   return {
@@ -188,44 +218,110 @@ const parseRosterSignupValue = (
   return { displayName, charNote, isTbc };
 };
 
+export interface ParsedRoster {
+  slots: SignupSlot[];
+  partySizes: number[] | null;
+}
+
+const parseRosterPartyHeader = (line: string): number | null => {
+  const match = /^Party\s+(\d+)\s*:\s*$/i.exec(line.trim());
+  return match ? Number(match[1]) : null;
+};
+
+const parseRosterSlot = (
+  line: string,
+  slotIndex: number,
+  existingSlots: SignupSlot[],
+  userIdsByDisplayName: Map<string, string | null>,
+): SignupSlot | null => {
+  const parsedLine = parseRosterLine(line);
+  const lineNumberMatch = /^\d+/.exec(line.trimStart());
+  const lineNumber = lineNumberMatch ? Number(lineNumberMatch[0]) : Number.NaN;
+  if (!parsedLine || lineNumber !== slotIndex + 1) return null;
+
+  const { role, signupValue } = parsedLine;
+  const parsedSignup = parseRosterSignupValue(signupValue);
+  const signupDisplayName = parsedSignup.displayName;
+  const existingSlot = existingSlots[slotIndex];
+  const existingSlotName = normalizeRosterDisplayName(
+    existingSlot?.signupDisplayName ?? null,
+  );
+  return {
+    number: slotIndex + 1,
+    role,
+    signupUserId:
+      existingSlotName === signupDisplayName
+        ? existingSlot.signupUserId
+        : (userIdsByDisplayName.get(signupDisplayName ?? "") ?? null),
+    signupDisplayName,
+    charNote: parsedSignup.charNote,
+    isTbc: parsedSignup.isTbc,
+  };
+};
+
+type RosterStructure = {
+  slotLines: string[];
+  partySizes: number[] | null;
+};
+
+const parseRosterStructure = (roster: string): RosterStructure | null => {
+  const slotLines: string[] = [];
+  const partySizes: number[] = [];
+  let currentPartySize = 0;
+  let hasPartyHeaders = false;
+  let expectedPartyNumber = 1;
+
+  for (const line of roster.split("\n").filter(Boolean)) {
+    const partyNumber = parseRosterPartyHeader(line);
+    if (partyNumber === null) {
+      slotLines.push(line);
+      currentPartySize += 1;
+      continue;
+    }
+    if (partyNumber !== expectedPartyNumber) return null;
+    if (hasPartyHeaders && currentPartySize === 0) return null;
+    if (hasPartyHeaders) partySizes.push(currentPartySize);
+    hasPartyHeaders = true;
+    currentPartySize = 0;
+    expectedPartyNumber += 1;
+  }
+
+  if (hasPartyHeaders) {
+    if (currentPartySize === 0) return null;
+    partySizes.push(currentPartySize);
+  }
+  return {
+    slotLines,
+    partySizes: hasPartyHeaders ? partySizes : null,
+  };
+};
+
+export const parseRosterWithPartySizes = (
+  roster: string,
+  existingSlots: SignupSlot[],
+): ParsedRoster | null => {
+  const structure = parseRosterStructure(roster);
+  if (!structure) return null;
+  if (
+    !structure.slotLines.length ||
+    (!structure.partySizes &&
+      structure.slotLines.length !== existingSlots.length)
+  )
+    return null;
+
+  const userIdsByDisplayName = buildRosterUserLookup(existingSlots);
+  const slots = structure.slotLines.map((line, index) =>
+    parseRosterSlot(line, index, existingSlots, userIdsByDisplayName),
+  );
+  if (slots.includes(null)) return null;
+  return { slots: slots as SignupSlot[], partySizes: structure.partySizes };
+};
+
 export const parseRoster = (
   roster: string,
   existingSlots: SignupSlot[],
-): SignupSlot[] | null => {
-  const rosterLines = roster.split("\n").filter(Boolean);
-  if (rosterLines.length !== existingSlots.length) return null;
-  const userIdsByDisplayName = buildRosterUserLookup(existingSlots);
-  const slots: SignupSlot[] = [];
-  for (const [index, line] of rosterLines.entries()) {
-    const parsedLine = parseRosterLine(line);
-    const lineNumberMatch = /^\d+/.exec(line.trimStart());
-    const lineNumber = lineNumberMatch
-      ? Number(lineNumberMatch[0])
-      : Number.NaN;
-    if (!parsedLine || lineNumber !== index + 1) {
-      return null;
-    }
-    const { role, signupValue } = parsedLine;
-    const parsedSignup = parseRosterSignupValue(signupValue);
-    const signupDisplayName = parsedSignup.displayName;
-    const existingSlot = existingSlots[index];
-    const existingSlotName = normalizeRosterDisplayName(
-      existingSlot?.signupDisplayName ?? null,
-    );
-    slots.push({
-      number: index + 1,
-      role,
-      signupUserId:
-        existingSlotName === signupDisplayName
-          ? existingSlot.signupUserId
-          : (userIdsByDisplayName.get(signupDisplayName ?? "") ?? null),
-      signupDisplayName,
-      charNote: parsedSignup.charNote,
-      isTbc: parsedSignup.isTbc,
-    });
-  }
-  return slots;
-};
+): SignupSlot[] | null =>
+  parseRosterWithPartySizes(roster, existingSlots)?.slots ?? null;
 
 /**
  * Resolves unmatched roster display names to guild member Discord IDs by

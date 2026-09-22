@@ -14,6 +14,7 @@ import {
   normalizeRosterDisplayName,
   parseNewRunTimestamp,
   parseRoster,
+  parseRosterWithPartySizes,
   parseServerTimezone,
   parseTimeShift,
   pickRandomOpenSlot,
@@ -126,6 +127,48 @@ describe("signup-sheet utils", () => {
   });
 
   describe("getDefaultRoster / parseRoster round-trip", () => {
+    it("renders and parses party headers with their size breakdown", () => {
+      const slots = [
+        buildSlot({ number: 1, role: "Tank" }),
+        buildSlot({ number: 2, role: "Healer" }),
+        buildSlot({ number: 3, role: "DPS" }),
+      ];
+      const rosterText = getDefaultRoster(slots, [2, 1]);
+
+      expect(rosterText).toContain("Party 1:\n01: Tank -");
+      expect(rosterText).toContain("Party 2:\n03: DPS -");
+      const parsed = parseRosterWithPartySizes(rosterText, slots);
+
+      expect(parsed?.partySizes).toEqual([2, 1]);
+      expect(parsed?.slots).toHaveLength(3);
+    });
+
+    it("accepts a changed party breakdown from roster headers", () => {
+      const slots = [
+        buildSlot({ number: 1, role: "Tank" }),
+        buildSlot({ number: 2, role: "Healer" }),
+        buildSlot({ number: 3, role: "DPS" }),
+      ];
+      const parsed = parseRosterWithPartySizes(
+        "Party 1:\n01: Tank -\nParty 2:\n02: Healer -\n03: DPS -",
+        slots,
+      );
+
+      expect(parsed?.partySizes).toEqual([1, 2]);
+    });
+
+    it("keeps empty roster slots from gaining an extra dash", () => {
+      const slots = [buildSlot({ number: 1, role: "Tank" })];
+      const rosterText = getDefaultRoster(slots);
+      const parsed = parseRoster(rosterText, slots);
+
+      expect(parsed?.[0]).toMatchObject({
+        role: "Tank",
+        signupDisplayName: null,
+      });
+      expect(getDefaultRoster(parsed!)).toBe("01: Tank -");
+    });
+
     it("parses back the roster text it generated, including signups and notes", () => {
       const slots = [
         buildSlot({ number: 1, role: "High Wizard", isTbc: true }),
@@ -185,8 +228,10 @@ describe("signup-sheet utils", () => {
 
   describe("getRosterPrompt", () => {
     it("includes the default roster text and the reserve hint", () => {
-      const prompt = getRosterPrompt([buildSlot()]);
+      const prompt = getRosterPrompt([buildSlot()], [1]);
       expect(prompt).toContain("01: Tank -");
+      expect(prompt).toContain("Party 1:");
+      expect(prompt).toContain("To change the number of parties");
       expect(prompt).toContain("/add input=reserve");
     });
   });

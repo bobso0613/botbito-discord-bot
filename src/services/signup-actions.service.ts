@@ -43,7 +43,24 @@ export interface PendingAddConfirmation {
   userId: string;
   displayName: string;
   slotNumbers: number[];
+  charNote: string | null;
+  isTbc: boolean;
 }
+
+export interface AddOptions {
+  char?: string | null;
+  tbc?: boolean;
+}
+
+export const formatAddNoticeDetail = (
+  charName: string | null | undefined,
+  isTbc: boolean,
+): string | undefined => {
+  const details = [charName?.trim(), isTbc ? "TBC" : null].filter(
+    (detail): detail is string => Boolean(detail),
+  );
+  return details.length ? details.join(", ") : undefined;
+};
 
 export const pendingAddConfirmations = new ExpiringMap<
   string,
@@ -311,8 +328,9 @@ const formatActionNotice = (
   runTitle: string,
   detail?: string,
 ): string => {
+  const detailSuffix = detail ? ` (${detail})` : "";
   const selfText = {
-    added: `${target} added as **${labelText}**.`,
+    added: `${target} added as **${labelText}**${detailSuffix}.`,
     removed: `${target} removed from **${labelText}**.`,
     swapped: `${target} swapped to **${labelText}**.`,
     tbc: `${target} marked as **TBC**.`,
@@ -321,7 +339,7 @@ const formatActionNotice = (
     uncharnote: `${target} removed the char note from **${labelText}**.`,
   } satisfies Record<NoticeAction, string>;
   const otherText = {
-    added: `${target}, you got added by ${invokerMention} as **${labelText}** on ${runTitle}.`,
+    added: `${target}, you got added by ${invokerMention} as **${labelText}**${detailSuffix} on ${runTitle}.`,
     removed: `${target}, you got removed by ${invokerMention} from **${labelText}** on ${runTitle}.`,
     swapped: `${target}, you got swapped by ${invokerMention} to **${labelText}** on ${runTitle}.`,
     tbc: `${target}, you got marked as **TBC** by ${invokerMention} on ${runTitle}.`,
@@ -1078,6 +1096,7 @@ const resolveAddTarget = async (
 const addUserToReserve = async (
   interaction: SignupInteraction,
   targetUser: User,
+  options: AddOptions,
 ): Promise<void> => {
   const sheetAfterUpdate = await update(interaction, (sheet) => {
     if (sheet.reserves.some((reserve) => reserve.userId === targetUser.id)) {
@@ -1086,8 +1105,8 @@ const addUserToReserve = async (
     sheet.reserves.push({
       userId: targetUser.id,
       displayName: targetUser.displayName,
-      charNote: null,
-      isTbc: false,
+      charNote: options.char?.trim() || null,
+      isTbc: options.tbc ?? false,
     });
     return null;
   });
@@ -1097,6 +1116,7 @@ const addUserToReserve = async (
       "added",
       [{ userId: targetUser.id, labels: ["Reserve"] }],
       sheetAfterUpdate.title,
+      formatAddNoticeDetail(options.char, options.tbc ?? false),
     );
   }
 };
@@ -1105,6 +1125,7 @@ const addUserToOpenSlots = async (
   interaction: SignupInteraction,
   targetUser: User,
   slotNumbers: number[],
+  options: AddOptions,
 ): Promise<boolean> => {
   const appliedLabels: string[] = [];
   const sheetAfterUpdate = await update(interaction, (sheet) => {
@@ -1122,8 +1143,8 @@ const addUserToOpenSlots = async (
       )!;
       slot.signupUserId = targetUser.id;
       slot.signupDisplayName = targetUser.displayName;
-      slot.charNote = null;
-      slot.isTbc = false;
+      slot.charNote = options.char?.trim() || null;
+      slot.isTbc = options.tbc ?? false;
       appliedLabels.push(formatSlotLabel(slot));
     }
     return null;
@@ -1134,6 +1155,7 @@ const addUserToOpenSlots = async (
     "added",
     [{ userId: targetUser.id, labels: appliedLabels }],
     sheetAfterUpdate.title,
+    formatAddNoticeDetail(options.char, options.tbc ?? false),
   );
   return true;
 };
@@ -1143,6 +1165,7 @@ const requestAddConfirmation = async (
   targetUser: User,
   slotNumbers: number[],
   occupiedSlotNumbers: number[],
+  options: AddOptions,
 ): Promise<void> => {
   if (!interaction.guildId || !interaction.channelId) return;
   pendingAddConfirmations.set(
@@ -1155,6 +1178,8 @@ const requestAddConfirmation = async (
       userId: targetUser.id,
       displayName: targetUser.displayName,
       slotNumbers,
+      charNote: options.char?.trim() || null,
+      isTbc: options.tbc ?? false,
     },
   );
   const plural = occupiedSlotNumbers.length > 1;
@@ -1195,6 +1220,7 @@ const requestAddConfirmation = async (
 export const executeAdd = async (
   interaction: SignupInteraction,
   rawInput: string,
+  options: AddOptions = {},
 ): Promise<void> => {
   const sheet = await getSheet(interaction);
   if (!sheet) return replyMissing(interaction);
@@ -1215,7 +1241,7 @@ export const executeAdd = async (
     return;
   }
   if (positionInput === "reserve") {
-    await addUserToReserve(interaction, targetUser);
+    await addUserToReserve(interaction, targetUser, options);
     return;
   }
   const slotNumbers = resolveAddSlotNumbers(positionInput, sheet, interaction);
@@ -1224,7 +1250,7 @@ export const executeAdd = async (
     (num) => sheet.slots.find((slot) => slot.number === num)?.signupUserId,
   );
   if (!occupiedSlotNumbers.length) {
-    await addUserToOpenSlots(interaction, targetUser, slotNumbers);
+    await addUserToOpenSlots(interaction, targetUser, slotNumbers, options);
     return;
   }
   await requestAddConfirmation(
@@ -1232,6 +1258,7 @@ export const executeAdd = async (
     targetUser,
     slotNumbers,
     occupiedSlotNumbers,
+    options,
   );
 };
 

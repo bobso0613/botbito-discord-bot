@@ -212,7 +212,11 @@ describe("isGuildScheduleChangeMessage", () => {
         createMessage({ timestamp: "1799181000" }),
         createMessage({ timestamp: "1799177400" }),
       ),
-    ).resolves.toEqual({ type: "timestamp-change" });
+    ).resolves.toEqual({
+      type: "timestamp-change",
+      from: "1799177400",
+      to: "1799181000",
+    });
   });
 
   it("does not trigger a refresh from a partial old message", async () => {
@@ -234,6 +238,38 @@ describe("isGuildScheduleChangeMessage", () => {
       ),
     ).toContain(
       'triggerReason="channel-rename" triggerChannel="source-channel-id" triggerRunTitle="Monday Sealed Shrine" previousChannelName="old-shrine"',
+    );
+  });
+
+  it("includes timestamp change from and to values in the refresh log", () => {
+    expect(
+      buildGuildScheduleRefreshLogMessage(
+        createMessage({ timestamp: "1799181000" }),
+        {
+          type: "timestamp-change",
+          from: "1799177400",
+          to: "1799181000",
+        },
+        [],
+        [],
+      ),
+    ).toContain('timestampFrom="1799177400" timestampTo="1799181000"');
+  });
+
+  it("includes title change from and to values in the refresh log", () => {
+    expect(
+      buildGuildScheduleRefreshLogMessage(
+        createMessage({ title: "Tuesday Sealed Shrine" }),
+        {
+          type: "title-change",
+          from: "Monday Sealed Shrine",
+          to: "Tuesday Sealed Shrine",
+        },
+        [],
+        [],
+      ),
+    ).toContain(
+      'titleFrom="Monday Sealed Shrine" titleTo="Tuesday Sealed Shrine"',
     );
   });
 
@@ -354,6 +390,43 @@ describe("isGuildScheduleChangeMessage", () => {
 
     await expect(getLatestSentScheduleTimestamp(sourceMessage)).resolves.toBe(
       "1",
+    );
+  });
+
+  it("ignores newer schedule-bot messages that are not schedule responses", async () => {
+    const timestampMessage = createMessage({ timestamp: "1799177400" });
+    const sourceMessage = {
+      ...timestampMessage,
+      id: "current-message",
+      channel: {
+        messages: {
+          fetch: jest.fn().mockResolvedValue(
+            new Map([
+              [
+                "timestamp",
+                {
+                  ...timestampMessage,
+                  id: "timestamp",
+                  createdTimestamp: 1,
+                },
+              ],
+              [
+                "newer-unrelated",
+                {
+                  ...timestampMessage,
+                  id: "newer-unrelated",
+                  createdTimestamp: 2,
+                  embeds: [],
+                },
+              ],
+            ]) as never,
+          ),
+        },
+      },
+    } as unknown as Message;
+
+    await expect(getLatestSentScheduleTimestamp(sourceMessage)).resolves.toBe(
+      "1799177400",
     );
   });
 
