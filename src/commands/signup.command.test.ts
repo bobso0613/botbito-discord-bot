@@ -88,6 +88,9 @@ const addCommand = signupCommands.find(
 const addAliasCommand = signupCommands.find(
   (command) => command.data.name === "a",
 )!;
+const nextCommand = signupCommands.find(
+  (command) => command.data.name === "next",
+)!;
 
 const buildSheet = (overrides: Partial<SignupSheet> = {}): SignupSheet => ({
   guildId: "guild-1",
@@ -236,6 +239,35 @@ describe("/add options", () => {
     expect(saveSignupSheet).toHaveBeenCalledWith(
       expect.objectContaining({
         slots: [expect.objectContaining({ charNote: "Paladin", isTbc: true })],
+      }),
+    );
+  });
+});
+
+describe("/next", () => {
+  it("clears reserves along with party signups", async () => {
+    const sheet = buildSheet({ timestamp: 1_700_000_000 });
+    getSignupSheet.mockResolvedValue(sheet);
+    const interaction = {
+      ...createInteraction(),
+      options: {
+        getString: jest.fn((name: string) =>
+          name === "value" ? "next week" : null,
+        ),
+      },
+    };
+
+    await nextCommand.execute(interaction as never);
+
+    expect(saveSignupSheet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reserves: [],
+        slots: expect.arrayContaining([
+          expect.objectContaining({
+            signupUserId: null,
+            signupDisplayName: null,
+          }),
+        ]),
       }),
     );
   });

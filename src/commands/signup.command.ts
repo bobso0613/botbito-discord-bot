@@ -583,6 +583,7 @@ const signupCommandDefinitions: Command[] = [
             slot.charNote = null;
             slot.isTbc = false;
           }
+        if (name === "next") s.reserves = [];
         return null;
       });
     },
