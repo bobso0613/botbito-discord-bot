@@ -4,6 +4,7 @@ import {
   InteractionContextType,
   MessageFlags,
   SlashCommandBuilder,
+  type SlashCommandOptionsOnlyBuilder,
   type ChatInputCommandInteraction,
 } from "discord.js";
 import {
@@ -93,6 +94,23 @@ const positionOption = (builder: SlashCommandBuilder): SlashCommandBuilder =>
       )
       .setRequired(false),
   ) as unknown as SlashCommandBuilder;
+
+const addSignupOptions = (
+  builder: SlashCommandOptionsOnlyBuilder,
+): SlashCommandBuilder =>
+  builder
+    .addStringOption((option) =>
+      option
+        .setName("char")
+        .setDescription("Character name")
+        .setRequired(false),
+    )
+    .addBooleanOption((option) =>
+      option
+        .setName("tbc")
+        .setDescription("Mark the signup as TBC")
+        .setRequired(false),
+    ) as SlashCommandBuilder;
 
 const signupCommandDefinitions: Command[] = [
   setupCommand("newrun", "Create a signup sheet in this channel"),
@@ -299,29 +317,19 @@ const signupCommandDefinitions: Command[] = [
     },
   },
   {
-    data: new SlashCommandBuilder()
-      .setName("add")
-      .setDescription("Sign up for a slot or reserve")
-      .addStringOption((option) =>
-        option
-          .setName("input")
-          .setDescription(
-            "Slot number(s), `random`, or `reserve`, optionally followed by @user",
-          )
-          .setRequired(true),
-      )
-      .addStringOption((option) =>
-        option
-          .setName("char")
-          .setDescription("Character name")
-          .setRequired(false),
-      )
-      .addBooleanOption((option) =>
-        option
-          .setName("tbc")
-          .setDescription("Mark the signup as TBC")
-          .setRequired(false),
-      ) as SlashCommandBuilder,
+    data: addSignupOptions(
+      new SlashCommandBuilder()
+        .setName("add")
+        .setDescription("Sign up for a slot or reserve")
+        .addStringOption((option) =>
+          option
+            .setName("input")
+            .setDescription(
+              "Slot number(s), `random`, or `reserve`, optionally followed by @user",
+            )
+            .setRequired(true),
+        ),
+        ),
     execute: async (interaction) => {
       await executeAdd(
         interaction,
@@ -334,17 +342,19 @@ const signupCommandDefinitions: Command[] = [
     },
   },
   {
-    data: new SlashCommandBuilder()
-      .setName("a")
-      .setDescription("Alias for add")
-      .addStringOption((option) =>
-        option
-          .setName("input")
-          .setDescription(
-            "Slot number(s), `random`, or `reserve`, optionally followed by @user",
-          )
-          .setRequired(true),
-      ) as SlashCommandBuilder,
+    data: addSignupOptions(
+      new SlashCommandBuilder()
+        .setName("a")
+        .setDescription("Alias for add")
+        .addStringOption((option) =>
+          option
+            .setName("input")
+            .setDescription(
+              "Slot number(s), `random`, or `reserve`, optionally followed by @user",
+            )
+            .setRequired(true),
+        ),
+        ),
     execute: (i) =>
       signupCommands.find((c) => c.data.name === "add")!.execute(i),
   },

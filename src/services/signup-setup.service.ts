@@ -353,13 +353,33 @@ const handleSetupModal = async (
 const SIMPLE_SIGNUP_MODAL_HANDLERS: Readonly<
   Record<string, (interaction: ModalSubmitInteraction) => Promise<void>>
 > = {
-  [SIGNUP_MODAL_ADD_ID]: (interaction) =>
-    executeAdd(interaction, interaction.fields.getTextInputValue("input"), {
+  [SIGNUP_MODAL_ADD_ID]: async (interaction) => {
+    const rawTbc = interaction.fields
+      .getTextInputValue("tbc")
+      .trim()
+      .toLowerCase();
+    const tbcValues: Record<string, boolean> = {
+      "": false,
+      "0": false,
+      false: false,
+      no: false,
+      "1": true,
+      tbc: true,
+      true: true,
+      yes: true,
+    };
+    if (!(rawTbc in tbcValues)) {
+      await interaction.reply({
+        content: "TBC must be true, false, yes, no, 1, 0, or tbc.",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+    await executeAdd(interaction, interaction.fields.getTextInputValue("input"), {
       char: interaction.fields.getTextInputValue("char"),
-      tbc:
-        interaction.fields.getTextInputValue("tbc").trim().toLowerCase() ===
-        "true",
-    }),
+      tbc: tbcValues[rawTbc],
+    });
+  },
   [SIGNUP_MODAL_REMOVE_ID]: (interaction) =>
     executeRemove(
       interaction,
@@ -536,6 +556,18 @@ export const handleSignupRosterMessage = async (
     if (!sheet || !parsedRoster) {
       await message.reply(
         "Roster lines must be continuous, match the party total, and use `01: Role - name` or `01: Role`.",
+      );
+      return;
+    }
+    const droppedOccupiedSlots = sheet.slots
+      .slice(parsedRoster.slots.length)
+      .filter((slot) => slot.signupUserId || slot.signupDisplayName);
+    if (droppedOccupiedSlots.length > 0) {
+      const droppedLabels = droppedOccupiedSlots
+        .map((slot) => formatSlotLabel(slot))
+        .join(", ");
+      await message.reply(
+        `Reducing party sizes would drop signups in slot(s): ${droppedLabels}. Remove or move those players before shrinking party sizes.`,
       );
       return;
     }

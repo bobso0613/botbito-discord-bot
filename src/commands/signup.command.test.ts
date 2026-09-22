@@ -41,12 +41,14 @@ const {
   handleSignupSwapButton,
   handleSignupWhenButton,
   handleSignupRosterButton,
+  handleSignupRosterMessage,
   handleSignupNoRosterChangesButton,
   handleSignupCancelSetupButton,
   handleSignupAddConfirmButton,
   handleSignupAddCancelButton,
   handleSignupModal,
   pendingSetupDrafts,
+  pendingRosterUsers,
   pendingAddConfirmations,
   addConfirmationKey,
   SIGNUP_CANCEL_SETUP_BUTTON_ID,
@@ -82,6 +84,9 @@ const swapCommand = signupCommands.find(
 )!;
 const addCommand = signupCommands.find(
   (command) => command.data.name === "add",
+)!;
+const addAliasCommand = signupCommands.find(
+  (command) => command.data.name === "a",
 )!;
 
 const buildSheet = (overrides: Partial<SignupSheet> = {}): SignupSheet => ({
@@ -148,6 +153,14 @@ const createInteraction = (
 });
 
 describe("/add options", () => {
+  it("exposes char and tbc options on the /a alias", () => {
+    const optionNames = (addAliasCommand.data.toJSON().options ?? []).map(
+      (option) => option.name,
+    );
+
+    expect(optionNames).toEqual(["input", "char", "tbc"]);
+  });
+
   it("applies char and tbc to an open slot", async () => {
     const sheet = buildSheet({
       slots: [
@@ -179,6 +192,51 @@ describe("/add options", () => {
     expect(interaction.followUp).toHaveBeenCalledWith({
       content: "**Invoker** added as **01: Tank** (Paladin, TBC).",
     });
+  });
+
+  it("accepts yes as true for the Add modal TBC field", async () => {
+    const sheet = buildSheet({
+      slots: [
+        {
+          number: 1,
+          role: "Tank",
+          signupUserId: null,
+          signupDisplayName: null,
+          charNote: null,
+        },
+      ],
+    });
+    getSignupSheet.mockResolvedValue(sheet);
+    const interaction = {
+      customId: SIGNUP_MODAL_ADD_ID,
+      guildId: "guild-1",
+      channelId: "channel-1",
+      guild: { id: "guild-1", name: "Guild 1", iconURL: () => null },
+      user: { id: "user-1", displayName: "Invoker" },
+      fields: {
+        getTextInputValue: jest.fn((id: string) =>
+          ({ input: "1", char: "Paladin", tbc: "yes" })[id] ?? "",
+        ),
+      },
+      reply: jest.fn(),
+      followUp: jest.fn(),
+      deferred: false,
+      client: {
+        users: {
+          fetch: jest
+            .fn<() => Promise<{ id: string; displayName: string }>>()
+            .mockResolvedValue({ id: "user-2", displayName: "Bob" }),
+        },
+      },
+    };
+
+    await handleSignupModal(interaction as never);
+
+    expect(saveSignupSheet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        slots: [expect.objectContaining({ charNote: "Paladin", isTbc: true })],
+      }),
+    );
   });
 });
 
@@ -1159,6 +1217,53 @@ describe("/change roster and roster editing buttons", () => {
         ],
       }),
     );
+  });
+
+  it("rejects a party-header shrink that would drop an occupied slot", async () => {
+    const sheet = buildSheet({
+      partySizes: [2, 1],
+      slots: [
+        {
+          number: 1,
+          role: "Tank",
+          signupUserId: null,
+          signupDisplayName: null,
+          charNote: null,
+        },
+        {
+          number: 2,
+          role: "Healer",
+          signupUserId: null,
+          signupDisplayName: null,
+          charNote: null,
+        },
+        {
+          number: 3,
+          role: "DPS",
+          signupUserId: "user-2",
+          signupDisplayName: "Bob",
+          charNote: null,
+        },
+      ],
+    });
+    const key = "guild-1:channel-1";
+    pendingSetupDrafts.set(key, structuredClone(sheet));
+    pendingRosterUsers.set(key, "user-1");
+    const reply = jest.fn();
+    const message = {
+      guildId: "guild-1",
+      channelId: "channel-1",
+      author: { id: "user-1", bot: false },
+      content: "Party 1:\n01: Tank -",
+      reply,
+    };
+
+    await handleSignupRosterMessage(message as never);
+
+    expect(reply).toHaveBeenCalledWith(
+      "Reducing party sizes would drop signups in slot(s): 03: DPS. Remove or move those players before shrinking party sizes.",
+    );
+    expect(pendingSetupDrafts.get(key)?.slots).toHaveLength(3);
   });
 
   it("cancels pending roster edit on handleSignupCancelSetupButton", async () => {
