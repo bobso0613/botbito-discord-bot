@@ -142,6 +142,23 @@ describe("signup setup service", () => {
     );
   });
 
+  it("rejects party sizes when their count does not match the party count", () => {
+    const result = parseSetup(
+      createModalInteraction({
+        title: "Friday Endless Tower",
+        datetime: "10/09 20:00 GMT+8",
+        timezone: "GMT+8",
+        parties: "2",
+        sizes: "12",
+      }),
+    );
+
+    expect(result).toEqual({
+      error:
+        "Number of parties (2) must match the number of party sizes (1). Enter one size for each party, separated by commas, e.g. 12,6.",
+    });
+  });
+
   it("prevents an edit from dropping an occupied party slot", () => {
     const result = parseSetup(
       createModalInteraction({

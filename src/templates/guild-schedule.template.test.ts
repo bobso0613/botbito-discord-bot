@@ -108,6 +108,36 @@ describe("buildGuildScheduleEmbed", () => {
     expect(description).toContain("🪑 - reserve slot");
   });
 
+  it("displays TBC beside signed-up and reserve statuses", () => {
+    const embed = buildGuildScheduleEmbed(
+      [
+        {
+          title: "Signed up TBC",
+          timestamp: "<t:4070905800:F>",
+          channelName: "signed-up",
+          channelUrl: "https://discord.com/channels/guild/signed-up",
+          isSignedUp: true,
+          isReserve: false,
+          isTbc: true,
+        },
+        {
+          title: "Reserve TBC",
+          timestamp: "<t:4070909400:F>",
+          channelName: "reserve",
+          channelUrl: "https://discord.com/channels/guild/reserve",
+          isSignedUp: false,
+          isReserve: true,
+          isTbc: true,
+        },
+      ],
+      context,
+      ["Run Signups"],
+    );
+
+    expect(embed.data.description).toContain("📝 ❓");
+    expect(embed.data.description).toContain("🪑❓");
+  });
+
   it("omits signup headings and personal details for announcements", () => {
     const embed = buildGuildScheduleEmbed(
       [
@@ -211,7 +241,7 @@ describe("buildMyScheduleEmbed", () => {
       thumbnail: { url: context.userAvatarUrl },
     });
     expect(embed.data.description).toContain(
-      "**__📝 Signed Up / 🪑 Reserve__: **",
+      "**__📝 Signed Up / 🪑 Reserve__** (❓ TBC) :",
     );
     expect(embed.data.description).toContain(
       "<:guildIcon_499171225046876170:1545375525017755699> - Fate Stay Night\n🗓️ **[Wolfchev]",

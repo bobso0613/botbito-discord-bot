@@ -39,6 +39,12 @@ export const handleSignupAddButton = async (
         .setTextInputComponent(
           input("input", "e.g. 1, 2, random, or reserve", true),
         ),
+      new LabelBuilder()
+        .setLabel("Character name (optional)")
+        .setTextInputComponent(input("char", "e.g. Paladin", false)),
+      new LabelBuilder()
+        .setLabel("TBC (optional: true or false)")
+        .setTextInputComponent(input("tbc", "false", false)),
     );
   await interaction.showModal(modal);
 };

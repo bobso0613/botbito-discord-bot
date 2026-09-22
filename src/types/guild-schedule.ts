@@ -12,6 +12,8 @@ export interface GuildSchedule {
   isSignedUp: boolean;
   /** Whether the invoking member is listed as reserve. */
   isReserve: boolean;
+  /** Whether the invoking member is marked as TBC. */
+  isTbc?: boolean;
   /** Optional character or signup note found beside the member entry. */
   charNote?: string;
   /** Guild name shown in cross-guild personal schedule output. */

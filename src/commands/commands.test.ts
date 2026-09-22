@@ -641,7 +641,9 @@ describe("command handlers", () => {
     }>(sentDirectMessage);
     expect(embed.title).toBe("Your upcoming schedules");
     expect(embed.thumbnail.url).toBe("https://example.com/user.png");
-    expect(embed.description).toContain("**__📝 Signed Up / 🪑 Reserve__: **");
+    expect(embed.description).toContain(
+      "**__📝 Signed Up / 🪑 Reserve__** (❓ TBC) :",
+    );
     expect(embed.description).toContain(
       `${getGuildIcon("92073842977030144")} - Ragnarok M\n🗓️ **[Earlier Run]`,
     );

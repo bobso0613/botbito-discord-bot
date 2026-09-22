@@ -42,6 +42,7 @@ import {
   executeRemoveCharNote,
   executeSwap,
   executeTbc,
+  formatAddNoticeDetail,
   pendingAddConfirmations,
   publish,
   publishToChannel,
@@ -61,7 +62,7 @@ import {
   formatSlotLabel,
   getRosterPrompt,
   parseNewRunTimestamp,
-  parseRoster,
+  parseRosterWithPartySizes,
   parseServerTimezone,
   resolveRosterSignupUserIds,
 } from "../utils/signup-sheet.js";
@@ -174,6 +175,11 @@ export const parseSetup = (
     .getTextInputValue("sizes")
     .split(",")
     .map((value) => Number(value.trim()));
+  if (partySizes.length !== partyCount) {
+    return {
+      error: `Number of parties (${partyCount}) must match the number of party sizes (${partySizes.length}). Enter one size for each party, separated by commas, e.g. 12,6.`,
+    };
+  }
   if (
     !title ||
     (datetimeValue && !isDatetimeTbd && !schedule) ||
@@ -181,7 +187,6 @@ export const parseSetup = (
     serverTimezone === undefined ||
     !Number.isInteger(partyCount) ||
     partyCount < 1 ||
-    partySizes.length !== partyCount ||
     partySizes.some((size) => !Number.isInteger(size) || size < 1)
   ) {
     return {
@@ -314,9 +319,7 @@ export const showSetup = async (
 const handleSetupModal = async (
   interaction: ModalSubmitInteraction,
 ): Promise<void> => {
-  await interaction.deferReply({
-    flags: MessageFlags.Ephemeral,
-  });
+  await interaction.deferReply();
   if (!interaction.guildId || !interaction.channelId) return;
   const key = signupSheetKey(interaction.guildId, interaction.channelId);
   // Reopening "Edit Party Setup" mid-session reuses the in-progress draft so roster/notes/instance type edits aren't lost.
@@ -350,8 +353,37 @@ const handleSetupModal = async (
 const SIMPLE_SIGNUP_MODAL_HANDLERS: Readonly<
   Record<string, (interaction: ModalSubmitInteraction) => Promise<void>>
 > = {
-  [SIGNUP_MODAL_ADD_ID]: (interaction) =>
-    executeAdd(interaction, interaction.fields.getTextInputValue("input")),
+  [SIGNUP_MODAL_ADD_ID]: async (interaction) => {
+    const rawTbc = interaction.fields
+      .getTextInputValue("tbc")
+      .trim()
+      .toLowerCase();
+    const tbcValues: Record<string, boolean> = {
+      "": false,
+      "0": false,
+      false: false,
+      no: false,
+      "1": true,
+      tbc: true,
+      true: true,
+      yes: true,
+    };
+    if (!(rawTbc in tbcValues)) {
+      await interaction.reply({
+        content: "TBC must be true, false, yes, no, 1, 0, or tbc.",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+    await executeAdd(
+      interaction,
+      interaction.fields.getTextInputValue("input"),
+      {
+        char: interaction.fields.getTextInputValue("char"),
+        tbc: tbcValues[rawTbc],
+      },
+    );
+  },
   [SIGNUP_MODAL_REMOVE_ID]: (interaction) =>
     executeRemove(
       interaction,
@@ -408,7 +440,7 @@ export const handleSignupRosterButton = async (
   }
   await interaction.deferUpdate();
   await interaction.editReply({
-    content: getRosterPrompt(sheet.slots),
+    content: getRosterPrompt(sheet.slots, sheet.partySizes),
     components: [buildRosterPromptButtons()],
   });
 };
@@ -522,15 +554,30 @@ export const handleSignupRosterMessage = async (
   const key = signupSheetKey(message.guildId, message.channelId);
   if (pendingRosterUsers.get(key) === message.author.id) {
     const sheet = pendingSetupDrafts.get(key);
-    const slots = sheet ? parseRoster(message.content, sheet.slots) : null;
-    if (!sheet || !slots) {
+    const parsedRoster = sheet
+      ? parseRosterWithPartySizes(message.content, sheet.slots)
+      : null;
+    if (!sheet || !parsedRoster) {
       await message.reply(
         "Roster lines must be continuous, match the party total, and use `01: Role - name` or `01: Role`.",
       );
       return;
     }
-    await resolveRosterSignupUserIds(slots, message);
-    sheet.slots = slots;
+    const droppedOccupiedSlots = sheet.slots
+      .slice(parsedRoster.slots.length)
+      .filter((slot) => slot.signupUserId || slot.signupDisplayName);
+    if (droppedOccupiedSlots.length > 0) {
+      const droppedLabels = droppedOccupiedSlots
+        .map((slot) => formatSlotLabel(slot))
+        .join(", ");
+      await message.reply(
+        `Reducing party sizes would drop signups in slot(s): ${droppedLabels}. Remove or move those players before shrinking party sizes.`,
+      );
+      return;
+    }
+    await resolveRosterSignupUserIds(parsedRoster.slots, message);
+    sheet.slots = parsedRoster.slots;
+    if (parsedRoster.partySizes) sheet.partySizes = parsedRoster.partySizes;
     await message.reply({
       content: "Roster updated.",
       components: [buildSetupPromptButtons()],
@@ -631,8 +678,8 @@ export const handleSignupAddConfirmButton = async (
         if (!slot) continue;
         slot.signupUserId = pending.userId;
         slot.signupDisplayName = pending.displayName;
-        slot.charNote = null;
-        slot.isTbc = false;
+        slot.charNote = pending.charNote;
+        slot.isTbc = pending.isTbc;
         appliedLabels.push(formatSlotLabel(slot));
       }
       return null;
@@ -655,6 +702,7 @@ export const handleSignupAddConfirmButton = async (
     "added",
     [{ userId: pending.userId, labels: appliedLabels }],
     sheet.title,
+    formatAddNoticeDetail(pending.charNote, pending.isTbc),
   );
 };
 

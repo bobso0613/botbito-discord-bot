@@ -87,13 +87,21 @@ const isMemberReserve = (
         /\bReserve\b/i.test(line) && isNameOnLine(line, displayNamePattern),
     );
 
+/** Checks whether the invoking member's roster entry is marked as TBC. */
+const isMemberTbc = (embedText: string, displayNamePattern: string): boolean =>
+  embedText
+    .split("\n")
+    .some(
+      (line) => line.includes("❓") && isNameOnLine(line, displayNamePattern),
+    );
+
 /** Extracts the character note from a schedule embed for the invoking member. */
 const getMemberCharNote = (
   embedText: string,
   displayNamePattern: string,
 ): string | undefined => {
   const charNotePattern = new RegExp(
-    String.raw`\*{0,2}${displayNamePattern}\*{0,2}\s*\(([^)]+)\)`,
+    String.raw`\*{0,2}${displayNamePattern}\*{0,2}\s*\*?\(([^)]+)\)\*?`,
     "i",
   );
   const match = charNotePattern.exec(embedText);
@@ -141,6 +149,7 @@ const getScheduleFromMessage = (
       includePast,
     );
     const isReserve = isMemberReserve(embedText, displayNamePattern);
+    const isTbc = isMemberTbc(embedText, displayNamePattern);
     return timestamp && embed.title
       ? [
           {
@@ -151,6 +160,7 @@ const getScheduleFromMessage = (
             isSignedUp:
               !isReserve && isMemberSignedUp(embedText, displayNamePattern),
             isReserve,
+            ...(isTbc ? { isTbc: true } : {}),
             charNote: getMemberCharNote(embedText, displayNamePattern),
             isRoleRestricted,
           },

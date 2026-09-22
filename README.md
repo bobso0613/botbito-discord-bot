@@ -121,7 +121,7 @@ Enable the **Server Members Intent** and **Message Content Intent** in the Disco
 
 When `/mysched thisweekonly:true` or `/mycooldowns` requests a schedule week window, a single page of 100 messages can miss an in-window run that channel activity has pushed further back. In that case the bot fetches additional pages (oldest-first, up to 5 pages / 500 messages per channel) until either a matching schedule is found or the oldest fetched message is older than the window's start.
 
-When a configured schedule bot posts or updates a schedule response in one of the configured `categoryIds` channels, the bot automatically refreshes every `scheduleTextChannelIds` channel. It deletes the existing announcement messages and posts a public announcement equivalent to `/guildsched public:true forannouncementonly:true`. The listener compares the newest schedule-bot response with the previous response, including `Your Time: TBD` and plain postpone responses, so new schedule-changing commands do not require code changes. A configured `scheduleTextChannelIds` channel is never treated as a source channel, even if it is placed in a configured category. Updates without a cached prior timestamp, such as partial `messageUpdate` payloads after a restart, are ignored for timestamp-based refreshes to prevent false announcements. Refresh logs include the `triggerReason`, source `triggerChannel`, current `triggerRunTitle`, and `previousChannelName` for channel renames.
+When a configured schedule bot posts or updates a schedule response in one of the configured `categoryIds` channels, the bot automatically refreshes every `scheduleTextChannelIds` channel. It deletes the existing announcement messages and posts a public announcement equivalent to `/guildsched public:true forannouncementonly:true`. The listener compares the newest schedule-bot response with the previous response, including `Your Time: TBD` and plain postpone responses, so new schedule-changing commands do not require code changes. A configured `scheduleTextChannelIds` channel is never treated as a source channel, even if it is placed in a configured category. Updates without a cached prior timestamp, such as partial `messageUpdate` payloads after a restart, are ignored for timestamp-based refreshes to prevent false announcements. Refresh logs include the `triggerReason`, source `triggerChannel`, current `triggerRunTitle`, and `previousChannelName` for channel renames. Timestamp refreshes also log `timestampFrom` and `timestampTo`; title refreshes log `titleFrom` and `titleTo`.
 
 The bot also refreshes announcements when a schedule response's run title (embed title) changes, or when a schedule source channel itself is renamed. Since these two triggers don't change the scheduled time, they only refresh the announcement when the run's previous title, or the channel's previous name, is currently present in the latest posted announcement; this avoids refreshing for runs that haven't been publicly announced yet. Title changes are detected on both edits and brand-new schedule-bot messages, since some schedule bots reply to a rename command with a new message instead of editing the previous one. Discord doesn't always cache a message's pre-edit content (e.g. after the bot restarts or the message ages out of cache), so when the previous title can't be read from the edit event, or there is no previous message at all, the bot instead compares the new title against the title currently announced for that schedule channel.
 
@@ -134,13 +134,13 @@ schedule automatically updated from the latest update in:
 
 Manually invoked `/guildsched` announcements continue to identify the command user.
 
-Each schedule links to the run and its actual signup channel. The output groups runs where the member is signed up or reserve before runs where they are not signed up. `📝` marks a standard signup and `🪑` marks a reserve slot. Character notes from signup entries (e.g., "alt character", "reserve slot") are displayed next to the status indicator when present. The embed notes the category from which signup channels are shown and mentions the invoking member.
+Each schedule links to the run and its actual signup channel. The output groups runs where the member is signed up or reserve before runs where they are not signed up. `📝` marks a standard signup and `🪑` marks a reserve slot; `❓` is added beside either marker when the member is TBC. Character names/notes from signup entries (e.g., "alt character", "reserve slot") are displayed next to the status indicator when present. The embed notes the category from which signup channels are shown and mentions the invoking member.
 
 Use `/guildsched public:true` to post the schedule embed for everyone in the current channel. Without the option, the response is private. When posting publicly, role-restricted channels are displayed with a "(Private run)" label in the run title instead of a direct link, omitting the channel name. Add `forannouncementonly:true` with `public:true` to create a neutral announcement: it omits the Signed Up / Reserve and Not Signed Up headings, status indicators, and character notes while retaining each run's title and time. `forannouncementonly` has no effect unless `public:true` is also set.
 
 `/mysched` ⌚ sends the invoking user a DM with their upcoming signed-up and reserve schedules across all configured schedule guilds the bot and user can access. It can be used in any server channel where the bot can see the command, or directly in a DM with the bot after global command registration is deployed.
 
-The command only includes schedules where the member is signed up or listed as reserve. Each entry shows the configured guild icon, guild name, linked schedule title, time, source channel, and signup/reserve indicator. Future schedule titles use `🗓️`; completed schedule titles use `✅`. The optional `grouping` parameter supports `By Date`, `By Guild`, and `By Instance Type`; `By Date` is the default, `By Guild` uses larger guild headings, and `By Instance Type` groups schedules by the detected instance keywords in their titles.
+The command only includes schedules where the member is signed up or listed as reserve. Each entry shows the configured guild icon, guild name, linked schedule title, time, source channel, and signup/reserve indicator. `❓` appears beside `📝` or `🪑` when the member is TBC, and the character name/note is shown beside the status when present. Future schedule titles use `🗓️`; completed schedule titles use `✅`. The optional `grouping` parameter supports `By Date`, `By Guild`, and `By Instance Type`; `By Date` is the default, `By Guild` uses larger guild headings, and `By Instance Type` groups schedules by the detected instance keywords in their titles.
 
 Use `/mysched thisweekonly:true` to show all signed-up/reserve runs from the current schedule week, including completed runs, and hide runs outside that week. When a channel has a newer scheduled reply outside the week, its earlier in-week run remains included; only `Your Time: TBD` clears an older run. Schedule weeks start every Monday at `06:00 GMT` (`T06:00:00Z`) and run through Sunday. When this option is enabled, the DM embed title changes to the covered date range, for example `Your Schedule - 31 Aug to 06 Sept`.
 
@@ -208,10 +208,12 @@ Reserve - **DisplayName** (character note)
 
 Any text between `Reserve` and the dash is supported, for example `Reserve (late signup) - **DisplayName**`.
 
-The character note is optional and displayed in parentheses. Examples:
+The character note is optional and displayed in parentheses. TBC entries append `❓` after the character note. Examples:
 
 - `- **PlayerName** (alt)` → displays as "📝 - alt"
 - `Reserve - **PlayerName** (wallet)` → displays as "🪑 - wallet"
+- `- **PlayerName** *(alt)* ❓` → displays as "📝 ❓ - alt"
+- `Reserve - **PlayerName** *(wallet)* ❓` → displays as "🪑❓ - wallet"
 - `- **PlayerName**` → displays as "📝 " (no note)
 
 The bot extracts the note text and displays it alongside the status indicator (📝 for signups, 🪑 for reserves) in the `/guildsched` command output.
@@ -254,7 +256,7 @@ Channel-scoped signup sheets (created with `/newrun`) provide an interactive par
 
 - **Party Setup & Customization**: Create multi-party configurations with customizable party sizes, custom run names, notes, thumbnail icons, embed colors, server timezones, and instance types.
 - **Roster Management**:
-  - `/add` (alias `/a`): Sign up for specific slot numbers (e.g. `1`, `1, 2`), one `random` open slot, or `reserve`. Supports signing up other users by mention or username (e.g. `2 @user` or `2 B4D`). Occupied slots require confirmation before replacement, and concurrent changes are rechecked before an open-slot add is saved.
+  - `/add` (alias `/a`): Sign up for specific slot numbers (e.g. `1`, `1, 2`), one `random` open slot, or `reserve`. Supports signing up other users by mention or username (e.g. `2 @user` or `2 B4D`). The optional `char` parameter sets the character name/note shown beside the signup, and optional `tbc:true` marks it as TBC. Occupied slots require confirmation before replacement, and concurrent changes are rechecked before an open-slot add is saved.
   - `/remove` (alias `/r`): Remove your own signups/reserves, or remove specific slot/reserve positions.
   - `/swap`: Join a slot as yourself, swap two party slots, swap a party slot with a reserve, or move a signup to reserves. Use `reserve` as the first value to move your own single party-slot signup to reserves. If a user holds multiple signups, specifying the second position is required to prevent ambiguity.
   - `/charnote` (alias `/char`): Add character notes (e.g. `HP 3x`, `Alt`, `DPS`) to your own slot/reserve or a specified position number.
@@ -273,6 +275,24 @@ Channel-scoped signup sheets (created with `/newrun`) provide an interactive par
 - **Interactive Action Buttons**: Every published sheet embed includes two rows of interactive action buttons that open input modals:
   - **Row 1**: `Add` (Success), `Remove` (Danger), `TBC` (Primary), `Swap` (Primary)
   - **Row 2**: `Char` (Success), `Remove Char` (Danger), `Schedule` (Secondary), `Command List` (Secondary)
+
+### Roster Editing
+
+`/newrun` and `/change all` validate that the number of party sizes matches the number of parties. For example, two parties require a value such as `12,6`, not a single value such as `12`.
+
+After party setup, the roster prompt is public so the channel can see which setup is in progress, but only the user who started it can submit roster messages or use its controls. `/change roster` also shows a public editable template. The template includes headers such as `Party 1:` and `Party 2:`:
+
+```text
+Party 1:
+01: role -
+02: role -
+
+Party 2:
+03: role -
+04: role -
+```
+
+Add, remove, or reorder `Party #:` sections and move roster lines beneath them to update the party count and party-size breakdown. Empty roster lines should retain their single trailing dash (`01: role -`).
 
 ## Project Layout 🧱
 

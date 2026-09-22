@@ -262,12 +262,13 @@ export const COMMAND_GUIDE: ReadonlyArray<{
   {
     name: "/change all",
     description:
-      "Reopen the party setup modal to change the title, date/time, timezone, or party sizes",
+      "Reopen the party setup modal to change the title, date/time, timezone, or party sizes; edit the roster with Party headers",
     emoji: "🛠️",
   },
   {
     name: "/change roster",
-    description: "Edit only the roster without touching the party setup",
+    description:
+      "Edit the public roster template; Party # headers control the party breakdown",
     emoji: "📋",
   },
   {
@@ -294,6 +295,16 @@ export const COMMAND_GUIDE: ReadonlyArray<{
         description:
           "Slot number(s) comma-separated, `random`, or `reserve`, optionally followed by @user",
         required: true,
+      },
+      {
+        name: "char",
+        description: "Character name to show beside the signup",
+        required: false,
+      },
+      {
+        name: "tbc",
+        description: "Mark the signup as TBC (default: false)",
+        required: false,
       },
     ],
   },

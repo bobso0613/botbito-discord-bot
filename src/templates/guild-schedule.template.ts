@@ -14,9 +14,10 @@ import { getScheduleTitleIcon } from "../utils/guild-schedule.js";
 import { getEmbedFooter } from "../utils/payout-embed.js";
 
 const getScheduleStatusIndicator = (schedule: GuildSchedule): string => {
-  if (schedule.isReserve) return " - 🪑";
-  if (schedule.isSignedUp) return " - 📝 ";
-  return "";
+  let status = "";
+  if (schedule.isReserve) status = " - 🪑";
+  else if (schedule.isSignedUp) status = " - 📝 ";
+  return status && schedule.isTbc ? `${status}❓` : status;
 };
 
 const getScheduleStatusWithNote = (schedule: GuildSchedule): string => {
@@ -26,7 +27,7 @@ const getScheduleStatusWithNote = (schedule: GuildSchedule): string => {
   return status;
 };
 
-const personalScheduleLegend = "**__📝 Signed Up / 🪑 Reserve__: **";
+const personalScheduleLegend = "**__📝 Signed Up / 🪑 Reserve__** (❓ TBC) :";
 
 export const MY_SCHEDULE_BUTTON_ID = "my-sched";
 export const MY_PAYOUT_STATUS_BUTTON_ID = "my-payout-status";

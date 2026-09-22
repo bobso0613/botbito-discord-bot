@@ -194,6 +194,122 @@ describe("getActiveGuildSchedules", () => {
     expect(schedulesWithNote[0]?.charNote).toBe("_Mango Bay_");
   });
 
+  it("extracts emphasized character names before the TBC marker", async () => {
+    const member = { displayName: "Lucian Blight" };
+    const accessiblePermissions = { has: jest.fn().mockReturnValue(true) };
+    const guild = {
+      channels: {
+        cache: new Map([
+          [
+            "schedule",
+            {
+              type: ChannelType.GuildText,
+              id: "schedule-channel",
+              parentId: "schedule-category",
+              name: "test-signup",
+              url: "https://discord.com/channels/guild/schedule",
+              permissionsFor: jest.fn().mockReturnValue(accessiblePermissions),
+              messages: {
+                fetch: jest.fn().mockResolvedValue(
+                  new Map([
+                    [
+                      "msg",
+                      {
+                        author: {
+                          id: DISCORD_SETTINGS.guildScheduleBotIds[0],
+                        },
+                        createdTimestamp: 1,
+                        embeds: [
+                          {
+                            title: "Test Schedule",
+                            description:
+                              "`02`: role - **Lucian Blight** *(test char name)* ❓\nYour Time: <t:4070905800:F>",
+                            fields: [],
+                          },
+                        ],
+                      },
+                    ],
+                  ]) as never,
+                ),
+              },
+            },
+          ],
+        ]),
+      },
+    };
+
+    const schedules = await getActiveGuildSchedules(
+      guild as never,
+      member as never,
+      ["schedule-category"],
+    );
+
+    expect(schedules[0]).toMatchObject({
+      charNote: "test char name",
+      isTbc: true,
+    });
+  });
+
+  it("extracts TBC status for signed-up and reserve members", async () => {
+    const member = { displayName: "Lucian Blight" };
+    const accessiblePermissions = { has: jest.fn().mockReturnValue(true) };
+    const createAccessibleChannel = (description: string) => ({
+      type: ChannelType.GuildText,
+      id: "schedule-channel",
+      parentId: "schedule-category",
+      name: "schedule-signup",
+      url: "https://discord.com/channels/guild/schedule",
+      permissionsFor: jest.fn().mockReturnValue(accessiblePermissions),
+      messages: {
+        fetch: jest.fn().mockResolvedValue(
+          new Map([
+            [
+              "schedule",
+              {
+                author: { id: DISCORD_SETTINGS.guildScheduleBotIds[0] },
+                createdTimestamp: 1,
+                embeds: [
+                  {
+                    title: "TBC schedule",
+                    description,
+                    fields: [],
+                  },
+                ],
+              },
+            ],
+          ]) as never,
+        ),
+      },
+    });
+    const guild = {
+      channels: {
+        cache: new Map([
+          [
+            "signed-up",
+            createAccessibleChannel(
+              "01: Clown - **Lucian Blight** ❓\nYour Time: <t:4070905800:F>",
+            ),
+          ],
+          [
+            "reserve",
+            createAccessibleChannel(
+              "Reserve 01: Clown - **Lucian Blight** ❓\nYour Time: <t:4070905800:F>",
+            ),
+          ],
+        ]),
+      },
+    };
+
+    const schedules = await getActiveGuildSchedules(
+      guild as never,
+      member as never,
+      ["schedule-category"],
+    );
+
+    expect(schedules).toHaveLength(2);
+    expect(schedules.every((schedule) => schedule.isTbc)).toBe(true);
+  });
+
   it("includes finished schedules inside a provided schedule week window", async () => {
     const member = { displayName: "Lucian Blight" };
     const accessiblePermissions = { has: jest.fn().mockReturnValue(true) };
