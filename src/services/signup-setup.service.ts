@@ -375,10 +375,14 @@ const SIMPLE_SIGNUP_MODAL_HANDLERS: Readonly<
       });
       return;
     }
-    await executeAdd(interaction, interaction.fields.getTextInputValue("input"), {
-      char: interaction.fields.getTextInputValue("char"),
-      tbc: tbcValues[rawTbc],
-    });
+    await executeAdd(
+      interaction,
+      interaction.fields.getTextInputValue("input"),
+      {
+        char: interaction.fields.getTextInputValue("char"),
+        tbc: tbcValues[rawTbc],
+      },
+    );
   },
   [SIGNUP_MODAL_REMOVE_ID]: (interaction) =>
     executeRemove(

@@ -329,7 +329,7 @@ const signupCommandDefinitions: Command[] = [
             )
             .setRequired(true),
         ),
-        ),
+    ),
     execute: async (interaction) => {
       await executeAdd(
         interaction,
@@ -354,7 +354,7 @@ const signupCommandDefinitions: Command[] = [
             )
             .setRequired(true),
         ),
-        ),
+    ),
     execute: (i) =>
       signupCommands.find((c) => c.data.name === "add")!.execute(i),
   },

@@ -214,8 +214,9 @@ describe("/add options", () => {
       guild: { id: "guild-1", name: "Guild 1", iconURL: () => null },
       user: { id: "user-1", displayName: "Invoker" },
       fields: {
-        getTextInputValue: jest.fn((id: string) =>
-          ({ input: "1", char: "Paladin", tbc: "yes" })[id] ?? "",
+        getTextInputValue: jest.fn(
+          (id: string) =>
+            ({ input: "1", char: "Paladin", tbc: "yes" })[id] ?? "",
         ),
       },
       reply: jest.fn(),
