@@ -24,6 +24,7 @@ import {
   executeWhen,
   getSheet,
   replyMissing,
+  sendSignupNotice,
   signupSheetKey,
   update,
 } from "../services/signup-actions.service.js";
@@ -94,6 +95,12 @@ const positionOption = (builder: SlashCommandBuilder): SlashCommandBuilder =>
       )
       .setRequired(false),
   ) as unknown as SlashCommandBuilder;
+
+const formatScheduleNotice = (timestamp: number | null): string =>
+  timestamp === null ? "TBD" : `<t:${timestamp}:F> (<t:${timestamp}:R>)`;
+
+const formatInvokerName = (interaction: ChatInputCommandInteraction): string =>
+  `**${interaction.user.displayName}**`;
 
 const addSignupOptions = (
   builder: SlashCommandOptionsOnlyBuilder,
@@ -205,10 +212,15 @@ const signupCommandDefinitions: Command[] = [
         o.setName("input").setDescription("Run name").setRequired(true),
       ) as SlashCommandBuilder,
     execute: async (i) => {
-      await update(i, (s) => {
+      const updatedSheet = await update(i, (s) => {
         s.title = i.options.getString("input", true);
         return null;
       });
+      if (updatedSheet)
+        await sendSignupNotice(
+          i,
+          `${formatInvokerName(i)} has set the run name to **${updatedSheet.title}**.`,
+        );
     },
   },
   {
@@ -439,7 +451,9 @@ const signupCommandDefinitions: Command[] = [
           .setRequired(true),
       )
       .addStringOption((o) =>
-        o.setName("second").setDescription("Second slot number or reserve"),
+        o
+          .setName("second")
+          .setDescription("Second slot number, random, or reserve"),
       ) as SlashCommandBuilder,
     execute: async (i) => {
       await executeSwap(
@@ -569,7 +583,7 @@ const signupCommandDefinitions: Command[] = [
           .setRequired(true),
       ) as SlashCommandBuilder,
     execute: async (i: ChatInputCommandInteraction) => {
-      await update(i, (s) => {
+      const updatedSheet = await update(i, (s) => {
         const delta = parseTimeShift(i.options.getString("value", true));
         if (delta === null)
           return "Use `next`, `last`, or a number in 0.5 increments followed by minutes, hours, days, weeks, or months.";
@@ -586,6 +600,11 @@ const signupCommandDefinitions: Command[] = [
         if (name === "next") s.reserves = [];
         return null;
       });
+      if (updatedSheet)
+        await sendSignupNotice(
+          i,
+          `${formatInvokerName(i)} has set the run schedule to ${formatScheduleNotice(updatedSheet.timestamp)}.`,
+        );
     },
   })),
   {
@@ -598,7 +617,7 @@ const signupCommandDefinitions: Command[] = [
           .setDescription("For example: next week, last hour, or 1.5 days"),
       ) as SlashCommandBuilder,
     execute: async (i) => {
-      await update(i, (s) => {
+      const updatedSheet = await update(i, (s) => {
         const value = i.options.getString("value");
         const delta = value ? parseTimeShift(value) : 0;
         if (delta === null)
@@ -606,6 +625,11 @@ const signupCommandDefinitions: Command[] = [
         s.timestamp = Math.floor(Date.now() / 1000) + delta;
         return null;
       });
+      if (updatedSheet)
+        await sendSignupNotice(
+          i,
+          `${formatInvokerName(i)} has set the run schedule to ${formatScheduleNotice(updatedSheet.timestamp)}.`,
+        );
     },
   },
   {
@@ -619,7 +643,7 @@ const signupCommandDefinitions: Command[] = [
           .setRequired(true),
       ) as SlashCommandBuilder,
     execute: async (i) => {
-      await update(i, (s) => {
+      const updatedSheet = await update(i, (s) => {
         const datetimeValue = i.options.getString("datetime", true).trim();
         if (/^tbd$/i.test(datetimeValue)) {
           s.timestamp = null;
@@ -633,6 +657,11 @@ const signupCommandDefinitions: Command[] = [
         s.scheduleTimezone = schedule.scheduleTimezone;
         return null;
       });
+      if (updatedSheet)
+        await sendSignupNotice(
+          i,
+          `${formatInvokerName(i)} has set the run schedule to ${formatScheduleNotice(updatedSheet.timestamp)}.`,
+        );
     },
   },
   ...["last", "s", "show"].map((name) => ({
@@ -723,8 +752,8 @@ const signupCommandDefinitions: Command[] = [
         o.setName("user").setDescription("New organizer").setRequired(true),
       ) as SlashCommandBuilder,
     execute: async (i) => {
-      await update(i, (s) => {
-        const user = i.options.getUser("user", true);
+      const user = i.options.getUser("user", true);
+      const updatedSheet = await update(i, (s) => {
         s.organizerId = user.id;
         s.organizerName = user.displayName;
         s.organizerAvatarUrl = user.displayAvatarURL({
@@ -733,6 +762,11 @@ const signupCommandDefinitions: Command[] = [
         });
         return null;
       });
+      if (updatedSheet)
+        await sendSignupNotice(
+          i,
+          `<@${user.id}>, you have been set as this run's organizer by ${formatInvokerName(i)}.`,
+        );
     },
   },
 ];

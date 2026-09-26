@@ -43,6 +43,7 @@ export interface PendingAddConfirmation {
   userId: string;
   displayName: string;
   slotNumbers: number[];
+  randomSlotNumber?: number;
   charNote: string | null;
   isTbc: boolean;
 }
@@ -319,29 +320,52 @@ export type NoticeAction =
   | "charnote"
   | "uncharnote";
 
-const formatActionNotice = (
-  action: NoticeAction,
-  isSelf: boolean,
-  target: string,
-  labelText: string,
-  invokerMention: string,
-  runTitle: string,
-  detail?: string,
-): string => {
+interface ActionNoticeFormatOptions {
+  action: NoticeAction;
+  isSelf: boolean;
+  target: string;
+  labelText: string;
+  invokerMention: string;
+  runTitle: string;
+  detail?: string;
+  randomSlotNumber?: number;
+}
+
+const formatActionNotice = ({
+  action,
+  isSelf,
+  target,
+  labelText,
+  invokerMention,
+  runTitle,
+  detail,
+  randomSlotNumber,
+}: ActionNoticeFormatOptions): string => {
   const detailSuffix = detail ? ` (${detail})` : "";
+  const randomResult = randomSlotNumber
+    ? ` random, 🎲rolled ${randomSlotNumber} and got `
+    : "";
   const selfText = {
-    added: `${target} added as **${labelText}**${detailSuffix}.`,
+    added: randomSlotNumber
+      ? `${target} added${randomResult}**${labelText}**${detailSuffix}.`
+      : `${target} added as **${labelText}**${detailSuffix}.`,
     removed: `${target} removed from **${labelText}**.`,
-    swapped: `${target} swapped to **${labelText}**.`,
+    swapped: randomSlotNumber
+      ? `${target} swapped to${randomResult}**${labelText}**${detailSuffix}`
+      : `${target} swapped to **${labelText}**.`,
     tbc: `${target} marked as **TBC**.`,
     untbc: `${target} unmarked as **TBC**.`,
     charnote: `${target} put **${detail}** in **${labelText}**.`,
     uncharnote: `${target} removed the char note from **${labelText}**.`,
   } satisfies Record<NoticeAction, string>;
   const otherText = {
-    added: `${target}, you got added by ${invokerMention} as **${labelText}**${detailSuffix} on ${runTitle}.`,
+    added: randomSlotNumber
+      ? `${target}, you got added by ${invokerMention} as${randomResult}**${labelText}**${detailSuffix} on ${runTitle}.`
+      : `${target}, you got added by ${invokerMention} as **${labelText}**${detailSuffix} on ${runTitle}.`,
     removed: `${target}, you got removed by ${invokerMention} from **${labelText}** on ${runTitle}.`,
-    swapped: `${target}, you got swapped by ${invokerMention} to **${labelText}** on ${runTitle}.`,
+    swapped: randomSlotNumber
+      ? `${target}, you got swapped by ${invokerMention} to${randomResult}**${labelText}**${detailSuffix} on ${runTitle}.`
+      : `${target}, you got swapped by ${invokerMention} to **${labelText}** on ${runTitle}.`,
     tbc: `${target}, you got marked as **TBC** by ${invokerMention} on ${runTitle}.`,
     untbc: `${target}, you got unmarked as **TBC** by ${invokerMention} on ${runTitle}.`,
     charnote: `${target}, ${invokerMention} put **${detail}** in **${labelText}** for you on ${runTitle}.`,
@@ -357,6 +381,7 @@ export const sendActionNotices = async (
   notices: ActionNotice[],
   runTitle: string,
   detail?: string,
+  randomSlotNumber?: number,
 ): Promise<void> => {
   for (const notice of notices) {
     if (!notice.labels.length) continue;
@@ -367,7 +392,7 @@ export const sendActionNotices = async (
       ? `**${interaction.user.displayName}**`
       : `<@${notice.userId}>`;
     await interaction.followUp({
-      content: formatActionNotice(
+      content: formatActionNotice({
         action,
         isSelf,
         target,
@@ -375,9 +400,18 @@ export const sendActionNotices = async (
         invokerMention,
         runTitle,
         detail,
-      ),
+        randomSlotNumber,
+      }),
     });
   }
+};
+
+/** Posts a public signup-sheet action notice after the updated embed is sent. */
+export const sendSignupNotice = async (
+  interaction: SignupInteraction,
+  content: string,
+): Promise<void> => {
+  await interaction.followUp({ content });
 };
 
 /**
@@ -1013,6 +1047,7 @@ const executeTargetSlotSwap = (
   first: SignupSheet["slots"][number],
   secondValue: string | undefined,
   swapEntries: SwapEntry[],
+  onRandomSlot?: (slotNumber: number) => void,
 ): string | null => {
   if (!secondValue)
     return joinSlotAsInvoker(sheet, interaction, first, swapEntries);
@@ -1025,6 +1060,13 @@ const executeTargetSlotSwap = (
       return "That user is already a reserve.";
     }
     moveSlotToReserve(sheet, first, swapEntries);
+    return null;
+  }
+  if (secondValue === "random") {
+    const second = pickRandomOpenSlot(sheet);
+    if (!second) return "There are no open slots available.";
+    onRandomSlot?.(second.number);
+    swapSlots(first, second, swapEntries);
     return null;
   }
   const second = sheet.slots.find(
@@ -1048,6 +1090,7 @@ const executeSwapMutation = (
   firstValue: string,
   secondValue: string | undefined,
   swapEntries: SwapEntry[],
+  onRandomSlot?: (slotNumber: number) => void,
 ): string | null => {
   if (firstValue === "reserve") {
     return executeReserveFirstSwap(
@@ -1065,12 +1108,14 @@ const executeSwapMutation = (
     return firstValue === "random"
       ? "There are no open slots available."
       : "One of those slots does not exist.";
+  if (firstValue === "random") onRandomSlot?.(first.number);
   return executeTargetSlotSwap(
     sheet,
     interaction,
     first,
     secondValue,
     swapEntries,
+    onRandomSlot,
   );
 };
 
@@ -1126,6 +1171,7 @@ const addUserToOpenSlots = async (
   targetUser: User,
   slotNumbers: number[],
   options: AddOptions,
+  randomSlotNumber?: number,
 ): Promise<boolean> => {
   const appliedLabels: string[] = [];
   const sheetAfterUpdate = await update(interaction, (sheet) => {
@@ -1156,6 +1202,7 @@ const addUserToOpenSlots = async (
     [{ userId: targetUser.id, labels: appliedLabels }],
     sheetAfterUpdate.title,
     formatAddNoticeDetail(options.char, options.tbc ?? false),
+    randomSlotNumber,
   );
   return true;
 };
@@ -1166,6 +1213,7 @@ const requestAddConfirmation = async (
   slotNumbers: number[],
   occupiedSlotNumbers: number[],
   options: AddOptions,
+  randomSlotNumber?: number,
 ): Promise<void> => {
   if (!interaction.guildId || !interaction.channelId) return;
   pendingAddConfirmations.set(
@@ -1178,6 +1226,7 @@ const requestAddConfirmation = async (
       userId: targetUser.id,
       displayName: targetUser.displayName,
       slotNumbers,
+      randomSlotNumber,
       charNote: options.char?.trim() || null,
       isTbc: options.tbc ?? false,
     },
@@ -1213,7 +1262,8 @@ const requestAddConfirmation = async (
 /**
  * Adds the invoking user, or a resolved mentioned user, to one or more slots.
  *
- * Input supports comma-separated slot numbers, `random`, and `reserve`.
+ * Input supports comma-separated slot numbers, `random`, and `reserve`; `random`
+ * selects an open slot and includes the rolled slot number in the public notice.
  * Occupied slots require confirmation before replacement, and open-slot adds
  * are rechecked against the freshly loaded sheet before they are saved.
  */
@@ -1246,11 +1296,19 @@ export const executeAdd = async (
   }
   const slotNumbers = resolveAddSlotNumbers(positionInput, sheet, interaction);
   if (!slotNumbers) return;
+  const randomSlotNumber =
+    positionInput === "random" ? slotNumbers[0] : undefined;
   const occupiedSlotNumbers = slotNumbers.filter(
     (num) => sheet.slots.find((slot) => slot.number === num)?.signupUserId,
   );
   if (!occupiedSlotNumbers.length) {
-    await addUserToOpenSlots(interaction, targetUser, slotNumbers, options);
+    await addUserToOpenSlots(
+      interaction,
+      targetUser,
+      slotNumbers,
+      options,
+      randomSlotNumber,
+    );
     return;
   }
   await requestAddConfirmation(
@@ -1259,6 +1317,7 @@ export const executeAdd = async (
     slotNumbers,
     occupiedSlotNumbers,
     options,
+    randomSlotNumber,
   );
 };
 
@@ -1300,9 +1359,10 @@ export const executeRemove = async (
  * Swaps signup positions or joins an open position as the invoking user.
  *
  * The first value may be a slot number, `random`, or `reserve`. A second
- * value can identify another party slot or reserve position; omitting it
- * joins the first slot as the invoking user. Users with multiple signups
- * must provide the second value to keep the operation unambiguous.
+ * value can identify another party slot, `random` open slot, or reserve
+ * position; omitting it joins the first slot as the invoking user. Users with
+ * multiple signups must provide the second value to keep the operation
+ * unambiguous.
  */
 export const executeSwap = async (
   i: SignupInteraction,
@@ -1310,6 +1370,7 @@ export const executeSwap = async (
   secondValueInput?: string | null,
 ): Promise<void> => {
   const swapEntries: { userId: string; label: string }[] = [];
+  let randomSlotNumber: number | undefined;
   const sheetAfterUpdate = await update(i, (s) => {
     const firstValue = firstValueInput.toLowerCase().trim();
     const secondValue = secondValueInput?.toLowerCase().trim() || undefined;
@@ -1319,6 +1380,9 @@ export const executeSwap = async (
       firstValue,
       secondValue,
       swapEntries,
+      (slotNumber) => {
+        randomSlotNumber = slotNumber;
+      },
     );
     return swapResult;
   });
@@ -1328,6 +1392,8 @@ export const executeSwap = async (
       "swapped",
       mergeActionNotices(swapEntries),
       sheetAfterUpdate.title,
+      undefined,
+      randomSlotNumber,
     );
 };
 

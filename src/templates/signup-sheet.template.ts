@@ -52,13 +52,15 @@ export const formatSignupSchedule = (sheet: SignupSheet): string => {
 
 /** Full signup command reference shown by the "Show list of commands" button and `/help`. */
 export const SIGNUP_COMMANDS_HELP_TEXT = [
-  "**Manage Self:** `/add input=#/random/reserve`, `/remove`, `/remove input=#`, `/swap first=#/random/reserve second=#`, `/charnote input=YourNote`, `/removecharnote`, `/tbc`, `/removetbc`",
+  "**Manage Self:** `/add input=#/random/reserve`, `/remove`, `/remove input=#`, `/swap first=#/random/reserve second=#/random`, `/charnote input=YourNote`, `/removecharnote`, `/tbc`, `/removetbc`",
   "",
-  "**Manage others:** `/add input=#/random/reserve @user`, `/remove input='# of @user'`, `/swap first='# of @user' second=#`",
+  "**Manage others:** `/add input=#/random/reserve @user`, `/remove input='# of @user'`, `/swap first='# of @user' second=#/random`",
   "",
   "**Manage Sheet:** `/swaporganizer`, `/newrun`, `/name`, `/note`, `/color`, `/setpic`, `/setservertimezone`, `/change position`, `/change all`, `/change roster`, `/clear`, `/setinstancetype`",
   "",
   "**Schedule Commands:** `/when`, `/sdt`, `/gonow`, `/next week`, `/postpone`",
+  "",
+  "Schedule, name, note, and organizer changes post a public action notice after the updated sheet is sent.",
   "",
   "Use: `/last` or `/show`",
 ].join("\n");

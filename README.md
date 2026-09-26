@@ -256,21 +256,24 @@ Channel-scoped signup sheets (created with `/newrun`) provide an interactive par
 
 - **Party Setup & Customization**: Create multi-party configurations with customizable party sizes, custom run names, notes, thumbnail icons, embed colors, server timezones, and instance types.
 - **Roster Management**:
-  - `/add` (alias `/a`): Sign up for specific slot numbers (e.g. `1`, `1, 2`), one `random` open slot, or `reserve`. Supports signing up other users by mention or username (e.g. `2 @user` or `2 B4D`). The optional `char` parameter sets the character name/note shown beside the signup, and optional `tbc:true` marks it as TBC. Occupied slots require confirmation before replacement, and concurrent changes are rechecked before an open-slot add is saved.
+  - `/add` (alias `/a`): Sign up for specific slot numbers (e.g. `1`, `1, 2`), one `random` open slot, or `reserve`. Supports signing up other users by mention or username (e.g. `2 @user` or `2 B4D`). The optional `char` parameter sets the character name/note shown beside the signup, and optional `tbc:true` marks it as TBC. Occupied slots require confirmation before replacement, and concurrent changes are rechecked before an open-slot add is saved. Random adds report the rolled slot in the public action notice.
   - `/remove` (alias `/r`): Remove your own signups/reserves, or remove specific slot/reserve positions.
-  - `/swap`: Join a slot as yourself, swap two party slots, swap a party slot with a reserve, or move a signup to reserves. Use `reserve` as the first value to move your own single party-slot signup to reserves. If a user holds multiple signups, specifying the second position is required to prevent ambiguity.
+  - `/swap`: Join a slot as yourself, swap two party slots, swap a party slot with a `random` open slot or reserve, or move a signup to reserves. Use `reserve` as the first value to move your own single party-slot signup to reserves. If a user holds multiple signups, specifying the second position is required to prevent ambiguity. For example, `/swap first=7 second=random` moves the signup from slot 7 to a randomly selected open slot and reports the rolled slot in the public action notice.
   - `/charnote` (alias `/char`): Add character notes (e.g. `HP 3x`, `Alt`, `DPS`) to your own slot/reserve or a specified position number.
   - `/removecharnote` (alias `/rc`): Clear character notes for your own positions or specified slot/reserve numbers.
   - `/tbc`: Toggle To Be Confirmed (TBC) status for yourself or specified slot/reserve numbers. Marked with a `❓` emoji on the roster.
   - `/removetbc` (alias `/rtbc`): Remove TBC markings from your own positions or specified slot/reserve numbers.
   - `/ping`: Ping participants with a message. The `which` option selects `Main Roster`, `Reserves`, `TBC`, or `All`. The reply shows a small-text header with the invoker and target group, the bolded message, and small-text lines with the pinged mentions and the run title/channel.
-  - After `/add`, `/remove`, `/swap`, `/tbc`, `/charnote`, and `/removecharnote` update and re-post the sheet embed, the bot posts a public log message in the channel: a plain display-name line for the invoker's own action (e.g. `**DisplayName** added as **01: Role**.`), or an @mention line when someone else was affected.
+  - After `/add`, `/remove`, `/swap`, `/tbc`, `/charnote`, and `/removecharnote` update and re-post the sheet embed, the bot posts a public log message in the channel: a plain display-name line for the invoker's own action (e.g. `**DisplayName** added as **01: Role**.`), or an @mention line when someone else was affected. Random add/swap notices include the rolled slot number.
+  - `/name` posts a public notice after the updated embed: `invokerName has set the run name to **name**`.
+  - `/note` posts a public notice after the updated embed, showing the new note on the next line; replying `remove` shows that the note was removed and displays `None`.
+  - `/swaporganizer` posts a public notice mentioning the new organizer after the updated embed.
 - **Schedule Management**:
-  - `/sdt`: Set or clear (`TBD`) run date and time.
+  - `/sdt`: Set or clear (`TBD`) run date and time, then post a public notice with the Discord-formatted timestamp or `TBD`.
   - `/when`: Display the localized run time and server time.
-  - `/gonow`: Set the run time to now (with optional duration offset).
-  - `/postpone`: Shift the scheduled time without modifying the roster.
-  - `/next`: Shift the schedule for a fresh run and clear the roster.
+  - `/gonow`: Set the run time to now (with optional duration offset), then post a public notice with the Discord-formatted timestamp.
+  - `/postpone`: Shift the scheduled time without modifying the roster, then post a public notice with the Discord-formatted timestamp.
+  - `/next`: Shift the schedule for a fresh run and clear the roster, then post a public notice with the Discord-formatted timestamp.
   - `/last`, `/show`, `/s`: Re-post the channel's current signup sheet embed.
 - **Interactive Action Buttons**: Every published sheet embed includes two rows of interactive action buttons that open input modals:
   - **Row 1**: `Add` (Success), `Remove` (Danger), `TBC` (Primary), `Swap` (Primary)

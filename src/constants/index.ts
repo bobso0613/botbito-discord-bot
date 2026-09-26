@@ -334,7 +334,7 @@ export const COMMAND_GUIDE: ReadonlyArray<{
       {
         name: "second",
         description:
-          "Second slot number or reserve (required if you have multiple signups)",
+          "Second slot number, random open slot, or reserve (required if you have multiple signups)",
         required: false,
       },
     ],
@@ -408,14 +408,14 @@ export const COMMAND_GUIDE: ReadonlyArray<{
   },
   {
     name: "/name",
-    description: "Set the run title",
+    description: "Set the run title and post a public action notice",
     emoji: "✏️",
     parameters: [{ name: "input", description: "Run name", required: true }],
   },
   {
     name: "/note",
     description:
-      "Edit important notes; reply with `remove` as your next message to clear them",
+      "Edit important notes and post a public action notice; reply with `remove` as your next message to clear them",
     emoji: "🗒️",
   },
   {
@@ -458,7 +458,8 @@ export const COMMAND_GUIDE: ReadonlyArray<{
   },
   {
     name: "/postpone",
-    description: "Shift the run's date/time later without touching the roster",
+    description:
+      "Shift the run's date/time later without touching the roster and post a public action notice",
     emoji: "⏳",
     parameters: [
       {
@@ -470,7 +471,8 @@ export const COMMAND_GUIDE: ReadonlyArray<{
   },
   {
     name: "/next",
-    description: "Shift the date/time and clear the roster for a fresh run",
+    description:
+      "Shift the date/time, clear the roster for a fresh run, and post a public action notice",
     emoji: "⏭️",
     parameters: [
       {
@@ -482,7 +484,8 @@ export const COMMAND_GUIDE: ReadonlyArray<{
   },
   {
     name: "/gonow",
-    description: "Set the run to now, optionally offset by a duration",
+    description:
+      "Set the run to now, optionally offset by a duration, and post a public action notice",
     emoji: "🚀",
     parameters: [
       {
@@ -494,7 +497,8 @@ export const COMMAND_GUIDE: ReadonlyArray<{
   },
   {
     name: "/sdt",
-    description: "Set the date and time, or `TBD` to clear it",
+    description:
+      "Set the date and time, or `TBD` to clear it, then post a public action notice",
     emoji: "📅",
     parameters: [
       {
@@ -524,7 +528,7 @@ export const COMMAND_GUIDE: ReadonlyArray<{
   },
   {
     name: "/swaporganizer",
-    description: "Change the organizer",
+    description: "Change the organizer and post a public action notice",
     emoji: "👑",
     parameters: [
       { name: "user", description: "New organizer", required: true },

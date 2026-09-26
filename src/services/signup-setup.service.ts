@@ -47,6 +47,7 @@ import {
   publish,
   publishToChannel,
   sendActionNotices,
+  sendSignupNotice,
   signupSheetKey,
 } from "./signup-actions.service.js";
 import {
@@ -545,7 +546,8 @@ export const handleSignupNoRosterChangesButton = async (
 /**
  * Handles the setup owner's next channel message as either edited roster text
  * (updates the pending draft only; publishing still requires Save Changes) or,
- * separately, updated `/note` text (`remove` clears it), which saves immediately.
+ * separately, updated `/note` text (`remove` clears it), which saves immediately
+ * and posts the public notice after the refreshed sheet is published.
  */
 export const handleSignupRosterMessage = async (
   message: Message,
@@ -586,14 +588,14 @@ export const handleSignupRosterMessage = async (
   }
   if (pendingNoteUsers.get(key) !== message.author.id) return;
   pendingNoteUsers.delete(key);
+  const noteContent = message.content.trim();
+  const updatedNotes =
+    noteContent.toLowerCase() === "remove" ? null : noteContent || null;
   const { sheet, error } = await mutateSignupSheet(
     message.guildId,
     message.channelId,
     (s) => {
-      s.notes =
-        message.content.trim().toLowerCase() === "remove"
-          ? null
-          : message.content.trim() || null;
+      s.notes = updatedNotes;
       return null;
     },
   );
@@ -603,18 +605,21 @@ export const handleSignupRosterMessage = async (
     );
     return;
   }
-  await publish(
-    {
-      guildId: message.guildId,
-      channelId: message.channelId,
-      channel: message.channel,
-      guild: message.guild,
-      user: message.author,
-      reply: (options: unknown) => message.reply(options as never),
-      deferred: false,
-      replied: false,
-    } as never,
-    sheet,
+  const noticeInteraction = {
+    guildId: message.guildId,
+    channelId: message.channelId,
+    channel: message.channel,
+    guild: message.guild,
+    user: message.author,
+    reply: (options: unknown) => message.reply(options as never),
+    followUp: (options: unknown) => message.reply(options as never),
+    deferred: false,
+    replied: false,
+  } as never;
+  await publish(noticeInteraction, sheet);
+  await sendSignupNotice(
+    noticeInteraction,
+    `**${message.author.displayName}** has ${updatedNotes ? "added" : "removed"} a note:\n${updatedNotes ?? "None"}`,
   );
 };
 
@@ -703,6 +708,7 @@ export const handleSignupAddConfirmButton = async (
     [{ userId: pending.userId, labels: appliedLabels }],
     sheet.title,
     formatAddNoticeDetail(pending.charNote, pending.isTbc),
+    pending.randomSlotNumber,
   );
 };
 

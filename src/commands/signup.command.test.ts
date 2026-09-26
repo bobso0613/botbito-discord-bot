@@ -270,6 +270,10 @@ describe("/next", () => {
         ]),
       }),
     );
+    expect(interaction.followUp).toHaveBeenCalledWith({
+      content:
+        "**Invoker** has set the run schedule to <t:1700604800:F> (<t:1700604800:R>).",
+    });
   });
 });
 
@@ -1209,6 +1213,44 @@ describe("/swap", () => {
       }),
     );
   });
+
+  it("swaps to a random open slot when random is the second parameter", async () => {
+    const sheet = buildSheet({
+      slots: [
+        {
+          number: 7,
+          role: "Range DPS",
+          signupUserId: "user-1",
+          signupDisplayName: "Alice",
+          charNote: null,
+        },
+        {
+          number: 2,
+          role: "DPS",
+          signupUserId: null,
+          signupDisplayName: null,
+          charNote: null,
+        },
+      ],
+      reserves: [],
+    });
+    getSignupSheet.mockResolvedValue(sheet);
+    const interaction = createSwapInteraction("7", "random", "user-1");
+
+    await swapCommand.execute(interaction as never);
+
+    expect(saveSignupSheet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        slots: [
+          expect.objectContaining({ number: 7, signupUserId: null }),
+          expect.objectContaining({ number: 2, signupUserId: "user-1" }),
+        ],
+      }),
+    );
+    expect(interaction.followUp).toHaveBeenCalledWith({
+      content: "**Invoker** swapped to random, 🎲rolled 2 and got **02: DPS**",
+    });
+  });
 });
 
 describe("/change roster and roster editing buttons", () => {
@@ -1567,6 +1609,7 @@ describe("/change roster and roster editing buttons", () => {
       guild: { id: "guild-1", name: "Guild 1", iconURL: () => null },
       user: { id: "user-1", displayName: "Organizer" },
       reply: jest.fn(),
+      followUp: jest.fn(),
       fetchReply: jest
         .fn<() => Promise<{ id: string }>>()
         .mockResolvedValue({ id: "new-msg-456" }),
@@ -1586,6 +1629,9 @@ describe("/change roster and roster editing buttons", () => {
     expect(saveSignupSheet).toHaveBeenCalledWith(
       expect.objectContaining({ messageId: "new-msg-456" }),
     );
+    expect(interaction.followUp).toHaveBeenCalledWith({
+      content: "**Organizer** has set the run name to **New Run Title**.",
+    });
   });
 });
 
@@ -1726,6 +1772,7 @@ describe("/swaporganizer", () => {
       guild: { id: "guild-1", name: "Guild 1", iconURL: () => null },
       user: { id: "user-1", displayName: "Invoker" },
       reply: jest.fn(),
+      followUp: jest.fn(),
       deferred: false,
       replied: false,
       options: {
@@ -1745,6 +1792,10 @@ describe("/swaporganizer", () => {
         organizerAvatarUrl: "https://example.com/new.png",
       }),
     );
+    expect(interaction.followUp).toHaveBeenCalledWith({
+      content:
+        "<@user-new-99>, you have been set as this run's organizer by **Invoker**.",
+    });
   });
 });
 
