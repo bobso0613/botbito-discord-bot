@@ -1864,6 +1864,103 @@ describe("/add overwrite confirmation buttons", () => {
       "channel-1",
       expect.any(Function),
     );
+    expect(buttonInteraction.followUp).toHaveBeenNthCalledWith(2, {
+      content:
+        "<@user-existing>, you have been replaced by **NewTank** on **01: Tank** in Test Run.",
+    });
+  });
+
+  it("credits the invoker when another user replaces an occupied slot", async () => {
+    getSignupSheet.mockResolvedValue(
+      buildSheet({
+        slots: [
+          {
+            number: 1,
+            role: "Tank",
+            signupUserId: "user-existing",
+            signupDisplayName: "ExistingTank",
+            charNote: null,
+          },
+        ],
+      }),
+    );
+    pendingAddConfirmations.set(
+      addConfirmationKey("guild-1", "channel-1", "user-1"),
+      {
+        userId: "user-target",
+        displayName: "TargetTank",
+        slotNumbers: [1],
+        charNote: null,
+        isTbc: false,
+      },
+    );
+    const interaction = {
+      guildId: "guild-1",
+      channelId: "channel-1",
+      channel: {
+        send: jest
+          .fn<() => Promise<{ id: string }>>()
+          .mockResolvedValue({ id: "public-msg" }),
+      },
+      guild: { id: "guild-1", name: "Guild 1", iconURL: () => null },
+      user: { id: "user-1", displayName: "Invoker" },
+      update: jest.fn(),
+      followUp: jest.fn(),
+    };
+
+    await handleSignupAddConfirmButton(interaction as never);
+
+    expect(interaction.followUp).toHaveBeenNthCalledWith(2, {
+      content:
+        "<@user-existing>, you have been replaced by **TargetTank** (thru **Invoker**) on **01: Tank** in Test Run.",
+    });
+  });
+
+  it("does not notify the invoker when they replace their own slot for someone else", async () => {
+    getSignupSheet.mockResolvedValue(
+      buildSheet({
+        slots: [
+          {
+            number: 1,
+            role: "Tank",
+            signupUserId: "user-1",
+            signupDisplayName: "Invoker",
+            charNote: null,
+          },
+        ],
+      }),
+    );
+    pendingAddConfirmations.set(
+      addConfirmationKey("guild-1", "channel-1", "user-1"),
+      {
+        userId: "user-target",
+        displayName: "TargetTank",
+        slotNumbers: [1],
+        charNote: null,
+        isTbc: false,
+      },
+    );
+    const interaction = {
+      guildId: "guild-1",
+      channelId: "channel-1",
+      channel: {
+        send: jest
+          .fn<() => Promise<{ id: string }>>()
+          .mockResolvedValue({ id: "public-msg" }),
+      },
+      guild: { id: "guild-1", name: "Guild 1", iconURL: () => null },
+      user: { id: "user-1", displayName: "Invoker" },
+      update: jest.fn(),
+      followUp: jest.fn(),
+    };
+
+    await handleSignupAddConfirmButton(interaction as never);
+
+    expect(interaction.followUp).toHaveBeenCalledTimes(1);
+    expect(interaction.followUp).toHaveBeenCalledWith({
+      content:
+        "<@user-target>, you got added by <@user-1> as **01: Tank** on Test Run.",
+    });
   });
 
   it("handles expired confirmation on confirm", async () => {

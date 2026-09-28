@@ -406,6 +406,26 @@ export const sendActionNotices = async (
   }
 };
 
+/** Notifies users whose occupied slots were replaced by a confirmed `/add`. */
+export const sendReplacementNotices = async (
+  interaction: SignupInteraction,
+  notices: ActionNotice[],
+  targetUserId: string,
+  targetDisplayName: string,
+  runTitle: string,
+): Promise<void> => {
+  const replacement =
+    targetUserId === interaction.user.id
+      ? `**${targetDisplayName}**`
+      : `**${targetDisplayName}** (thru **${interaction.user.displayName}**)`;
+  for (const notice of notices) {
+    if (!notice.labels.length) continue;
+    await interaction.followUp({
+      content: `<@${notice.userId}>, you have been replaced by ${replacement} on **${notice.labels.join(", ")}** in ${runTitle}.`,
+    });
+  }
+};
+
 /** Posts a public signup-sheet action notice after the updated embed is sent. */
 export const sendSignupNotice = async (
   interaction: SignupInteraction,

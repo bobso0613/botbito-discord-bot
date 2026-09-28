@@ -47,6 +47,7 @@ import {
   publish,
   publishToChannel,
   sendActionNotices,
+  sendReplacementNotices,
   sendSignupNotice,
   signupSheetKey,
 } from "./signup-actions.service.js";
@@ -62,6 +63,7 @@ import {
   formatNewRunDate,
   formatSlotLabel,
   getRosterPrompt,
+  mergeActionNotices,
   parseNewRunTimestamp,
   parseRosterWithPartySizes,
   parseServerTimezone,
@@ -674,6 +676,7 @@ export const handleSignupAddConfirmButton = async (
     return;
   }
   const appliedLabels: string[] = [];
+  const replacedEntries: { userId: string; label: string }[] = [];
   const { sheet, error } = await mutateSignupSheet(
     interaction.guildId,
     interaction.channelId,
@@ -681,6 +684,16 @@ export const handleSignupAddConfirmButton = async (
       for (const number of pending.slotNumbers) {
         const slot = s.slots.find((candidate) => candidate.number === number);
         if (!slot) continue;
+        if (
+          slot.signupUserId &&
+          slot.signupUserId !== pending.userId &&
+          slot.signupUserId !== interaction.user.id
+        ) {
+          replacedEntries.push({
+            userId: slot.signupUserId,
+            label: formatSlotLabel(slot),
+          });
+        }
         slot.signupUserId = pending.userId;
         slot.signupDisplayName = pending.displayName;
         slot.charNote = pending.charNote;
@@ -709,6 +722,13 @@ export const handleSignupAddConfirmButton = async (
     sheet.title,
     formatAddNoticeDetail(pending.charNote, pending.isTbc),
     pending.randomSlotNumber,
+  );
+  await sendReplacementNotices(
+    interaction,
+    mergeActionNotices(replacedEntries),
+    pending.userId,
+    pending.displayName,
+    sheet.title,
   );
 };
 

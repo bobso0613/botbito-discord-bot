@@ -55,6 +55,7 @@ export const SIGNUP_COMMANDS_HELP_TEXT = [
   "**Manage Self:** `/add input=#/random/reserve`, `/remove`, `/remove input=#`, `/swap first=#/random/reserve second=#/random`, `/charnote input=YourNote`, `/removecharnote`, `/tbc`, `/removetbc`",
   "",
   "**Manage others:** `/add input=#/random/reserve @user`, `/remove input='# of @user'`, `/swap first='# of @user' second=#/random`",
+  "Occupied slot replacements require confirmation, and the displaced user is notified.",
   "",
   "**Manage Sheet:** `/swaporganizer`, `/newrun`, `/name`, `/note`, `/color`, `/setpic`, `/setservertimezone`, `/change position`, `/change all`, `/change roster`, `/clear`, `/setinstancetype`",
   "",

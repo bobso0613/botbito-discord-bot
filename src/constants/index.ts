@@ -287,7 +287,7 @@ export const COMMAND_GUIDE: ReadonlyArray<{
   {
     name: "/add",
     description:
-      "Sign up for a slot or reserve, or add another user (alias: /a)",
+      "Sign up for a slot or reserve, or add another user (alias: /a). Occupied slots require confirmation; displaced users are notified.",
     emoji: "➕",
     parameters: [
       {
