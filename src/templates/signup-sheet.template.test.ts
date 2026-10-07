@@ -203,6 +203,21 @@ describe("buildSignupSheetEmbed", () => {
     expect(embed.data.footer?.text).toBe("Organizer - Organizer");
   });
 
+  it("renders both instance types as machine-readable metadata", () => {
+    const embed = buildSignupSheetEmbed(
+      buildSheet({ instanceType: ["Endless Tower", "Endless Cellar"] }),
+      "Guild",
+      null,
+    );
+    const field = embed.data.fields?.find(
+      (candidate) => candidate.name === "Instance Types:",
+    );
+    expect(field?.value).toContain("Endless Tower");
+    expect(field?.value).toContain("Endless Cellar");
+    expect(embed.data.footer?.text).toContain("Endless Tower");
+    expect(embed.data.footer?.text).toContain("Endless Cellar");
+  });
+
   it("sets the thumbnail and color only when configured", () => {
     const withoutExtras = buildSignupSheetEmbed(buildSheet(), "Guild", null);
     expect(withoutExtras.data.thumbnail).toBeUndefined();

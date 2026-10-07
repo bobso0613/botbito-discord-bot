@@ -8,6 +8,65 @@ const getDiscordTimestamp = (date: string): string =>
   `<t:${Math.floor(new Date(date).getTime() / 1_000)}:F>`;
 
 describe("getActiveGuildSchedules", () => {
+  it.each([
+    {
+      fields: [{ name: "Instance Types:", value: "ET | EC" }],
+      footer: undefined,
+      expected: ["ET | EC"],
+    },
+    {
+      fields: [],
+      footer: { text: "Organizer - Alice | ET | EC" },
+      expected: ["ET", "EC"],
+    },
+    {
+      fields: [{ name: "Instance Type", value: "None" }],
+      footer: undefined,
+      expected: [],
+    },
+    { fields: [], footer: undefined, expected: undefined },
+  ])(
+    "reads instance metadata while preserving legacy title-only schedules: $expected",
+    async ({ fields, footer, expected }) => {
+      const channel = {
+        type: ChannelType.GuildText,
+        id: "channel",
+        parentId: "category",
+        name: "signup",
+        url: "https://discord.com/channels/guild/channel",
+        permissionsFor: jest.fn().mockReturnValue({ has: () => true }),
+        messages: {
+          fetch: jest.fn().mockResolvedValue(
+            new Map([
+              [
+                "message",
+                {
+                  author: { id: DISCORD_SETTINGS.guildScheduleBotIds[0] },
+                  createdTimestamp: 1,
+                  embeds: [
+                    {
+                      title: "Unrelated title",
+                      description:
+                        "Tank - **Alice**\nYour Time: <t:4070905800:F>",
+                      fields,
+                      footer,
+                    },
+                  ],
+                },
+              ],
+            ]) as never,
+          ),
+        },
+      };
+      const schedules = await getActiveGuildSchedules(
+        { channels: { cache: new Map([["channel", channel]]) } } as never,
+        { displayName: "Alice" } as never,
+        ["category"],
+      );
+      expect(schedules[0]?.instanceTypes).toEqual(expected);
+    },
+  );
+
   it("returns the newest accessible schedule from each channel, ordered by time", async () => {
     const member = { displayName: "Lucian Blight" };
     const accessiblePermissions = { has: jest.fn().mockReturnValue(true) };

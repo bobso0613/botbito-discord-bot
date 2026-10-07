@@ -29,6 +29,23 @@ const getEmbedText = (embed: Embed): string =>
     .filter((value): value is string => Boolean(value))
     .join("\n");
 
+/**
+ * Reads explicit Instance Type(s) fields or the legacy Organizer footer suffixes.
+ * None or an empty legacy selection yields []; missing metadata yields undefined
+ * so downstream consumers can preserve title-based matching.
+ */
+const getEmbedInstanceTypes = (embed: Embed): readonly string[] | undefined => {
+  const field = embed.fields.find((candidate) =>
+    /^instance\s*types?\s*:?$/i.test(
+      candidate.name.replace(/[*_]/g, "").trim(),
+    ),
+  );
+  if (field) return /^none$/i.test(field.value.trim()) ? [] : [field.value];
+  const footer = embed.footer?.text;
+  if (footer?.startsWith("Organizer - ")) return footer.split(" | ").slice(1);
+  return undefined;
+};
+
 /** Returns a Discord timestamp when it is active or inside the requested window. */
 const getActiveScheduleTimestamp = (
   embedText: string,
@@ -143,6 +160,7 @@ const getScheduleFromMessage = (
   if (clearedBotIds.has(message.author.id) && !timeWindow) return undefined;
   const schedule = message.embeds.flatMap((embed) => {
     const embedText = getEmbedText(embed);
+    const instanceTypes = getEmbedInstanceTypes(embed);
     const timestamp = getActiveScheduleTimestamp(
       embedText,
       timeWindow,
@@ -154,6 +172,7 @@ const getScheduleFromMessage = (
       ? [
           {
             title: embed.title,
+            ...(instanceTypes === undefined ? {} : { instanceTypes }),
             timestamp,
             channelName: channel.name,
             channelUrl: channel.url,

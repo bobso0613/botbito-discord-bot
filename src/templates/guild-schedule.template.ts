@@ -8,7 +8,12 @@ import type {
   GuildSchedule,
   MyScheduleGrouping,
 } from "../types/guild-schedule.js";
-import { parseInstanceTypes } from "../utils/cooldowns.js";
+import { DISCORD_SETTINGS } from "../config/discord-settings.js";
+import { COOLDOWN_INSTANCE_TYPES } from "../constants/cooldowns.js";
+import {
+  getScheduleInstanceTypes,
+  parseInstanceTypes,
+} from "../utils/cooldowns.js";
 import type { InteractionContext } from "../types/interaction-context.js";
 import { getScheduleTitleIcon } from "../utils/guild-schedule.js";
 import { getEmbedFooter } from "../utils/payout-embed.js";
@@ -152,29 +157,53 @@ const formatGuildGroupedSchedules = (
     .join("\n\n");
 };
 
-/** Formats personal schedules under their detected instance type headings. */
+/**
+ * Groups schedules under emoji-prefixed instance headings, sorted by type names.
+ * Metadata uses the source guild's cooldownInstanceTypes; absent metadata retains
+ * default title matching. Multiple types share a combined heading, while empty
+ * or unrecognized selections use Others with its configured or default emoji.
+ */
 const formatInstanceGroupedSchedules = (
   schedules: GuildSchedule[],
   isPublic = false,
 ): string => {
-  const schedulesByInstance = new Map<string, GuildSchedule[]>();
+  const schedulesByInstance = new Map<
+    string,
+    { heading: string; schedules: GuildSchedule[] }
+  >();
 
   for (const schedule of schedules) {
-    const instanceNames = parseInstanceTypes(schedule.title).map(
+    const configuredTypes =
+      DISCORD_SETTINGS.cooldownInstanceTypesByGuild[schedule.guildId ?? ""] ??
+      COOLDOWN_INSTANCE_TYPES;
+    const instanceTypes =
+      schedule.instanceTypes === undefined
+        ? parseInstanceTypes(schedule.title)
+        : getScheduleInstanceTypes(schedule, configuredTypes);
+    const instanceNames = instanceTypes.map(
       (instanceType) => instanceType.name,
     );
     const instanceName = instanceNames.join(" / ") || "Others";
-    schedulesByInstance.set(instanceName, [
-      ...(schedulesByInstance.get(instanceName) ?? []),
-      schedule,
-    ]);
+    const othersType =
+      configuredTypes.find((type) => type.name === "Others") ??
+      COOLDOWN_INSTANCE_TYPES.find((type) => type.name === "Others");
+    const heading = instanceTypes.length
+      ? instanceTypes
+          .map((type) => `${type.emoji} ${type.name}`.trim())
+          .join(" / ")
+      : `${othersType?.emoji ?? ""} Others`.trim();
+    const group = schedulesByInstance.get(instanceName);
+    schedulesByInstance.set(instanceName, {
+      heading: group?.heading ?? heading,
+      schedules: [...(group?.schedules ?? []), schedule],
+    });
   }
 
   return Array.from(schedulesByInstance.entries())
     .sort(([first], [second]) => first.localeCompare(second))
     .map(
-      ([instanceName, instanceSchedules]) =>
-        `### ${instanceName}\n${instanceSchedules
+      ([, { heading, schedules: instanceSchedules }]) =>
+        `### ${heading}\n${instanceSchedules
           .map((schedule) => formatGuildSchedule(schedule, { isPublic }))
           .join("\n\n")}`,
     )

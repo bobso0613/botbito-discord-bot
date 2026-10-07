@@ -19,7 +19,7 @@ import {
 } from "../templates/cooldowns.template.js";
 import type { Command } from "../types/command.js";
 import type { GuildSchedule } from "../types/guild-schedule.js";
-import { countCooldowns } from "../utils/cooldowns.js";
+import { countCooldowns, parseInstanceTypes } from "../utils/cooldowns.js";
 import type { InstanceType } from "../constants/cooldowns.js";
 import {
   getScheduleWeekTitle,
@@ -118,7 +118,29 @@ export const sendMyCooldowns = async (
       guildSettings.instanceTypes,
       guildSettings.multiplierInstanceTypes,
     )) {
-      const existing = cooldownMap.get(name);
+      const existing =
+        cooldownMap.get(name) ??
+        Array.from(cooldownMap.values()).find(({ type }) => {
+          if (
+            !type ||
+            !value.type ||
+            type.name === "Others" ||
+            name === "Others"
+          )
+            return false;
+          const aliases = new Set(
+            [type.name, ...type.keywords].map((alias) =>
+              alias.trim().toLowerCase(),
+            ),
+          );
+          return (
+            [value.type.name, ...value.type.keywords].some((alias) =>
+              aliases.has(alias.trim().toLowerCase()),
+            ) ||
+            parseInstanceTypes(value.type.name, [type]).length > 0 ||
+            parseInstanceTypes(type.name, [value.type]).length > 0
+          );
+        });
       if (existing) existing.count += value.count;
       else cooldownMap.set(name, { ...value });
     }

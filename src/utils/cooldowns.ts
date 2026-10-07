@@ -6,29 +6,65 @@ import {
 } from "../constants/cooldowns.js";
 
 /**
- * Parses all matching instance types from a schedule title.
- * Returns an array of all matching instance types or an empty array if none match.
- * Uses word boundaries for abbreviations (1-3 chars) and substring matching for full names.
+ * Resolves short aliases only when they consume the complete alphanumeric token.
+ * Joined aliases such as ETEC are accepted; unrelated word fragments are rejected.
  */
-const escapeRegularExpression = (value: string): string =>
-  value.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+const parseAbbreviationSequence = (
+  token: string,
+  abbreviations: readonly string[],
+): Set<string> => {
+  const prefixes = new Map<number, Set<string>>([[0, new Set()]]);
+  for (let offset = 0; offset < token.length; offset++) {
+    const prefix = prefixes.get(offset);
+    if (!prefix) continue;
+    for (const abbreviation of abbreviations) {
+      if (!token.startsWith(abbreviation, offset)) continue;
+      const end = offset + abbreviation.length;
+      const matches = new Set(prefixes.get(end));
+      prefix.forEach((match) => matches.add(match));
+      matches.add(abbreviation);
+      prefixes.set(end, matches);
+    }
+  }
+  return prefixes.get(token.length) ?? new Set();
+};
 
+/**
+ * Matches configured names and keywords case-insensitively in titles or metadata.
+ * Supports either order, separators, full names, and joined abbreviation sequences.
+ * Returns each matching type once in configuration order, excluding Others.
+ * @example parseInstanceTypes("EC+ET Friday")
+ * @example parseInstanceTypes("ETEC")
+ */
 export const parseInstanceTypes = (
   title: string,
   instanceTypes: readonly InstanceType[] = COOLDOWN_INSTANCE_TYPES,
 ): InstanceType[] => {
   const matches: InstanceType[] = [];
+  const abbreviations = [
+    ...new Set(
+      instanceTypes
+        .filter((type) => type.name !== "Others")
+        .flatMap((type) => [type.name, ...type.keywords])
+        .filter((keyword) => keyword.length > 0 && keyword.length <= 3)
+        .map((keyword) => keyword.toLowerCase()),
+    ),
+  ];
+  const matchedAbbreviations = new Set(
+    (title.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).flatMap((token) => [
+      ...parseAbbreviationSequence(token, abbreviations),
+    ]),
+  );
 
   for (const instanceType of instanceTypes) {
     if (instanceType.name === "Others") continue;
 
-    for (const keyword of instanceType.keywords) {
+    for (const keyword of new Set([
+      instanceType.name,
+      ...instanceType.keywords,
+    ])) {
       if (keyword.length <= 3) {
-        const regex = new RegExp(
-          String.raw`(?:^|\s)${escapeRegularExpression(keyword)}(?:\s|$)`,
-          "i",
-        );
-        if (regex.test(title)) {
+        if (matchedAbbreviations.has(keyword.toLowerCase())) {
           matches.push(instanceType);
           break;
         }
@@ -40,6 +76,25 @@ export const parseInstanceTypes = (
   }
 
   return matches;
+};
+
+/**
+ * Resolves selected instance metadata using the supplied guild definitions.
+ * Missing metadata falls back to the title; empty or unknown metadata does not.
+ * Multiple selections and combined aliases are deduplicated per instance type.
+ */
+export const getScheduleInstanceTypes = (
+  schedule: GuildSchedule,
+  instanceTypes: readonly InstanceType[],
+): InstanceType[] => {
+  const selectedTypes = schedule.instanceTypes;
+  if (selectedTypes === undefined) {
+    return parseInstanceTypes(schedule.title, instanceTypes);
+  }
+  const matchedTypes = new Set(
+    selectedTypes.flatMap((name) => parseInstanceTypes(name, instanceTypes)),
+  );
+  return instanceTypes.filter((type) => matchedTypes.has(type));
 };
 
 /**
@@ -73,6 +128,9 @@ export const extractMultiplierFromTitle = (
 /**
  * Counts cooldowns by instance type from a list of schedules.
  * Initializes all instance types with 0 count and updates based on matched schedules.
+ * Selected metadata takes precedence; title matching is used only when it is absent.
+ * Each run contributes once per resolved type before enabled title multipliers.
+ * Unresolved runs increment Others when that type is configured.
  */
 export const countCooldowns = (
   schedules: Array<GuildSchedule & { guildName: string }>,
@@ -103,7 +161,7 @@ export const countCooldowns = (
 
   // Count schedules
   for (const schedule of schedules) {
-    const matchedTypes = parseInstanceTypes(schedule.title, instanceTypes);
+    const matchedTypes = getScheduleInstanceTypes(schedule, instanceTypes);
 
     // If no types matched, add to "Others"
     if (matchedTypes.length === 0) {

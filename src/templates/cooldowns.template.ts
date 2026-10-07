@@ -5,6 +5,8 @@ import { getEmbedFooter } from "../utils/payout-embed.js";
 
 /**
  * Formats a single cooldown entry with instance type emoji, name, and attempt counts.
+ * Omits the attempt limit for any type with maxAttempts set to zero.
+ * A null type is displayed as Others with its default emoji.
  */
 export const formatCooldownEntry = (
   instanceType: InstanceType | null,
@@ -14,9 +16,8 @@ export const formatCooldownEntry = (
     return `💀 Others - **${count}**`;
   }
 
-  // Others type has maxAttempts of 0, so don't show "out of" for it
-  if (instanceType.name === "Others") {
-    return `${instanceType.emoji} Others - **${count}**`;
+  if (instanceType.maxAttempts === 0) {
+    return `${instanceType.emoji} ${instanceType.name} - **${count}**`;
   }
 
   return `${instanceType.emoji} ${instanceType.name} - **${count}** out of **${instanceType.maxAttempts}**`;

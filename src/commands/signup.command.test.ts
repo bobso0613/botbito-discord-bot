@@ -155,6 +155,25 @@ const createInteraction = (
   },
 });
 
+describe("/setinstancetype", () => {
+  it("saves both configured cooldown types from comma-separated input", async () => {
+    getSignupSheet.mockResolvedValue(buildSheet());
+    const interaction = createInteraction();
+    interaction.options.getString.mockReturnValue(
+      "Endless Tower, Endless Cellar",
+    );
+    const command = signupCommands.find(
+      (candidate) => candidate.data.name === "setinstancetype",
+    )!;
+    await command.execute(interaction as never);
+    expect(saveSignupSheet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instanceType: ["Endless Tower", "Endless Cellar"],
+      }),
+    );
+  });
+});
+
 describe("/add options", () => {
   it("exposes char and tbc options on the /a alias", () => {
     const optionNames = (addAliasCommand.data.toJSON().options ?? []).map(

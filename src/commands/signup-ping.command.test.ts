@@ -70,17 +70,24 @@ const buildSheet = (overrides: Partial<SignupSheet> = {}): SignupSheet => ({
   ...overrides,
 });
 
-const createInteraction = (which: string | null, message = "hello") => ({
+const createInteraction = (
+  which: string | null,
+  message = "hello",
+  where: string | null = null,
+  fetchUser = jest.fn(async (_id: string) => ({ send: jest.fn() })),
+) => ({
   guildId: "guild-1",
   channelId: "channel-1",
   guild: { id: "guild-1" },
   channel: { name: "general" },
-  user: { id: "invoker-1", displayName: "Invoker" },
+  user: { id: "invoker-1", displayName: "Invoker", tag: "invoker#1234" },
+  client: { users: { fetch: fetchUser } },
   reply: jest.fn(),
   options: {
     getString: jest.fn((name: string) => {
       if (name === "message") return message;
       if (name === "which") return which;
+      if (name === "where") return where;
       return null;
     }),
   },
@@ -92,7 +99,7 @@ describe("/ping", () => {
   });
 
   it.each([
-    { which: "all", label: "All", mentions: "<@user-1> , <@user-2>" },
+    { which: "all", label: "All", mentions: "<@user-1> <@user-2>" },
     { which: "main", label: "Main Roster", mentions: "<@user-1>" },
     { which: "reserves", label: "Reserves", mentions: "<@user-2>" },
   ])(
@@ -104,10 +111,85 @@ describe("/ping", () => {
       await pingCommand.execute(interaction as never);
 
       expect(interaction.reply).toHaveBeenCalledWith({
-        content: `-# Ping from **Invoker** to **${label}**:\n\n**hello**\n\n-# ${mentions}\n-# sent from __Test Run__ in __general__`,
+        content: `-# 🔔Ping from **Invoker**:\n\nhello\n\n${mentions}\n-# ping to **${label}** | re: **Test Run**`,
       });
     },
   );
+
+  it("defaults to the main roster and channel when both options are omitted", async () => {
+    getSignupSheet.mockResolvedValue(buildSheet());
+    const interaction = createInteraction(null);
+
+    await pingCommand.execute(interaction as never);
+
+    expect(interaction.reply).toHaveBeenCalledWith({
+      content:
+        "-# 🔔Ping from **Invoker**:\n\nhello\n\n<@user-1>\n-# ping to **Main Roster** | re: **Test Run**",
+    });
+  });
+
+  it("sends one timestamped DM per unique participant and confirms in the channel", async () => {
+    getSignupSheet.mockResolvedValue(
+      buildSheet({
+        timestamp: 1_800_000_000,
+        slots: [
+          {
+            number: 1,
+            role: "Tank",
+            signupUserId: "user-1",
+            signupDisplayName: "Alice",
+            charNote: null,
+          },
+          {
+            number: 2,
+            role: "DPS",
+            signupUserId: "user-1",
+            signupDisplayName: "Alice",
+            charNote: null,
+          },
+        ],
+        reserves: [{ userId: "user-2", displayName: "Bob", charNote: null }],
+      }),
+    );
+    const send = jest.fn();
+    const fetchUser = jest.fn(async (_id: string) => ({ send }));
+    const interaction = createInteraction("all", "hello", "dm", fetchUser);
+
+    await pingCommand.execute(interaction as never);
+
+    expect(fetchUser).toHaveBeenCalledTimes(2);
+    expect(fetchUser).toHaveBeenNthCalledWith(1, "user-1");
+    expect(fetchUser).toHaveBeenNthCalledWith(2, "user-2");
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send).toHaveBeenNthCalledWith(1, {
+      content:
+        "-# 🔔Ping from **Invoker** re: **Test Run**:\n\nhello\n\n<@user-1>\n-# ping to **All** |  in <#channel-1> | <t:1800000000:F> (<t:1800000000:R>)",
+    });
+    expect(send).toHaveBeenNthCalledWith(2, {
+      content:
+        "-# 🔔Ping from **Invoker** re: **Test Run**:\n\nhello\n\n<@user-2>\n-# ping to **All** |  in <#channel-1> | <t:1800000000:F> (<t:1800000000:R>)",
+    });
+    expect(interaction.reply).toHaveBeenCalledWith({
+      content: "Sent ping thru DM - hello",
+    });
+  });
+
+  it("reports users whose direct messages could not be sent", async () => {
+    getSignupSheet.mockResolvedValue(buildSheet());
+    const send = jest.fn();
+    const fetchUser = jest.fn(async (id: string) => {
+      if (id === "user-2") throw new Error("DMs are closed");
+      return { send };
+    });
+    const interaction = createInteraction("all", "hello", "dm", fetchUser);
+
+    await pingCommand.execute(interaction as never);
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(interaction.reply).toHaveBeenCalledWith({
+      content: "Sent ping thru DM - hello\nI cannot ping Bob",
+    });
+  });
 
   it("only pings TBC participants across slots and reserves when which=tbc", async () => {
     getSignupSheet.mockResolvedValue(
@@ -146,7 +228,7 @@ describe("/ping", () => {
 
     expect(interaction.reply).toHaveBeenCalledWith({
       content:
-        "-# Ping from **Invoker** to **TBC**:\n\n**hello**\n\n-# <@user-1> , <@user-2>\n-# sent from __Test Run__ in __general__",
+        "-# 🔔Ping from **Invoker**:\n\nhello\n\n<@user-1> <@user-2>\n-# ping to **TBC** | re: **Test Run**",
     });
   });
 });

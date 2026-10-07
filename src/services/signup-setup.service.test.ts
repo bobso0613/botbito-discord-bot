@@ -1,11 +1,15 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import { MessageFlags } from "discord.js";
-import { INSTANCE_TYPE_NONE_VALUE } from "../constants/signup.js";
+import {
+  INSTANCE_TYPE_NONE_VALUE,
+  SIGNUP_CANCEL_SETUP_BUTTON_ID,
+} from "../constants/signup.js";
 import type { SignupSheet } from "../types/signup-sheet.js";
 import {
   buildInstanceTypeSelectRow,
   buildRosterPromptButtons,
   buildSetupPromptButtons,
+  handleSignupInstanceTypeButton,
   handleSignupInstanceTypeSelect,
   handleSignupRosterButton,
   parseSetup,
@@ -103,6 +107,81 @@ describe("signup setup service", () => {
       default: false,
     });
   });
+
+  it("shows a Cancel button beneath the instance type menu", async () => {
+    const key = "guild-id:channel-id";
+    pendingSetupDrafts.set(key, createSheet());
+    pendingRosterUsers.set(key, "organizer-id");
+    const interaction = {
+      guildId: "guild-id",
+      channelId: "channel-id",
+      user: { id: "organizer-id" },
+      deferUpdate: jest.fn(),
+      editReply: jest.fn(),
+    };
+
+    await handleSignupInstanceTypeButton(interaction as never);
+
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        components: [
+          expect.anything(),
+          expect.objectContaining({
+            components: [
+              expect.objectContaining({
+                data: expect.objectContaining({
+                  custom_id: SIGNUP_CANCEL_SETUP_BUTTON_ID,
+                  label: "Cancel",
+                }),
+              }),
+            ],
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("preselects multiple instance types and allows multiple selections", () => {
+    const select = buildInstanceTypeSelectRow([
+      "Endless Tower",
+      "Endless Cellar",
+    ]).components[0]!.toJSON();
+    expect(select.max_values).toBeGreaterThan(1);
+    expect(
+      select.options
+        .filter((option) => option.default)
+        .map((option) => option.value),
+    ).toEqual(["Endless Tower", "Endless Cellar"]);
+  });
+
+  it.each([
+    {
+      values: ["Endless Tower", "Endless Cellar"],
+      expected: ["Endless Tower", "Endless Cellar"],
+    },
+    { values: [INSTANCE_TYPE_NONE_VALUE], expected: null },
+    {
+      values: [INSTANCE_TYPE_NONE_VALUE, "Endless Tower"],
+      expected: "Endless Tower",
+    },
+  ])(
+    "stores multiple instance selections or None: $values",
+    async ({ values, expected }) => {
+      const key = "guild-id:channel-id";
+      const sheet = createSheet();
+      pendingSetupDrafts.set(key, sheet);
+      pendingRosterUsers.set(key, "organizer-id");
+      await handleSignupInstanceTypeSelect({
+        guildId: "guild-id",
+        channelId: "channel-id",
+        user: { id: "organizer-id" },
+        values,
+        deferUpdate: jest.fn(),
+        editReply: jest.fn(),
+      } as never);
+      expect(sheet.instanceType).toEqual(expected);
+    },
+  );
 
   it("parses a valid new setup submission", () => {
     const result = parseSetup(

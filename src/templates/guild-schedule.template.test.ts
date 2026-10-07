@@ -1,5 +1,6 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import { ButtonStyle } from "discord.js";
+import { DISCORD_SETTINGS } from "../config/discord-settings.js";
 import type { InteractionContext } from "../types/interaction-context.js";
 import {
   buildGuildScheduleEmbed,
@@ -267,12 +268,73 @@ describe("buildMyScheduleEmbed", () => {
     const embed = buildMyScheduleEmbed(personalSchedules, context, "instance");
 
     expect(embed.data.description).toContain(
-      "### Endless Tower\n<:guildIcon_92073842977030144:1545375402833215548> - Ragnarok M",
+      "### 🪜 Endless Tower\n<:guildIcon_92073842977030144:1545375402833215548> - Ragnarok M",
     );
     expect(embed.data.description).toContain(
-      "### Wolfchev's Laboratory\n<:guildIcon_499171225046876170:1545375525017755699> - Fate Stay Night",
+      "### 🐺 Wolfchev's Laboratory\n<:guildIcon_499171225046876170:1545375525017755699> - Fate Stay Night",
     );
   });
+
+  it.each([
+    { selected: ["Custom Alias"], heading: "🦐 Custom Instance" },
+    { selected: ["ECET"], heading: "T Tower Challenge / C Cellar Challenge" },
+    { selected: [], heading: "💀 Others" },
+    { selected: ["Unknown Instance"], heading: "💀 Others" },
+    { selected: undefined, heading: "🪜 Endless Tower" },
+  ])(
+    "uses guild definitions for metadata and retains title fallback: $selected",
+    ({ selected, heading }) => {
+      const settings = jest.replaceProperty(
+        DISCORD_SETTINGS,
+        "cooldownInstanceTypesByGuild",
+        {
+          ...DISCORD_SETTINGS.cooldownInstanceTypesByGuild,
+          "instance-metadata-guild": [
+            {
+              name: "Custom Instance",
+              keywords: ["Custom Alias"],
+              maxAttempts: 0,
+              emoji: "🦐",
+            },
+            {
+              name: "Tower Challenge",
+              keywords: ["ET"],
+              maxAttempts: 3,
+              emoji: "T",
+            },
+            {
+              name: "Cellar Challenge",
+              keywords: ["EC"],
+              maxAttempts: 3,
+              emoji: "C",
+            },
+          ],
+        },
+      );
+      try {
+        const embed = buildMyScheduleEmbed(
+          [
+            {
+              ...personalSchedules[1]!,
+              guildId: "instance-metadata-guild",
+              instanceTypes: selected,
+            },
+          ],
+          context,
+          "instance",
+        );
+        expect(embed.data.description).toContain(`### ${heading}\n`);
+        expect(embed.data.description).toContain("[Endless Tower Wednesday]");
+        if (selected !== undefined) {
+          expect(embed.data.description).not.toContain(
+            "### 🪜 Endless Tower\n",
+          );
+        }
+      } finally {
+        settings.restore();
+      }
+    },
+  );
 
   it("builds a personal empty-state embed when no schedules are active", () => {
     expect(buildMyScheduleEmbed([], context).data.description).toBe(

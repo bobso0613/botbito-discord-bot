@@ -93,19 +93,21 @@ export const COMMAND_GUIDE: ReadonlyArray<{
       {
         name: "grouping",
         description:
-          "Group schedules by date, guild, or instance type (By Date default)",
+          "Group schedules by date, guild, or instance type (By Date default). By Instance Type uses the source guild's cooldownInstanceTypes when metadata is available; otherwise it matches run titles. Headings include configured emojis; multiple types share a combined heading, and empty or unrecognized selections use Others.",
         required: false,
       },
     ],
   },
   {
     name: "/mycooldowns",
-    description: "View your weekly cooldown status across accessible guilds",
+    description:
+      "Count your signed-up and reserve runs toward weekly cooldowns across accessible guilds. Uses each guild's cooldownInstanceTypes and groups equivalent names or keyword aliases. Selected instance metadata overrides titles; without metadata, run titles are matched. Combined runs (ET+EC, ECET, ET and EC) count toward each type once. Title multipliers still apply to enabled types. maxAttempts: 0 shows only the count, without an attempt limit.",
     emoji: "🔥",
     parameters: [
       {
         name: "showinpublic",
-        description: "Show your cooldown status to everyone in this channel",
+        description:
+          "Show the result to everyone in this channel (private by default)",
         required: false,
       },
     ],
@@ -450,10 +452,15 @@ export const COMMAND_GUIDE: ReadonlyArray<{
   },
   {
     name: "/setinstancetype",
-    description: "Set the instance type for this run",
+    description: "Set one or more configured instance types for this run",
     emoji: "🏷️",
     parameters: [
-      { name: "type", description: "Instance type", required: true },
+      {
+        name: "type",
+        description:
+          "Comma-separated instance names, e.g. Endless Tower, Endless Cellar. Autocomplete preserves previous selections. None clears the selection. Setup also supports selecting multiple types.",
+        required: true,
+      },
     ],
   },
   {
@@ -515,14 +522,22 @@ export const COMMAND_GUIDE: ReadonlyArray<{
   },
   {
     name: "/ping",
-    description: "Ping signed-up and/or reserve members with a message",
+    description:
+      "Ping signup participants in the channel or send each participant a direct message",
     emoji: "📣",
     parameters: [
       { name: "message", description: "Message", required: true },
       {
         name: "which",
-        description: "Who to ping (Main Roster, Reserves, TBC, All)",
-        required: true,
+        description:
+          "Who to ping (Main Roster, Reserves, TBC, All; defaults to Main Roster)",
+        required: false,
+      },
+      {
+        name: "where",
+        description:
+          "Where to send it (Channel or Direct Message; defaults to Channel)",
+        required: false,
       },
     ],
   },
@@ -541,7 +556,15 @@ export const COMMAND_GUIDE: ReadonlyArray<{
   },
   {
     name: "/help",
-    description: "Display this guide",
+    description: "Display help for a command",
     emoji: "ℹ️",
+    parameters: [
+      {
+        name: "command",
+        description:
+          "Choose a command; autocomplete matches command names as you type",
+        required: true,
+      },
+    ],
   },
 ];
