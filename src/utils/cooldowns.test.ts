@@ -142,6 +142,10 @@ describe("Cooldowns Utils", () => {
       ]),
       { title: "Friday run", instanceTypes: ["ET", "endless cellar"] },
       { title: "Friday run", instanceTypes: ["EC+ET"] },
+      {
+        title: "Friday run",
+        instanceTypes: ["🪜 Endless Tower | 📉 Endless Cellar"],
+      },
     ])(
       "counts both combined cooldowns for $title / $instanceTypes",
       ({ title, instanceTypes }) => {

@@ -56,13 +56,13 @@ const getEmbedInstanceTypes = (
       .flatMap((value) => {
         const normalizedValue = value.trim().toLowerCase();
         const matchedType = instanceTypes.find((type) => {
-          const names = [type.name, ...type.keywords].map((name) =>
-            name.toLowerCase(),
+          const names = new Set(
+            [type.name, ...type.keywords].map((name) => name.toLowerCase()),
           );
           return (
-            names.includes(normalizedValue) ||
+            names.has(normalizedValue) ||
             (value.startsWith(`${type.emoji} `) &&
-              names.includes(value.slice(type.emoji.length).trim().toLowerCase()))
+              names.has(value.slice(type.emoji.length).trim().toLowerCase()))
           );
         });
         return matchedType

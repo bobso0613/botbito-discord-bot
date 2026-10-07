@@ -1,6 +1,6 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import { DISCORD_SETTINGS } from "../config/discord-settings.js";
-import { MessageFlags } from "discord.js";
+import { MessageFlags, type ModalBuilder } from "discord.js";
 import type { InstanceType } from "../constants/cooldowns.js";
 import {
   INSTANCE_TYPE_NONE_VALUE,
@@ -19,6 +19,7 @@ import {
   parseSetup,
   pendingRosterUsers,
   pendingSetupDrafts,
+  showSetup,
 } from "./signup-setup.service.js";
 
 const createSheet = (): SignupSheet => ({
@@ -239,11 +240,10 @@ describe("signup setup service", () => {
     "rejects instance metadata that exceeds embed limits",
     async ({ organizerName, types, values }) => {
       const guildId = "guild-id";
-      const settings =
-        DISCORD_SETTINGS.cooldownInstanceTypesByGuild as Record<
-          string,
-          readonly InstanceType[]
-        >;
+      const settings = DISCORD_SETTINGS.cooldownInstanceTypesByGuild as Record<
+        string,
+        readonly InstanceType[]
+      >;
       const previousTypes = settings[guildId];
       settings[guildId] = types;
       const key = `${guildId}:channel-id`;
@@ -266,9 +266,7 @@ describe("signup setup service", () => {
         expect(sheet.instanceType).toBeNull();
         expect(interaction.editReply).toHaveBeenCalledWith(
           expect.objectContaining({
-            content: expect.stringContaining(
-              "exceed Discord's embed limits",
-            ),
+            content: expect.stringContaining("exceed Discord's embed limits"),
           }),
         );
       } finally {
@@ -314,6 +312,26 @@ describe("signup setup service", () => {
     );
 
     expect(result).toEqual({ error: "A maximum of 8 parties is allowed." });
+  });
+
+  it("allows an existing 10-party count to fit its setup modal prefill", async () => {
+    const interaction = { showModal: jest.fn() };
+
+    await showSetup(interaction as never, {
+      ...createSheet(),
+      partySizes: Array.from({ length: 10 }, () => 1),
+    });
+
+    const modal = interaction.showModal.mock.calls[0]![0] as ModalBuilder;
+    const partyCountField = modal
+      .toJSON()
+      .components.find(
+        (component) =>
+          "label" in component && component.label === "Number of parties",
+      );
+    expect(partyCountField).toMatchObject({
+      component: expect.objectContaining({ value: "10", max_length: 2 }),
+    });
   });
 
   it("requires a valid scheduled time when creating a new sheet", () => {

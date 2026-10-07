@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   ApplicationIntegrationType,
   type AutocompleteInteraction,
@@ -48,6 +49,25 @@ import {
   parseServerTimezone,
   parseTimeShift,
 } from "../utils/signup-sheet.js";
+
+const INSTANCE_TYPE_AUTOCOMPLETE_HASH_LENGTH = 10;
+
+const getInstanceTypeAutocompleteToken = (name: string): string =>
+  `~${createHash("sha256")
+    .update(name)
+    .digest("hex")
+    .slice(0, INSTANCE_TYPE_AUTOCOMPLETE_HASH_LENGTH)}`;
+
+const resolveInstanceTypeAutocompleteValue = (
+  value: string,
+  instanceTypes: readonly { name: string }[],
+): string => {
+  if (!/^~[a-f\d]{10}$/.test(value)) return value;
+  const matches = instanceTypes.filter(
+    (type) => getInstanceTypeAutocompleteToken(type.name) === value,
+  );
+  return matches.length === 1 ? matches[0]!.name : value;
+};
 
 // Re-export constants, action handlers, setup handlers, and button handlers
 export * from "../constants/signup.js";
@@ -327,17 +347,14 @@ const signupCommandDefinitions: Command[] = [
               .split(",")
               .map((value) => value.trim())
               .filter(Boolean)
-              .map((value) => {
-                const index = /^~([\da-z]+)$/i.exec(value);
-                return index
-                  ? (configuredTypes[Number.parseInt(index[1]!, 36)]?.name ??
-                      value)
-                  : value;
-              }),
+              .map((value) =>
+                resolveInstanceTypeAutocompleteValue(value, configuredTypes),
+              ),
           ),
         ];
         const isNone =
-          types.length === 1 && types[0]?.toLowerCase() === INSTANCE_TYPE_NONE_VALUE;
+          types.length === 1 &&
+          types[0]?.toLowerCase() === INSTANCE_TYPE_NONE_VALUE;
         if (
           !isNone &&
           (types.length === 0 ||
@@ -873,25 +890,39 @@ export const handleSetInstanceTypeAutocomplete = async (
   const focused = (parts.pop() ?? "").trim().toLowerCase();
   const prefix = parts.map((part) => part.trim()).filter(Boolean);
   const instanceTypes = source ?? COOLDOWN_INSTANCE_TYPES;
-  const prefixNames = prefix.map((part) => {
-    const index = /^~([\da-z]+)$/i.exec(part);
-    return index
-      ? (instanceTypes[Number.parseInt(index[1]!, 36)]?.name ?? part)
+  const prefixNames = prefix.map((part) =>
+    resolveInstanceTypeAutocompleteValue(part, instanceTypes),
+  );
+  const prefixValues = prefix.map((part, index) => {
+    const prefixType = instanceTypes.find(
+      (type) => type.name === prefixNames[index],
+    );
+    return prefixType
+      ? getInstanceTypeAutocompleteToken(prefixType.name)
       : part;
   });
+  const tokenCounts = new Map<string, number>();
+  for (const type of instanceTypes) {
+    const token = getInstanceTypeAutocompleteToken(type.name);
+    tokenCounts.set(token, (tokenCounts.get(token) ?? 0) + 1);
+  }
   await interaction.respond([
     ...(prefix.length === 0
       ? [{ name: "None", value: INSTANCE_TYPE_NONE_VALUE }]
       : []),
     ...instanceTypes
-      .flatMap((type, index) =>
+      .flatMap((type) =>
         type.name !== "Others" &&
         !prefixNames.includes(type.name) &&
-        type.name.toLowerCase().includes(focused)
+        type.name.toLowerCase().includes(focused) &&
+        tokenCounts.get(getInstanceTypeAutocompleteToken(type.name)) === 1
           ? [
               {
                 name: [...prefixNames, type.name].join(", ").slice(0, 100),
-                value: [...prefix, `~${index.toString(36)}`].join(", "),
+                value: [
+                  ...prefixValues,
+                  getInstanceTypeAutocompleteToken(type.name),
+                ].join(", "),
               },
             ]
           : [],

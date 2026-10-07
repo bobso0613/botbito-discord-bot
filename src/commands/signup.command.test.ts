@@ -1,4 +1,6 @@
 import { jest } from "@jest/globals";
+import { COOLDOWN_INSTANCE_TYPES } from "../constants/cooldowns.js";
+import type { InstanceType } from "../constants/cooldowns.js";
 import type { SignupSheet } from "../types/signup-sheet.js";
 
 const getSignupSheet =
@@ -60,6 +62,7 @@ const {
   SIGNUP_MODAL_REMOVE_CHARNOTE_ID,
   SIGNUP_MODAL_SWAP_ID,
 } = await import("./signup.command.js");
+const { DISCORD_SETTINGS } = await import("../config/discord-settings.js");
 
 const changeCommand = signupCommands.find(
   (command) => command.data.name === "change",
@@ -204,15 +207,65 @@ describe("/setinstancetype", () => {
     );
   });
 
-  it("accepts compact autocomplete selections", async () => {
+  it("keeps autocomplete selections bound to type names if settings reorder", async () => {
     getSignupSheet.mockResolvedValue(buildSheet());
+    const mutableTypeConfigs =
+      DISCORD_SETTINGS.cooldownInstanceTypesByGuild as Record<
+        string,
+        readonly InstanceType[]
+      >;
+    const originalTypes = mutableTypeConfigs["guild-1"];
+    const hadGuildConfig = Object.hasOwn(mutableTypeConfigs, "guild-1");
+    const tower = COOLDOWN_INSTANCE_TYPES.find(
+      (type) => type.name === "Endless Tower",
+    )!;
+    const cellar = COOLDOWN_INSTANCE_TYPES.find(
+      (type) => type.name === "Endless Cellar",
+    )!;
+    mutableTypeConfigs["guild-1"] = [tower, cellar];
+
+    const firstAutocomplete = {
+      guildId: "guild-1",
+      options: { getFocused: jest.fn().mockReturnValue("") },
+      respond: jest.fn(),
+    };
+    await handleSetInstanceTypeAutocomplete(firstAutocomplete as never);
+    const firstChoices = firstAutocomplete.respond.mock.calls[0]![0] as Array<{
+      name: string;
+      value: string;
+    }>;
+    const towerValue = firstChoices.find(
+      (choice) => choice.name === "Endless Tower",
+    )!.value;
+
+    const secondAutocomplete = {
+      guildId: "guild-1",
+      options: { getFocused: jest.fn().mockReturnValue(`${towerValue}, `) },
+      respond: jest.fn(),
+    };
+    await handleSetInstanceTypeAutocomplete(secondAutocomplete as never);
+    const secondChoices = secondAutocomplete.respond.mock
+      .calls[0]![0] as Array<{
+      name: string;
+      value: string;
+    }>;
+    const selectedValue = secondChoices.find(
+      (choice) => choice.name === "Endless Tower, Endless Cellar",
+    )!.value;
+
+    mutableTypeConfigs["guild-1"] = [cellar, tower];
     const interaction = createInteraction();
-    interaction.options.getString.mockReturnValue("~0,~1");
+    interaction.options.getString.mockReturnValue(selectedValue);
     const command = signupCommands.find(
       (candidate) => candidate.data.name === "setinstancetype",
     )!;
 
-    await command.execute(interaction as never);
+    try {
+      await command.execute(interaction as never);
+    } finally {
+      if (hadGuildConfig) mutableTypeConfigs["guild-1"] = originalTypes!;
+      else delete mutableTypeConfigs["guild-1"];
+    }
 
     expect(saveSignupSheet).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -224,7 +277,7 @@ describe("/setinstancetype", () => {
   it("keeps autocomplete choice values compact as selections accumulate", async () => {
     const interaction = {
       guildId: "guild-1",
-      options: { getFocused: jest.fn().mockReturnValue("~0,") },
+      options: { getFocused: jest.fn().mockReturnValue("") },
       respond: jest.fn(),
     };
 
@@ -236,7 +289,7 @@ describe("/setinstancetype", () => {
     }>;
     expect(choices.length).toBeGreaterThan(0);
     expect(choices.every((choice) => choice.value.length <= 100)).toBe(true);
-    expect(choices.every((choice) => choice.value.startsWith("~0,"))).toBe(
+    expect(choices.some((choice) => /^~[a-f\d]{10}$/.test(choice.value))).toBe(
       true,
     );
   });

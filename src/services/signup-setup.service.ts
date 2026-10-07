@@ -268,6 +268,7 @@ export const showSetup = async (
   interaction: ChatInputCommandInteraction | ButtonInteraction,
   existingSheet?: SignupSheet,
 ): Promise<void> => {
+  const existingPartyCount = existingSheet?.partySizes.length;
   const modal = new ModalBuilder()
     .setCustomId(existingSheet ? CHANGE_ALL_MODAL_ID : SETUP_MODAL_ID)
     .setTitle(existingSheet ? "Change party setup" : "Create signup sheet")
@@ -310,8 +311,15 @@ export const showSetup = async (
             "Party count",
             true,
             TextInputStyle.Short,
-            existingSheet ? String(existingSheet.partySizes.length) : undefined,
-          ).setMaxLength(String(MAX_SIGNUP_PARTIES).length),
+            existingPartyCount === undefined
+              ? undefined
+              : String(existingPartyCount),
+          ).setMaxLength(
+            Math.max(
+              String(MAX_SIGNUP_PARTIES).length,
+              String(existingPartyCount ?? MAX_SIGNUP_PARTIES).length,
+            ),
+          ),
         ),
       new LabelBuilder()
         .setLabel("Party sizes, e.g. 12,6,6")

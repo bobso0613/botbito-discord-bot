@@ -93,7 +93,7 @@ export const COMMAND_GUIDE: ReadonlyArray<{
       {
         name: "grouping",
         description:
-          "Group schedules by date, guild, or instance type (By Date default). By Instance Type uses the source guild's cooldownInstanceTypes when metadata is available; absent metadata falls back to run-title matching. Headings include configured emojis; multiple types share a combined heading, and explicit empty or unrecognized metadata uses Others.",
+          "Group schedules by date, guild, or instance type (By Date default). By Instance Type uses the source guild's cooldownInstanceTypes when metadata is available; absent metadata falls back to run-title matching. This bot omits metadata for None, so titles still match; other bots' explicit empty or unrecognized metadata uses Others. Headings include configured emojis; multiple types share a combined heading.",
         required: false,
       },
     ],

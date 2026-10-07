@@ -95,17 +95,16 @@ export const getScheduleInstanceTypes = (
     value.trim().replace(/\s+/g, " ").toLowerCase();
   const matchedTypes = new Set(
     selectedTypes.flatMap((name) =>
-      name.split(/\s*\|\s*/).flatMap((selection) => {
+      name.split("|").flatMap((rawSelection) => {
+        const selection = rawSelection.trim();
         const normalizedName = normalize(selection);
         const exactMatch = instanceTypes.find((type) => {
           if (type.name === "Others") return false;
-          const aliases = [type.name, ...type.keywords].map(normalize);
+          const aliases = new Set([type.name, ...type.keywords].map(normalize));
           return (
-            aliases.includes(normalizedName) ||
+            aliases.has(normalizedName) ||
             (selection.startsWith(`${type.emoji} `) &&
-              aliases.includes(
-                normalize(selection.slice(type.emoji.length)),
-              ))
+              aliases.has(normalize(selection.slice(type.emoji.length))))
           );
         });
         return exactMatch

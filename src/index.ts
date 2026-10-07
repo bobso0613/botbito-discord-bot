@@ -148,7 +148,14 @@ const initializeGuild = async (guildId: string): Promise<void> => {
   } catch (error) {
     logger.error(`Failed to initialize settings for guild ${guildId}:`, error);
   }
-  await registerGuildSlashCommands(guildId);
+  try {
+    await registerGuildSlashCommands(guildId);
+  } catch (error) {
+    logger.error(
+      `Failed to register slash commands for guild ${guildId}:`,
+      error,
+    );
+  }
 };
 
 client.once(Events.ClientReady, async (readyClient) => {
