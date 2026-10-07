@@ -63,6 +63,11 @@ const source: GuildSettings["guildScheduleSource"] = {
   roleRestrictedChannels: {},
   scheduleTextChannelIds: [],
 };
+const mutableGuildScheduleSources =
+  DISCORD_SETTINGS.guildScheduleSourceByGuild as unknown as Record<
+    string,
+    GuildSettings["guildScheduleSource"]
+  >;
 const guild = {
   name: "Test Guild",
   iconURL: jest.fn().mockReturnValue(null),
@@ -250,6 +255,30 @@ describe("guild setting command", () => {
     });
   });
 
+  it("rejects aliases with punctuation before two alphanumeric characters", async () => {
+    const interaction = createInteraction(
+      "cooldown-instance-types",
+      "Custom Run",
+      "set",
+      true,
+      {
+        name: "Custom Run",
+        keywords: "E-C",
+        maxattempts: "2",
+        emoji: "✨",
+      },
+    );
+
+    await guildSettingCommand.execute(interaction as never);
+    expect(updateGuildCooldownSettings).not.toHaveBeenCalled();
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content:
+          "Aliases with punctuation must have at least two letters or numbers before the punctuation.",
+      }),
+    );
+  });
+
   it("updates an existing cooldown instance type instead of erroring on a duplicate name", async () => {
     Object.assign(DISCORD_SETTINGS.cooldownInstanceTypesByGuild, {
       "guild-id": [
@@ -403,7 +432,7 @@ describe("guild setting command", () => {
   });
 
   it("resolves tracked category IDs to names on show", async () => {
-    DISCORD_SETTINGS.guildScheduleSourceByGuild["guild-id"] = {
+    mutableGuildScheduleSources["guild-id"] = {
       ...source,
       categoryIds: ["100000000000000001"],
     };
@@ -417,12 +446,12 @@ describe("guild setting command", () => {
         flags: MessageFlags.Ephemeral,
       });
     } finally {
-      delete DISCORD_SETTINGS.guildScheduleSourceByGuild["guild-id"];
+      delete mutableGuildScheduleSources["guild-id"];
     }
   });
 
   it("shows all categories tracked when none are set but schedule channels are", async () => {
-    DISCORD_SETTINGS.guildScheduleSourceByGuild["guild-id"] = {
+    mutableGuildScheduleSources["guild-id"] = {
       ...source,
       categoryIds: [],
       scheduleTextChannelIds: ["100000000000000002"],
@@ -439,7 +468,7 @@ describe("guild setting command", () => {
         flags: MessageFlags.Ephemeral,
       });
     } finally {
-      delete DISCORD_SETTINGS.guildScheduleSourceByGuild["guild-id"];
+      delete mutableGuildScheduleSources["guild-id"];
     }
   });
 

@@ -7,8 +7,40 @@ import {
 import { COOLDOWN_INSTANCE_TYPES } from "../constants/cooldowns.js";
 import type { GuildSchedule } from "../types/guild-schedule.js";
 
+const combinedRunNames = [
+  ...["ET", "Endless Tower"].flatMap((tower) =>
+    ["EC", "Endless Cellar"].flatMap((cellar) =>
+      ["+", " ", " and ", " 'and' ", " & ", "/", "-", "_", ",", " + "].flatMap(
+        (separator) => [
+          `${tower}${separator}${cellar}`,
+          `${cellar}${separator}${tower}`,
+        ],
+      ),
+    ),
+  ),
+  "ETEC",
+  "ECET",
+  "etec",
+  "ecet",
+  "ETECET",
+  "ECETEC",
+  "Endless Cellar+Endless Tower Thursday",
+];
+
 describe("Cooldowns Utils", () => {
   describe("parseInstanceTypes", () => {
+    it.each(["secret meetup", "ETECetera", "preECET", "ETEC2", "ECETting"])(
+      "does not match abbreviations inside unrelated words: %s",
+      (title) => {
+        expect(parseInstanceTypes(title)).toEqual([]);
+      },
+    );
+    it.each(combinedRunNames)("parses both instance types from %s", (title) => {
+      expect(parseInstanceTypes(title).map((type) => type.name)).toEqual([
+        "Endless Tower",
+        "Endless Cellar",
+      ]);
+    });
     it.each([
       { input: "ET speedrun trial", expectedName: "Endless Tower" },
       { input: "Endless Tower run", expectedName: "Endless Tower" },
@@ -40,6 +72,34 @@ describe("Cooldowns Utils", () => {
       const result1 = parseInstanceTypes("et run");
       const result2 = parseInstanceTypes("ET run");
       expect(result1).toEqual(result2);
+    });
+
+    it("normalizes punctuation in short aliases with a two-character prefix", () => {
+      const instanceTypes = [
+        {
+          name: "Example Instance",
+          keywords: ["ET-C"],
+          maxAttempts: 1,
+          emoji: "✨",
+        },
+      ];
+
+      expect(parseInstanceTypes("ET-C run", instanceTypes)).toEqual(
+        instanceTypes,
+      );
+    });
+
+    it("does not match punctuation aliases with fewer than two prefix characters", () => {
+      const instanceTypes = [
+        {
+          name: "Example Instance",
+          keywords: ["E-C"],
+          maxAttempts: 1,
+          emoji: "✨",
+        },
+      ];
+
+      expect(parseInstanceTypes("E-C run", instanceTypes)).toEqual([]);
     });
   });
 
@@ -81,6 +141,109 @@ describe("Cooldowns Utils", () => {
   });
 
   describe("countCooldowns", () => {
+    it.each([
+      { title: "EB 3x", selected: ["Eternal Bastion"], expected: 3 },
+      { title: "EB 3x", selected: [], expected: 0 },
+    ])(
+      "preserves metadata precedence and title multipliers: $selected",
+      ({ title, selected, expected }) => {
+        const result = countCooldowns([
+          {
+            title,
+            instanceTypes: selected,
+            timestamp: "<t:1234567890:F>",
+            channelName: "signups",
+            channelUrl: "https://discord.com/channels/123/456",
+            isSignedUp: true,
+            isReserve: false,
+            guildName: "TestGuild",
+          },
+        ]);
+        expect(result.get("Eternal Bastion")?.count).toBe(expected);
+        expect(result.get("Others")?.count).toBe(selected.length === 0 ? 1 : 0);
+      },
+    );
+    it.each([
+      ...combinedRunNames.flatMap((name) => [
+        { title: `${name} back 2 back Friday`, instanceTypes: undefined },
+        { title: "Friday run", instanceTypes: [name] },
+      ]),
+      { title: "Friday run", instanceTypes: ["ET", "endless cellar"] },
+      { title: "Friday run", instanceTypes: ["EC+ET"] },
+      {
+        title: "Friday run",
+        instanceTypes: ["🪜 Endless Tower | 📉 Endless Cellar"],
+      },
+    ])(
+      "counts both combined cooldowns for $title / $instanceTypes",
+      ({ title, instanceTypes }) => {
+        const result = countCooldowns([
+          {
+            title,
+            instanceTypes,
+            timestamp: "<t:1234567890:F>",
+            channelName: "signups",
+            channelUrl: "https://discord.com/channels/123/456",
+            isSignedUp: true,
+            isReserve: false,
+            guildName: "TestGuild",
+          },
+        ]);
+        expect(result.get("Endless Tower")?.count).toBe(1);
+        expect(result.get("Endless Cellar")?.count).toBe(1);
+      },
+    );
+
+    it("uses explicit types instead of a conflicting title without duplicate counts", () => {
+      const result = countCooldowns([
+        {
+          title: "EC run",
+          instanceTypes: ["ET", "Endless Tower"],
+          timestamp: "<t:1234567890:F>",
+          channelName: "signups",
+          channelUrl: "https://discord.com/channels/123/456",
+          isSignedUp: true,
+          isReserve: false,
+          guildName: "TestGuild",
+        },
+      ]);
+      expect(result.get("Endless Tower")?.count).toBe(1);
+      expect(result.get("Endless Cellar")?.count).toBe(0);
+    });
+
+    it("resolves explicit overlapping names exactly", () => {
+      const glastHeim = {
+        name: "Glast Heim",
+        keywords: ["GH"],
+        maxAttempts: 1,
+        emoji: "🏰",
+      };
+      const oldGlastHeim = {
+        name: "Old Glast Heim",
+        keywords: ["OGH"],
+        maxAttempts: 1,
+        emoji: "<:ogh:123>",
+      };
+      const result = countCooldowns(
+        [
+          {
+            title: "Glast Heim",
+            instanceTypes: ["<:ogh:123> Old Glast Heim"],
+            timestamp: "<t:1234567890:F>",
+            channelName: "signups",
+            channelUrl: "https://discord.com/channels/123/456",
+            isSignedUp: true,
+            isReserve: false,
+            guildName: "TestGuild",
+          },
+        ],
+        [glastHeim, oldGlastHeim],
+      );
+
+      expect(result.get("Glast Heim")?.count).toBe(0);
+      expect(result.get("Old Glast Heim")?.count).toBe(1);
+    });
+
     it("should initialize all instance types with 0", () => {
       const schedules: Array<GuildSchedule & { guildName: string }> = [];
       const result = countCooldowns(schedules);

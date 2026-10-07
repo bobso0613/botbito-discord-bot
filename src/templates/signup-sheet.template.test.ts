@@ -201,6 +201,24 @@ describe("buildSignupSheetEmbed", () => {
   it("omits the instance type from the footer when unset", () => {
     const embed = buildSignupSheetEmbed(buildSheet(), "Guild", null);
     expect(embed.data.footer?.text).toBe("Organizer - Organizer");
+    expect(
+      embed.data.fields?.some((field) => field.name === "Instance Types:"),
+    ).toBe(false);
+  });
+
+  it("renders both instance types as machine-readable metadata", () => {
+    const embed = buildSignupSheetEmbed(
+      buildSheet({ instanceType: ["Endless Tower", "Endless Cellar"] }),
+      "Guild",
+      null,
+    );
+    const field = embed.data.fields?.find(
+      (candidate) => candidate.name === "Instance Types:",
+    );
+    expect(field?.value).toContain("Endless Tower");
+    expect(field?.value).toContain("Endless Cellar");
+    expect(embed.data.footer?.text).toContain("Endless Tower");
+    expect(embed.data.footer?.text).toContain("Endless Cellar");
   });
 
   it("sets the thumbnail and color only when configured", () => {

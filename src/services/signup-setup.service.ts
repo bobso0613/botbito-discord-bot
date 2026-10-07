@@ -17,10 +17,12 @@ import {
 import {
   CHANGE_ALL_MODAL_ID,
   INSTANCE_TYPE_NONE_VALUE,
+  MAX_SIGNUP_PARTIES,
   SETUP_MODAL_ID,
   SETUP_PROMPT_CONTENT,
   SIGNUP_CANCEL_SETUP_BUTTON_ID,
   SIGNUP_EDIT_PARTY_SETUP_BUTTON_ID,
+  SIGNUP_INSTANCE_TYPE_BACK_BUTTON_ID,
   SIGNUP_INSTANCE_TYPE_BUTTON_ID,
   SIGNUP_INSTANCE_TYPE_SELECT_ID,
   SIGNUP_MODAL_ADD_ID,
@@ -68,6 +70,7 @@ import {
   parseRosterWithPartySizes,
   parseServerTimezone,
   resolveRosterSignupUserIds,
+  validateInstanceTypeEmbedLimits,
 } from "../utils/signup-sheet.js";
 
 export const pendingSetupSnapshots = new ExpiringMap<
@@ -92,27 +95,40 @@ export const input = (
     .setRequired(required)
     .setValue(value ?? "");
 
-/** Builds the instance-type select menu row, pre-selecting the sheet's current instance type (or "None"). */
+/**
+ * Builds a multi-select menu from guild instance definitions, excluding Others.
+ * Preselects legacy single types or multiple saved types, with None for unset sheets.
+ */
 export const buildInstanceTypeSelectRow = (
-  currentInstanceType: string | null,
+  currentInstanceType: SignupSheet["instanceType"],
   instanceTypes = COOLDOWN_INSTANCE_TYPES,
 ): ActionRowBuilder<StringSelectMenuBuilder> =>
   new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
     new StringSelectMenuBuilder()
       .setCustomId(SIGNUP_INSTANCE_TYPE_SELECT_ID)
-      .setPlaceholder("Select the instance type")
+      .setPlaceholder("Select instance types")
+      .setMinValues(1)
+      .setMaxValues(
+        Math.min(
+          25,
+          instanceTypes.filter((type) => type.name !== "Others").length + 1,
+        ),
+      )
       .addOptions(
         {
           label: "None",
           value: INSTANCE_TYPE_NONE_VALUE,
-          default: !currentInstanceType,
+          default: !currentInstanceType || currentInstanceType.length === 0,
         },
         ...instanceTypes
           .filter((type) => type.name !== "Others")
+          .slice(0, 24)
           .map((type) => ({
             label: `${type.emoji} ${type.name}`,
             value: type.name,
-            default: currentInstanceType === type.name,
+            default: Array.isArray(currentInstanceType)
+              ? currentInstanceType.includes(type.name)
+              : currentInstanceType === type.name,
           })),
       ),
   );
@@ -153,6 +169,7 @@ export const buildRosterPromptButtons = (): ActionRowBuilder<ButtonBuilder> =>
 
 /**
  * Validates the setup modal fields and builds the resulting sheet.
+ * Setups are limited to eight parties.
  * The datetime field may be blank or `TBD` to keep the schedule unset, except
  * when creating a brand-new sheet (`existingSheet` is `undefined`), where a
  * valid date/time is required.
@@ -178,6 +195,11 @@ export const parseSetup = (
     .getTextInputValue("sizes")
     .split(",")
     .map((value) => Number(value.trim()));
+  if (partyCount > MAX_SIGNUP_PARTIES) {
+    return {
+      error: `A maximum of ${MAX_SIGNUP_PARTIES} parties is allowed.`,
+    };
+  }
   if (partySizes.length !== partyCount) {
     return {
       error: `Number of parties (${partyCount}) must match the number of party sizes (${partySizes.length}). Enter one size for each party, separated by commas, e.g. 12,6.`,
@@ -247,6 +269,7 @@ export const showSetup = async (
   interaction: ChatInputCommandInteraction | ButtonInteraction,
   existingSheet?: SignupSheet,
 ): Promise<void> => {
+  const existingPartyCount = existingSheet?.partySizes.length;
   const modal = new ModalBuilder()
     .setCustomId(existingSheet ? CHANGE_ALL_MODAL_ID : SETUP_MODAL_ID)
     .setTitle(existingSheet ? "Change party setup" : "Create signup sheet")
@@ -289,7 +312,14 @@ export const showSetup = async (
             "Party count",
             true,
             TextInputStyle.Short,
-            existingSheet ? String(existingSheet.partySizes.length) : undefined,
+            existingPartyCount === undefined
+              ? undefined
+              : String(existingPartyCount),
+          ).setMaxLength(
+            Math.max(
+              String(MAX_SIGNUP_PARTIES).length,
+              String(existingPartyCount ?? MAX_SIGNUP_PARTIES).length,
+            ),
           ),
         ),
       new LabelBuilder()
@@ -481,18 +511,51 @@ export const handleSignupInstanceTypeButton = async (
   }
   await interaction.deferUpdate();
   await interaction.editReply({
-    content: "Select the instance type for this run.",
+    content: "Select the instance types for this run.",
     components: [
       buildInstanceTypeSelectRow(
         sheet.instanceType,
         DISCORD_SETTINGS.cooldownInstanceTypesByGuild[interaction.guildId] ??
           COOLDOWN_INSTANCE_TYPES,
       ),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(SIGNUP_INSTANCE_TYPE_BACK_BUTTON_ID)
+          .setLabel("Back to Setup")
+          .setStyle(ButtonStyle.Secondary),
+      ),
     ],
   });
 };
 
-/** Applies the selected instance type to the pending draft and restores the setup prompt buttons. */
+/** Returns from instance selection to the pending setup controls. */
+export const handleSignupInstanceTypeBackButton = async (
+  interaction: ButtonInteraction,
+): Promise<void> => {
+  if (!interaction.guildId || !interaction.channelId) return;
+  const key = signupSheetKey(interaction.guildId, interaction.channelId);
+  if (
+    !pendingSetupDrafts.has(key) ||
+    pendingRosterUsers.get(key) !== interaction.user.id
+  ) {
+    await interaction.reply({
+      content: "This roster setup expired or belongs to another user.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  await interaction.deferUpdate();
+  await interaction.editReply({
+    content: SETUP_PROMPT_CONTENT,
+    components: [buildSetupPromptButtons()],
+  });
+};
+
+/**
+ * Saves unique instance selections to the pending draft and restores setup controls.
+ * One selection remains a string, multiple selections become an array, and None
+ * alone clears the value; None is ignored when actual types are also selected.
+ */
 export const handleSignupInstanceTypeSelect = async (
   interaction: StringSelectMenuInteraction,
 ): Promise<void> => {
@@ -507,9 +570,27 @@ export const handleSignupInstanceTypeSelect = async (
     return;
   }
   await interaction.deferUpdate();
-  const [value] = interaction.values;
-  sheet.instanceType =
-    value === INSTANCE_TYPE_NONE_VALUE ? null : (value ?? null);
+  const values = [
+    ...new Set(
+      interaction.values.filter((value) => value !== INSTANCE_TYPE_NONE_VALUE),
+    ),
+  ];
+  const instanceTypes =
+    DISCORD_SETTINGS.cooldownInstanceTypesByGuild[interaction.guildId] ??
+    COOLDOWN_INSTANCE_TYPES;
+  const embedLimitError = validateInstanceTypeEmbedLimits(
+    values,
+    sheet.organizerName,
+    instanceTypes,
+  );
+  if (embedLimitError) {
+    await interaction.editReply({
+      content: `${embedLimitError}\n\n` + SETUP_PROMPT_CONTENT,
+      components: [buildSetupPromptButtons()],
+    });
+    return;
+  }
+  sheet.instanceType = values.length > 1 ? values : (values[0] ?? null);
   await interaction.editReply({
     content: SETUP_PROMPT_CONTENT,
     components: [buildSetupPromptButtons()],

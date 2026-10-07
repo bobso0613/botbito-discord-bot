@@ -2,6 +2,10 @@
 export interface GuildSchedule {
   /** Schedule embed title. */
   title: string;
+  /** Selected embed metadata; undefined enables title fallback, while [] means no selection. */
+  instanceTypes?: readonly string[];
+  /** Source guild used to resolve per-guild instance definitions in personal grouping. */
+  guildId?: string;
   /** Discord absolute timestamp mention for the scheduled run time. */
   timestamp: string;
   /** Signup channel display name. */

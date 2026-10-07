@@ -19,6 +19,7 @@ import {
   parseTimeShift,
   pickRandomOpenSlot,
   resolveRosterSignupUserIds,
+  validateInstanceTypeEmbedLimits,
 } from "./signup-sheet.js";
 import type { SignupSheet, SignupSlot } from "../types/signup-sheet.js";
 
@@ -50,6 +51,39 @@ const buildSheet = (slots: SignupSlot[]): SignupSheet => ({
 });
 
 describe("signup-sheet utils", () => {
+  describe("validateInstanceTypeEmbedLimits", () => {
+    const type = {
+      name: "Example Instance",
+      keywords: ["EI"],
+      maxAttempts: 1,
+      emoji: "✨",
+    };
+
+    it("accepts instance names that fit both Discord metadata limits", () => {
+      expect(
+        validateInstanceTypeEmbedLimits([type.name], "Organizer", [type]),
+      ).toBeNull();
+    });
+
+    it("rejects formatted instance fields over 1,024 characters", () => {
+      const longType = { ...type, name: "A".repeat(1_025), emoji: "" };
+      expect(
+        validateInstanceTypeEmbedLimits([longType.name], "Organizer", [
+          longType,
+        ]),
+      ).toContain("exceed Discord's embed limits");
+    });
+
+    it("rejects organizer footers over 2,048 characters", () => {
+      const longType = { ...type, name: "A".repeat(1_900), emoji: "" };
+      expect(
+        validateInstanceTypeEmbedLimits([longType.name], "Organizer", [
+          longType,
+        ]),
+      ).toContain("exceed Discord's embed limits");
+    });
+  });
+
   describe("parseServerTimezone", () => {
     it("returns null for a blank value", () => {
       expect(parseServerTimezone("  ")).toBeNull();
@@ -155,6 +189,20 @@ describe("signup-sheet utils", () => {
       );
 
       expect(parsed?.partySizes).toEqual([1, 2]);
+    });
+
+    it("rejects roster edits with more than 8 parties", () => {
+      const slots = Array.from({ length: 9 }, (_, index) =>
+        buildSlot({ number: index + 1, role: "DPS" }),
+      );
+      const roster = slots
+        .map(
+          (_, index) =>
+            `Party ${index + 1}:\n${String(index + 1).padStart(2, "0")}: DPS -`,
+        )
+        .join("\n");
+
+      expect(parseRosterWithPartySizes(roster, slots)).toBeNull();
     });
 
     it("keeps empty roster slots from gaining an extra dash", () => {

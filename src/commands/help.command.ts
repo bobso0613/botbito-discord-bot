@@ -74,12 +74,9 @@ const CATEGORY_ORDER = [
 ];
 
 /**
- * Sends the command guide for a slash-command or button interaction.
- * When `commandName` matches an entry in `COMMAND_GUIDE`, only that command's
- * full details (description and parameters) are shown. Otherwise, every
- * command is listed grouped by category in a compact one-line-per-command
- * format (used by the "Help" button), since Discord embeds cap at 25 fields
- * and the full command list has grown well past that.
+ * Sends a private command guide for a slash-command or button interaction.
+ * With `commandName`, shows that command's description and parameters;
+ * without it, lists all commands by category (the "Help" button overview).
  */
 export const sendHelp = async (
   interaction: HelpInteraction,
@@ -133,8 +130,8 @@ export const sendHelp = async (
 };
 
 /**
- * Responds to `/help`'s `command` autocomplete with up to 25 `COMMAND_GUIDE`
- * entries whose name contains the value typed so far (case-insensitive).
+ * Responds to `/help`'s required `command` autocomplete with up to 25
+ * case-insensitive substring matches from `COMMAND_GUIDE`.
  */
 export const handleHelpAutocomplete = async (
   interaction: AutocompleteInteraction,
@@ -148,14 +145,15 @@ export const handleHelpAutocomplete = async (
   );
 };
 
+/** Registers `/help` with a required autocomplete command selector. */
 export const helpCommand: Command = {
   data: new SlashCommandBuilder()
     .setName("help")
-    .setDescription("Display a guide on available commands")
+    .setDescription("Display help for a command")
     .addStringOption((option) =>
       option
         .setName("command")
-        .setDescription("Which command to show help for")
+        .setDescription("Choose a command to view its help")
         .setRequired(true)
         .setAutocomplete(true),
     )

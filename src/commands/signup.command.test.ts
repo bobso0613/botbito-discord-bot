@@ -1,4 +1,6 @@
 import { jest } from "@jest/globals";
+import { COOLDOWN_INSTANCE_TYPES } from "../constants/cooldowns.js";
+import type { InstanceType } from "../constants/cooldowns.js";
 import type { SignupSheet } from "../types/signup-sheet.js";
 
 const getSignupSheet =
@@ -32,6 +34,7 @@ jest.unstable_mockModule("../services/signup-sheet.service.js", () => ({
 
 const {
   signupCommands,
+  handleSetInstanceTypeAutocomplete,
   parseSetup,
   handleSignupAddButton,
   handleSignupRemoveButton,
@@ -59,6 +62,7 @@ const {
   SIGNUP_MODAL_REMOVE_CHARNOTE_ID,
   SIGNUP_MODAL_SWAP_ID,
 } = await import("./signup.command.js");
+const { DISCORD_SETTINGS } = await import("../config/discord-settings.js");
 
 const changeCommand = signupCommands.find(
   (command) => command.data.name === "change",
@@ -153,6 +157,212 @@ const createInteraction = (
     }),
     getBoolean: jest.fn((name: string) => (name === "tbc" ? tbc : null)),
   },
+});
+
+describe("/setinstancetype", () => {
+  it("saves both configured cooldown types from comma-separated input", async () => {
+    getSignupSheet.mockResolvedValue(buildSheet());
+    const interaction = createInteraction();
+    interaction.options.getString.mockReturnValue(
+      "Endless Tower, Endless Cellar",
+    );
+    const command = signupCommands.find(
+      (candidate) => candidate.data.name === "setinstancetype",
+    )!;
+    await command.execute(interaction as never);
+    expect(saveSignupSheet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instanceType: ["Endless Tower", "Endless Cellar"],
+      }),
+    );
+  });
+
+  it("ignores empty trailing type entries", async () => {
+    getSignupSheet.mockResolvedValue(buildSheet());
+    const interaction = createInteraction();
+    interaction.options.getString.mockReturnValue("Endless Tower,");
+    const command = signupCommands.find(
+      (candidate) => candidate.data.name === "setinstancetype",
+    )!;
+
+    await command.execute(interaction as never);
+
+    expect(saveSignupSheet).toHaveBeenCalledWith(
+      expect.objectContaining({ instanceType: "Endless Tower" }),
+    );
+  });
+
+  it("clears the instance type when None has empty trailing entries", async () => {
+    getSignupSheet.mockResolvedValue(buildSheet());
+    const interaction = createInteraction();
+    interaction.options.getString.mockReturnValue("None,");
+    const command = signupCommands.find(
+      (candidate) => candidate.data.name === "setinstancetype",
+    )!;
+
+    await command.execute(interaction as never);
+
+    expect(saveSignupSheet).toHaveBeenCalledWith(
+      expect.objectContaining({ instanceType: null }),
+    );
+  });
+
+  it("keeps autocomplete selections bound to type names if settings reorder", async () => {
+    getSignupSheet.mockResolvedValue(buildSheet());
+    const mutableTypeConfigs =
+      DISCORD_SETTINGS.cooldownInstanceTypesByGuild as Record<
+        string,
+        readonly InstanceType[]
+      >;
+    const originalTypes = mutableTypeConfigs["guild-1"];
+    const hadGuildConfig = Object.hasOwn(mutableTypeConfigs, "guild-1");
+    const tower = COOLDOWN_INSTANCE_TYPES.find(
+      (type) => type.name === "Endless Tower",
+    )!;
+    const cellar = COOLDOWN_INSTANCE_TYPES.find(
+      (type) => type.name === "Endless Cellar",
+    )!;
+    mutableTypeConfigs["guild-1"] = [tower, cellar];
+
+    const firstAutocomplete = {
+      guildId: "guild-1",
+      options: { getFocused: jest.fn().mockReturnValue("") },
+      respond: jest.fn(),
+    };
+    await handleSetInstanceTypeAutocomplete(firstAutocomplete as never);
+    const firstChoices = firstAutocomplete.respond.mock.calls[0]![0] as Array<{
+      name: string;
+      value: string;
+    }>;
+    const towerValue = firstChoices.find(
+      (choice) => choice.name === "Endless Tower",
+    )!.value;
+
+    const secondAutocomplete = {
+      guildId: "guild-1",
+      options: { getFocused: jest.fn().mockReturnValue(`${towerValue}, `) },
+      respond: jest.fn(),
+    };
+    await handleSetInstanceTypeAutocomplete(secondAutocomplete as never);
+    const secondChoices = secondAutocomplete.respond.mock
+      .calls[0]![0] as Array<{
+      name: string;
+      value: string;
+    }>;
+    const selectedValue = secondChoices.find(
+      (choice) => choice.name === "Endless Tower, Endless Cellar",
+    )!.value;
+
+    mutableTypeConfigs["guild-1"] = [cellar, tower];
+    const interaction = createInteraction();
+    interaction.options.getString.mockReturnValue(selectedValue);
+    const command = signupCommands.find(
+      (candidate) => candidate.data.name === "setinstancetype",
+    )!;
+
+    try {
+      await command.execute(interaction as never);
+    } finally {
+      if (hadGuildConfig) mutableTypeConfigs["guild-1"] = originalTypes!;
+      else delete mutableTypeConfigs["guild-1"];
+    }
+
+    expect(saveSignupSheet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instanceType: ["Endless Tower", "Endless Cellar"],
+      }),
+    );
+  });
+
+  it("keeps autocomplete choice values compact as selections accumulate", async () => {
+    const interaction = {
+      guildId: "guild-1",
+      options: { getFocused: jest.fn().mockReturnValue("") },
+      respond: jest.fn(),
+    };
+
+    await handleSetInstanceTypeAutocomplete(interaction as never);
+
+    const choices = interaction.respond.mock.calls[0]![0] as Array<{
+      name: string;
+      value: string;
+    }>;
+    expect(choices.length).toBeGreaterThan(0);
+    expect(choices.every((choice) => choice.value.length <= 100)).toBe(true);
+    expect(choices.some((choice) => /^~[a-f\d]{10}$/.test(choice.value))).toBe(
+      true,
+    );
+  });
+
+  it("rejects configured instance types that would exceed embed field limits", async () => {
+    const mutableTypeConfigs =
+      DISCORD_SETTINGS.cooldownInstanceTypesByGuild as Record<
+        string,
+        readonly InstanceType[]
+      >;
+    const originalTypes = mutableTypeConfigs["guild-1"];
+    const hadGuildConfig = Object.hasOwn(mutableTypeConfigs, "guild-1");
+    const longName = "A".repeat(1_100);
+    mutableTypeConfigs["guild-1"] = [
+      { name: longName, keywords: [], maxAttempts: 1, emoji: "" },
+    ];
+    getSignupSheet.mockResolvedValue(buildSheet());
+    saveSignupSheet.mockClear();
+    const interaction = createInteraction();
+    interaction.options.getString.mockReturnValue(longName);
+    const command = signupCommands.find(
+      (candidate) => candidate.data.name === "setinstancetype",
+    )!;
+
+    try {
+      await command.execute(interaction as never);
+    } finally {
+      if (hadGuildConfig) mutableTypeConfigs["guild-1"] = originalTypes!;
+      else delete mutableTypeConfigs["guild-1"];
+    }
+
+    expect(saveSignupSheet).not.toHaveBeenCalled();
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining("exceed Discord's embed limits"),
+      }),
+    );
+  });
+
+  it("does not save instance types that exceed the embed field limit", async () => {
+    const mutableTypeConfigs =
+      DISCORD_SETTINGS.cooldownInstanceTypesByGuild as Record<
+        string,
+        readonly InstanceType[]
+      >;
+    const originalTypes = mutableTypeConfigs["guild-1"];
+    const hadGuildConfig = Object.hasOwn(mutableTypeConfigs, "guild-1");
+    const longName = "B".repeat(1_100);
+    mutableTypeConfigs["guild-1"] = [
+      { name: longName, keywords: [], maxAttempts: 1, emoji: "" },
+    ];
+    getSignupSheet.mockResolvedValue(buildSheet());
+    saveSignupSheet.mockClear();
+    const interaction = createInteraction();
+    interaction.options.getString.mockReturnValue(longName);
+    const command = signupCommands.find(
+      (candidate) => candidate.data.name === "setinstancetype",
+    )!;
+
+    try {
+      await command.execute(interaction as never);
+    } finally {
+      if (hadGuildConfig) mutableTypeConfigs["guild-1"] = originalTypes!;
+      else delete mutableTypeConfigs["guild-1"];
+    }
+
+    expect(saveSignupSheet).not.toHaveBeenCalled();
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining("exceed Discord's embed limits"),
+      }),
+    );
+  });
 });
 
 describe("/add options", () => {

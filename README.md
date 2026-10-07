@@ -111,7 +111,7 @@ Enable the **Server Members Intent** and **Message Content Intent** in the Disco
 
 ## Commands 💬
 
-`/help` ℹ️ requires a `command` choice parameter and displays a private guide for just that command, including its description, parameters, and usage. Choices are generated from the same command list used to power the guide, so new entries automatically appear as selectable choices. The "Help" button on guild schedule output still shows the full guide across every command.
+`/help` ℹ️ requires a `command` autocomplete parameter. Start typing a command name to find a match; selecting it displays a private guide with that command's description and parameters. Suggestions come from the same command list used to power the guide, so new entries appear automatically. The "Help" button on guild schedule output still shows the full guide grouped by category.
 
 `/payout` 💰 displays the command user's Pending, Share Ready, and Distributed balances in zeny (`z`). It is available in every channel of configured payout guilds. When the user has no non-zero payout balance, it instead displays a message that they are not on the list. The optional `sendprivately` parameter sends the response ephemerally; it is public by default.
 
@@ -140,13 +140,19 @@ Use `/guildsched public:true` to post the schedule embed for everyone in the cur
 
 `/mysched` ⌚ sends the invoking user a DM with their upcoming signed-up and reserve schedules across all configured schedule guilds the bot and user can access. It can be used in any server channel where the bot can see the command, or directly in a DM with the bot after global command registration is deployed.
 
-The command only includes schedules where the member is signed up or listed as reserve. Each entry shows the configured guild icon, guild name, linked schedule title, time, source channel, and signup/reserve indicator. `❓` appears beside `📝` or `🪑` when the member is TBC, and the character name/note is shown beside the status when present. Future schedule titles use `🗓️`; completed schedule titles use `✅`. The optional `grouping` parameter supports `By Date`, `By Guild`, and `By Instance Type`; `By Date` is the default, `By Guild` uses larger guild headings, and `By Instance Type` groups schedules by the detected instance keywords in their titles.
+The command only includes schedules where the member is signed up or listed as reserve. Each entry shows the configured guild icon, guild name, linked schedule title, time, source channel, and signup/reserve indicator. `❓` appears beside `📝` or `🪑` when the member is TBC, and the character name/note is shown beside the status when present. Future schedule titles use `🗓️`; completed schedule titles use `✅`. The optional `grouping` parameter supports `By Date`, `By Guild`, and `By Instance Type`; `By Date` is the default, `By Guild` uses larger guild headings, and `By Instance Type` uses selected instance metadata when available, with title-based matching as a fallback.
+
+For `By Instance Type`, schedules with instance-type metadata use the source guild's `cooldownInstanceTypes` names and keywords, taking precedence over the title. Headings include each resolved type's emoji (for example, `🦐 Test Instance`). Multiple selected types share a combined heading such as `🪜 Endless Tower / 📉 Endless Cellar`. This bot omits instance metadata when `None` is selected, so the run title is matched; other schedule bots that explicitly publish empty or unrecognized metadata are grouped under `Others`, with its configured emoji or the default `💀`.
 
 Use `/mysched thisweekonly:true` to show all signed-up/reserve runs from the current schedule week, including completed runs, and hide runs outside that week. When a channel has a newer scheduled reply outside the week, its earlier in-week run remains included; only `Your Time: TBD` clears an older run. Schedule weeks start every Monday at `06:00 GMT` (`T06:00:00Z`) and run through Sunday. When this option is enabled, the DM embed title changes to the covered date range, for example `Your Schedule - 31 Aug to 06 Sept`.
 
-`/mycooldowns` 🔥 shows the invoking user's weekly cooldown status from signup sheets across all configured schedule guilds. It counts every signed-up/reserve run inside the current schedule week, including completed runs, as an attempt toward cooldown limits for that instance type. A newer scheduled reply outside the week does not hide an earlier in-week run; `Your Time: TBD` clears it. Guild responses are private by default; use `/mycooldowns showinpublic:true` to display the result to everyone in the current channel. The command can also be used in a DM with the bot.
+`/mycooldowns` 🔥 shows the invoking user's weekly cooldown status from signup sheets across all configured schedule guilds the bot and user can access. It combines counts across those guilds and counts every signed-up/reserve run inside the current schedule week, including completed runs, as an attempt for its matching instance type. A newer scheduled reply outside the week does not hide an earlier in-week run; `Your Time: TBD` clears it. Guild responses are private by default; use `/mycooldowns showinpublic:true` to display the result to everyone in the current channel. The command can also be used in a DM with the bot.
 
-The cooldown display groups runs by instance type with their current attempt count and maximum attempts. Instance types are identified by keywords in signup sheet titles (e.g., `ET` for Endless Tower, `EC` for Endless Cellar, `EB` for Eternal Bastion). When a signup sheet title contains multiple instance keywords (e.g., `ET EC speedrun`), it counts toward both instance types.
+The cooldown display groups runs using each guild's `cooldownInstanceTypes`, merging types transitively when their names or keywords match exactly across guilds. Similar names alone do not merge. For schedule bots that expose instance-type metadata, the selected types take precedence over the run title; this bot exposes an `Instance Types:` field only when types are selected, and older sheets use matching organizer-footer suffixes. When metadata is absent, the run title is used. Combined runs such as `EC+ET back 2 back Friday` count toward both Endless Cellar and Endless Tower when using title-based matching or when both types are selected.
+
+Combined matching accepts either order, full names, common separators, and joined abbreviations: `ET+EC`, `EC+ET`, `ET EC`, `ETEC`, `ECET`, `EC and ET`, `ET & EC`, and `Endless Cellar+Endless Tower` all resolve to both types. Matching is case-insensitive. Each run counts once per matched type before any enabled title multiplier, even if the same type appears repeatedly. Joined abbreviations must form a complete sequence of configured aliases; partial matches inside unrelated words are rejected. Other bots' embeds that explicitly publish empty or unrecognized metadata do not fall back to the title and are counted under `Others` when configured.
+
+Select multiple instance types during signup setup, or use `/setinstancetype type:Endless Tower, Endless Cellar`. Autocomplete preserves comma-separated selections. `None` clears the selection. Existing saved single-type strings remain supported alongside arrays for multiple types. Equivalent cross-guild types use the first configured label and the highest configured attempt limit in the combined cooldown display.
 
 Some instances support multipliers from the signup sheet title:
 
@@ -156,7 +162,7 @@ Some instances support multipliers from the signup sheet title:
 
 Other instances (Endless Tower, Endless Cellar, Wolfchev's Laboratory) count as 1 attempt each, regardless of title text. Unrecognized signup sheets are grouped under "Others."
 
-The embed title shows the covered schedule week date range (e.g., `Your Attempts - 04 Sep to 10 Sep`). A disclaimer notes which guild schedules were counted, reminding users that signups from outside those guilds cannot be included. Each instance type includes an emoji identifier for quick visual recognition.
+The embed title shows the covered schedule week date range (e.g., `Your Attempts - 04 Sep to 10 Sep`). A disclaimer notes which guild schedules were counted, reminding users that signups from outside those guilds cannot be included. Each instance type includes an emoji identifier for quick visual recognition. Any instance with `maxAttempts: 0` displays only its count (for example, `🦐 Test Instance - **1**`), without `out of 0`; positive limits retain the usual `count out of limit` format.
 
 **Public output behavior:**
 
@@ -254,7 +260,7 @@ Channel-scoped signup sheets (created with `/newrun`) provide an interactive par
 
 ### Features & Capabilities
 
-- **Party Setup & Customization**: Create multi-party configurations with customizable party sizes, custom run names, notes, thumbnail icons, embed colors, server timezones, and instance types.
+- **Party Setup & Customization**: Create up to 8 parties with customizable party sizes, custom run names, notes, thumbnail icons, embed colors, server timezones, and instance types.
 - **Roster Management**:
   - `/add` (alias `/a`): Sign up for specific slot numbers (e.g. `1`, `1, 2`), one `random` open slot, or `reserve`. Supports signing up other users by mention or username (e.g. `2 @user` or `2 B4D`). The optional `char` parameter sets the character name/note shown beside the signup, and optional `tbc:true` marks it as TBC. Occupied slots require confirmation before replacement, and each displaced user is notified after the replacement. Concurrent changes are rechecked before an open-slot add is saved. Random adds report the rolled slot in the public action notice.
   - `/remove` (alias `/r`): Remove your own signups/reserves, or remove specific slot/reserve positions.
@@ -263,7 +269,7 @@ Channel-scoped signup sheets (created with `/newrun`) provide an interactive par
   - `/removecharnote` (alias `/rc`): Clear character notes for your own positions or specified slot/reserve numbers.
   - `/tbc`: Toggle To Be Confirmed (TBC) status for yourself or specified slot/reserve numbers. Marked with a `❓` emoji on the roster.
   - `/removetbc` (alias `/rtbc`): Remove TBC markings from your own positions or specified slot/reserve numbers.
-  - `/ping`: Ping participants with a message. The `which` option selects `Main Roster`, `Reserves`, `TBC`, or `All`. The reply shows a small-text header with the invoker and target group, the bolded message, and small-text lines with the pinged mentions and the run title/channel.
+  - `/ping`: Send a message of up to 500 characters to signup participants. `which` selects `Main Roster` (the default), `Reserves`, `TBC`, or `All`; `where` selects `Channel` (the default) or `Direct Message`. Channel delivery splits large recipient lists into follow-up messages that remain within Discord's 2,000-character limit. DM delivery acknowledges the command before sending an individual message to each unique participant, including the run title, signup channel, and scheduled time or `TBD`, then edits the confirmation to name anyone the bot could not DM. The message includes the invoker, message text, and selected target group.
   - After `/add`, `/remove`, `/swap`, `/tbc`, `/charnote`, and `/removecharnote` update and re-post the sheet embed, the bot posts a public log message in the channel: a plain display-name line for the invoker's own action (e.g. `**DisplayName** added as **01: Role**.`), or an @mention line when someone else was affected. Random add/swap notices include the rolled slot number.
   - `/name` posts a public notice after the updated embed: `invokerName has set the run name to **name**`.
   - `/note` posts a public notice after the updated embed, showing the new note on the next line; replying `remove` shows that the note was removed and displays `None`.
@@ -281,7 +287,7 @@ Channel-scoped signup sheets (created with `/newrun`) provide an interactive par
 
 ### Roster Editing
 
-`/newrun` and `/change all` validate that the number of party sizes matches the number of parties. For example, two parties require a value such as `12,6`, not a single value such as `12`.
+`/newrun` and `/change all` allow at most 8 parties and validate that the number of party sizes matches the number of parties. For example, two parties require a value such as `12,6`, not a single value such as `12`. Roster edits also reject more than 8 party headers.
 
 After party setup, the roster prompt is public so the channel can see which setup is in progress, but only the user who started it can submit roster messages or use its controls. `/change roster` also shows a public editable template. The template includes headers such as `Party 1:` and `Party 2:`:
 

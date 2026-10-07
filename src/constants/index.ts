@@ -93,19 +93,21 @@ export const COMMAND_GUIDE: ReadonlyArray<{
       {
         name: "grouping",
         description:
-          "Group schedules by date, guild, or instance type (By Date default)",
+          "Group schedules by date, guild, or instance type (By Date default). By Instance Type uses the source guild's cooldownInstanceTypes when metadata is available; absent metadata falls back to run-title matching. This bot omits metadata for None, so titles still match; other bots' explicit empty or unrecognized metadata uses Others. Headings include configured emojis; multiple types share a combined heading.",
         required: false,
       },
     ],
   },
   {
     name: "/mycooldowns",
-    description: "View your weekly cooldown status across accessible guilds",
+    description:
+      "Count your signed-up and reserve runs toward weekly cooldowns across accessible guilds. Uses each guild's cooldownInstanceTypes and transitively merges types whose names or keywords match exactly across guilds; similar names alone do not merge. Selected instance metadata overrides titles; absent metadata falls back to run-title matching. Combined runs (ET+EC, ECET, ET and EC) count toward each type once. Title multipliers still apply to enabled types. Equivalent types use the highest configured maxAttempts; maxAttempts: 0 shows only the count.",
     emoji: "🔥",
     parameters: [
       {
         name: "showinpublic",
-        description: "Show your cooldown status to everyone in this channel",
+        description:
+          "Show the result to everyone in this channel (private by default)",
         required: false,
       },
     ],
@@ -256,19 +258,19 @@ export const COMMAND_GUIDE: ReadonlyArray<{
   },
   {
     name: "/newrun",
-    description: "Create a signup sheet in this channel",
+    description: "Create a signup sheet with up to 8 parties in this channel",
     emoji: "🆕",
   },
   {
     name: "/change all",
     description:
-      "Reopen the party setup modal to change the title, date/time, timezone, or party sizes; edit the roster with Party headers",
+      "Reopen party setup to change the title, date/time, timezone, or party sizes (maximum 8 parties); edit the roster with up to 8 Party headers",
     emoji: "🛠️",
   },
   {
     name: "/change roster",
     description:
-      "Edit the public roster template; Party # headers control the party breakdown",
+      "Edit the public roster template; up to 8 Party # headers control the party breakdown",
     emoji: "📋",
   },
   {
@@ -450,10 +452,15 @@ export const COMMAND_GUIDE: ReadonlyArray<{
   },
   {
     name: "/setinstancetype",
-    description: "Set the instance type for this run",
+    description: "Set one or more configured instance types for this run",
     emoji: "🏷️",
     parameters: [
-      { name: "type", description: "Instance type", required: true },
+      {
+        name: "type",
+        description:
+          "Comma-separated instance names, e.g. Endless Tower, Endless Cellar. Autocomplete preserves previous selections. None clears the selection; empty comma entries are ignored. Setup also supports selecting multiple types.",
+        required: true,
+      },
     ],
   },
   {
@@ -515,14 +522,26 @@ export const COMMAND_GUIDE: ReadonlyArray<{
   },
   {
     name: "/ping",
-    description: "Ping signed-up and/or reserve members with a message",
+    description:
+      "Send up to 500 characters to signup participants in the channel or by direct message. Channel pings split large recipient lists into messages within Discord's content limit. DM delivery acknowledges first, then confirms success and any failures.",
     emoji: "📣",
     parameters: [
-      { name: "message", description: "Message", required: true },
+      {
+        name: "message",
+        description: "Message to send (maximum 500 characters)",
+        required: true,
+      },
       {
         name: "which",
-        description: "Who to ping (Main Roster, Reserves, TBC, All)",
-        required: true,
+        description:
+          "Who to ping (Main Roster, Reserves, TBC, All; defaults to Main Roster)",
+        required: false,
+      },
+      {
+        name: "where",
+        description:
+          "Where to send it (Channel or Direct Message; defaults to Channel)",
+        required: false,
       },
     ],
   },
@@ -541,7 +560,15 @@ export const COMMAND_GUIDE: ReadonlyArray<{
   },
   {
     name: "/help",
-    description: "Display this guide",
+    description: "Display help for a command",
     emoji: "ℹ️",
+    parameters: [
+      {
+        name: "command",
+        description:
+          "Choose a command; autocomplete matches command names as you type",
+        required: true,
+      },
+    ],
   },
 ];

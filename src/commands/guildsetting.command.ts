@@ -36,15 +36,26 @@ const parseInstanceType = (
   emoji: string,
 ): InstanceType => {
   const parsedMaxAttempts = Number(maxAttempts);
+  const parsedKeywords = splitValues(keywords);
   if (!name.trim() || !emoji.trim()) {
     throw new Error("Name and emoji cannot be empty.");
+  }
+  if (
+    parsedKeywords.some((keyword) => {
+      const prefix = /^[\p{L}\p{N}]*/u.exec(keyword)?.[0] ?? "";
+      return /[^\p{L}\p{N}\s]/u.test(keyword) && Array.from(prefix).length < 2;
+    })
+  ) {
+    throw new Error(
+      "Aliases with punctuation must have at least two letters or numbers before the punctuation.",
+    );
   }
   if (!Number.isInteger(parsedMaxAttempts) || parsedMaxAttempts < 0) {
     throw new Error("maxAttempts must be a non-negative integer.");
   }
   return {
     name: name.trim(),
-    keywords: splitValues(keywords),
+    keywords: parsedKeywords,
     maxAttempts: parsedMaxAttempts,
     emoji: emoji.trim(),
   };

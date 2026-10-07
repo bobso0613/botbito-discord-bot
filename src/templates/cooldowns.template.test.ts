@@ -4,6 +4,22 @@ import { formatCooldownEntry } from "./cooldowns.template.js";
 
 describe("Cooldowns Template", () => {
   describe("formatCooldownEntry", () => {
+    it.each([0, 1])(
+      "omits the limit for a custom instance with maxAttempts zero and count %i",
+      (count) => {
+        const result = formatCooldownEntry(
+          {
+            name: "Test Instance",
+            keywords: ["Test Instance"],
+            emoji: "T",
+            maxAttempts: 0,
+          },
+          count,
+        );
+        expect(result).toBe(`T Test Instance - **${count}**`);
+      },
+    );
+
     it("should format Endless Tower correctly", () => {
       const et = COOLDOWN_INSTANCE_TYPES.find(
         (t) => t.name === "Endless Tower",

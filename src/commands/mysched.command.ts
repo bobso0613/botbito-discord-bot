@@ -66,6 +66,7 @@ const getAccessibleGuildSchedules = async (
     .filter((schedule) => schedule.isSignedUp || schedule.isReserve)
     .map((schedule) => ({
       ...schedule,
+      guildId: guild.id,
       guildName: guild.name,
       guildIcon,
     }));

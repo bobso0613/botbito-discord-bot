@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   ApplicationIntegrationType,
   type AutocompleteInteraction,
@@ -12,7 +13,11 @@ import {
   SIGNUP_GUILD_IDS,
 } from "../config/discord-settings.js";
 import { COOLDOWN_INSTANCE_TYPES } from "../constants/cooldowns.js";
-import { INSTANCE_TYPE_NONE_VALUE } from "../constants/signup.js";
+import {
+  MAX_DISCORD_MESSAGE_LENGTH,
+  INSTANCE_TYPE_NONE_VALUE,
+  MAX_PING_MESSAGE_LENGTH,
+} from "../constants/signup.js";
 import {
   executeAdd,
   executeCharNote,
@@ -37,6 +42,7 @@ import {
   showSetup,
 } from "../services/signup-setup.service.js";
 import type { Command } from "../types/command.js";
+import type { SignupSheet } from "../types/signup-sheet.js";
 import {
   getInvokingUserSlot,
   getRosterPrompt,
@@ -44,7 +50,27 @@ import {
   parseNewRunTimestamp,
   parseServerTimezone,
   parseTimeShift,
+  validateInstanceTypeEmbedLimits,
 } from "../utils/signup-sheet.js";
+
+const INSTANCE_TYPE_AUTOCOMPLETE_HASH_LENGTH = 10;
+
+const getInstanceTypeAutocompleteToken = (name: string): string =>
+  `~${createHash("sha256")
+    .update(name)
+    .digest("hex")
+    .slice(0, INSTANCE_TYPE_AUTOCOMPLETE_HASH_LENGTH)}`;
+
+const resolveInstanceTypeAutocompleteValue = (
+  value: string,
+  instanceTypes: readonly { name: string }[],
+): string => {
+  if (!/^~[a-f\d]{10}$/.test(value)) return value;
+  const matches = instanceTypes.filter(
+    (type) => getInstanceTypeAutocompleteToken(type.name) === value,
+  );
+  return matches.length === 1 ? matches[0]!.name : value;
+};
 
 // Re-export constants, action handlers, setup handlers, and button handlers
 export * from "../constants/signup.js";
@@ -118,6 +144,114 @@ const addSignupOptions = (
         .setDescription("Mark the signup as TBC")
         .setRequired(false),
     ) as SlashCommandBuilder;
+
+type PingContentFormatter = (recipientMentions: string) => string;
+
+const getPingRecipientIds = (sheet: SignupSheet, which: string): string[] => {
+  const mainIds = sheet.slots.flatMap((slot) =>
+    slot.signupUserId ? [slot.signupUserId] : [],
+  );
+  const reserveIds = sheet.reserves.map((reserve) => reserve.userId);
+  const tbcIds = [
+    ...sheet.slots.flatMap((slot) =>
+      slot.signupUserId && slot.isTbc ? [slot.signupUserId] : [],
+    ),
+    ...sheet.reserves.flatMap((reserve) =>
+      reserve.isTbc ? [reserve.userId] : [],
+    ),
+  ];
+  return [
+    ...new Set([
+      ...(which === "main" || which === "all" ? mainIds : []),
+      ...(which === "reserves" || which === "all" ? reserveIds : []),
+      ...(which === "tbc" ? tbcIds : []),
+    ]),
+  ];
+};
+
+const buildChannelPingContents = (
+  ids: readonly string[],
+  formatPingContent: PingContentFormatter,
+): string[] => {
+  const mentionChunks: string[][] = [[]];
+  for (const id of ids) {
+    const currentChunk = mentionChunks.at(-1)!;
+    const candidate = [...currentChunk, id]
+      .map((mentionId) => `<@${mentionId}>`)
+      .join(" ");
+    if (
+      currentChunk.length > 0 &&
+      formatPingContent(candidate).length > MAX_DISCORD_MESSAGE_LENGTH
+    ) {
+      mentionChunks.push([id]);
+    } else {
+      currentChunk.push(id);
+    }
+  }
+  return mentionChunks.map((chunk) =>
+    formatPingContent(chunk.map((id) => `<@${id}>`).join(" ")),
+  );
+};
+
+const sendChannelPing = async (
+  interaction: ChatInputCommandInteraction,
+  ids: readonly string[],
+  formatPingContent: PingContentFormatter,
+): Promise<void> => {
+  const [firstContent, ...followUpContents] = buildChannelPingContents(
+    ids,
+    formatPingContent,
+  );
+  await interaction.reply({ content: firstContent! });
+  await Promise.all(
+    followUpContents.map((content) => interaction.followUp({ content })),
+  );
+};
+
+const sendDirectMessagePing = async (
+  interaction: ChatInputCommandInteraction,
+  sheet: SignupSheet,
+  ids: readonly string[],
+  formatPingContent: PingContentFormatter,
+): Promise<void> => {
+  await interaction.deferReply();
+  const failedUserIds = (
+    await Promise.all(
+      ids.map(async (id) => {
+        try {
+          const user = await interaction.client.users.fetch(id);
+          await user.send({ content: formatPingContent(`<@${id}>`) });
+          return null;
+        } catch {
+          return id;
+        }
+      }),
+    )
+  ).filter((id): id is string => id !== null);
+  const displayNamesById = new Map<string, string>();
+  for (const slot of sheet.slots) {
+    if (slot.signupUserId) {
+      displayNamesById.set(
+        slot.signupUserId,
+        slot.signupDisplayName ?? slot.signupUserId,
+      );
+    }
+  }
+  for (const reserve of sheet.reserves) {
+    displayNamesById.set(reserve.userId, reserve.displayName);
+  }
+  const failedNames = failedUserIds.map((id) => displayNamesById.get(id) ?? id);
+  const failureNotice = failedNames.length
+    ? `\nI cannot ping ${failedNames.join(", ")}`
+    : "";
+  await interaction.editReply({
+    content: `Sent ping through DM${failureNotice}`.slice(
+      0,
+      MAX_DISCORD_MESSAGE_LENGTH,
+    ),
+    allowedMentions: { parse: [] },
+  });
+};
 
 const signupCommandDefinitions: Command[] = [
   setupCommand("newrun", "Create a signup sheet in this channel"),
@@ -302,12 +436,13 @@ const signupCommandDefinitions: Command[] = [
   {
     data: new SlashCommandBuilder()
       .setName("setinstancetype")
-      .setDescription("Set the instance type for this run")
+      .setDescription("Set the instance types for this run")
       .addStringOption((o) =>
         o
           .setName("type")
-          .setDescription("Instance type")
+          .setDescription("Instance types, separated by commas, or None")
           .setRequired(true)
+          .setMaxLength(100)
           .setAutocomplete(true),
       ) as SlashCommandBuilder,
     execute: async (i) => {
@@ -317,13 +452,42 @@ const signupCommandDefinitions: Command[] = [
           ? (DISCORD_SETTINGS.cooldownInstanceTypesByGuild[i.guildId] ??
             COOLDOWN_INSTANCE_TYPES)
           : COOLDOWN_INSTANCE_TYPES;
+        const types = [
+          ...new Set(
+            type
+              .split(",")
+              .map((value) => value.trim())
+              .filter(Boolean)
+              .map((value) =>
+                resolveInstanceTypeAutocompleteValue(value, configuredTypes),
+              ),
+          ),
+        ];
+        const isNone =
+          types.length === 1 &&
+          types[0]?.toLowerCase() === INSTANCE_TYPE_NONE_VALUE;
         if (
-          type !== INSTANCE_TYPE_NONE_VALUE &&
-          !configuredTypes.some((instanceType) => instanceType.name === type)
+          !isNone &&
+          (types.length === 0 ||
+            types.some(
+              (name) =>
+                !configuredTypes.some(
+                  (instanceType) => instanceType.name === name,
+                ),
+            ))
         ) {
           return "That instance type is not configured for this guild.";
         }
-        s.instanceType = type === INSTANCE_TYPE_NONE_VALUE ? null : type;
+        const embedLimitError = isNone
+          ? null
+          : validateInstanceTypeEmbedLimits(
+              types,
+              s.organizerName,
+              configuredTypes,
+            );
+        if (embedLimitError) return embedLimitError;
+        if (isNone) s.instanceType = null;
+        else s.instanceType = types.length > 1 ? types : types[0];
         return null;
       });
     },
@@ -689,18 +853,32 @@ const signupCommandDefinitions: Command[] = [
       .setName("ping")
       .setDescription("Ping signed-up players")
       .addStringOption((o) =>
-        o.setName("message").setDescription("Message").setRequired(true),
+        o
+          .setName("message")
+          .setDescription("Message")
+          .setRequired(true)
+          .setMaxLength(MAX_PING_MESSAGE_LENGTH),
       )
       .addStringOption((o) =>
         o
           .setName("which")
           .setDescription("Who to ping")
-          .setRequired(true)
+          .setRequired(false)
           .addChoices(
             { name: "Main Roster", value: "main" },
             { name: "Reserves", value: "reserves" },
             { name: "TBC", value: "tbc" },
             { name: "All", value: "all" },
+          ),
+      )
+      .addStringOption((o) =>
+        o
+          .setName("where")
+          .setDescription("Where to send the ping")
+          .setRequired(false)
+          .addChoices(
+            { name: "Channel", value: "channel" },
+            { name: "Direct Message", value: "dm" },
           ),
       ) as SlashCommandBuilder,
     execute: async (i) => {
@@ -709,39 +887,36 @@ const signupCommandDefinitions: Command[] = [
         await replyMissing(i);
         return;
       }
-      const which = i.options.getString("which", true);
-      const mainIds = s.slots.flatMap((slot) =>
-        slot.signupUserId ? [slot.signupUserId] : [],
-      );
-      const reserveIds = s.reserves.map((reserve) => reserve.userId);
-      const tbcIds = [
-        ...s.slots.flatMap((slot) =>
-          slot.signupUserId && slot.isTbc ? [slot.signupUserId] : [],
-        ),
-        ...s.reserves.flatMap((reserve) =>
-          reserve.isTbc ? [reserve.userId] : [],
-        ),
-      ];
-      const ids = [
-        ...(which === "main" || which === "all" ? mainIds : []),
-        ...(which === "reserves" || which === "all" ? reserveIds : []),
-        ...(which === "tbc" ? tbcIds : []),
-      ];
+      const which = i.options.getString("which") ?? "main";
+      const where = i.options.getString("where") ?? "channel";
+      const ids = getPingRecipientIds(s, which);
+      const message = i.options.getString("message", true);
       const whichLabels: Record<string, string> = {
         main: "Main Roster",
         reserves: "Reserves",
         tbc: "TBC",
         all: "All",
       };
-      const message = i.options.getString("message", true);
-      const mentions = ids.map((id) => `<@${id}>`).join(" , ");
-      const channelName =
-        i.channel && "name" in i.channel && i.channel.name
-          ? i.channel.name
-          : "this channel";
-      await i.reply({
-        content: `-# Ping from **${i.user.displayName}** to **${whichLabels[which] ?? which}**:\n\n**${message}**\n\n-# ${mentions}\n-# sent from __${s.title}__ in __${channelName}__`,
-      });
+      if (ids.length === 0) {
+        await i.reply({
+          content: `There are no ${whichLabels[which] ?? which} users to ping.`,
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+      const dmDetails =
+        where === "dm"
+          ? ` | in <#${s.channelId}> | ${formatScheduleNotice(s.timestamp)}`
+          : "";
+      const formatPingContent: PingContentFormatter = (recipientMentions) =>
+        where === "dm"
+          ? `-# 🔔Ping from **${i.user.displayName}** re: **${s.title}**:\n\n${message}\n\n${recipientMentions}\n-# ping to **${whichLabels[which] ?? which}**${dmDetails}`
+          : `-# 🔔Ping from **${i.user.displayName}**:\n\n${message}\n\n${recipientMentions}\n-# ping to **${whichLabels[which] ?? which}** | re: **${s.title}**`;
+      if (where === "dm") {
+        await sendDirectMessagePing(i, s, ids, formatPingContent);
+        return;
+      }
+      await sendChannelPing(i, ids, formatPingContent);
     },
   },
   {
@@ -771,25 +946,64 @@ const signupCommandDefinitions: Command[] = [
   },
 ];
 
-/** Responds with instance types configured for the guild running /setinstancetype. */
+/** Responds with compact autocomplete values for configured instance types. */
 export const handleSetInstanceTypeAutocomplete = async (
   interaction: AutocompleteInteraction,
 ): Promise<void> => {
   const source = interaction.guildId
     ? DISCORD_SETTINGS.cooldownInstanceTypesByGuild[interaction.guildId]
     : undefined;
-  const focused = interaction.options.getFocused().toLowerCase();
+  const input = interaction.options.getFocused();
+  const parts = input.split(",");
+  const focused = (parts.pop() ?? "").trim().toLowerCase();
+  const prefix = parts.map((part) => part.trim()).filter(Boolean);
+  const instanceTypes = source ?? COOLDOWN_INSTANCE_TYPES;
+  const prefixNames = prefix.map((part) =>
+    resolveInstanceTypeAutocompleteValue(part, instanceTypes),
+  );
+  const prefixValues = prefix.map((part, index) => {
+    const prefixType = instanceTypes.find(
+      (type) => type.name === prefixNames[index],
+    );
+    return prefixType
+      ? getInstanceTypeAutocompleteToken(prefixType.name)
+      : part;
+  });
+  const tokenCounts = new Map<string, number>();
+  for (const type of instanceTypes) {
+    const token = getInstanceTypeAutocompleteToken(type.name);
+    tokenCounts.set(token, (tokenCounts.get(token) ?? 0) + 1);
+  }
   await interaction.respond([
-    { name: "None", value: INSTANCE_TYPE_NONE_VALUE },
-    ...(source ?? COOLDOWN_INSTANCE_TYPES)
-      .filter(
-        (type) =>
-          type.name !== "Others" && type.name.toLowerCase().includes(focused),
+    ...(prefix.length === 0
+      ? [{ name: "None", value: INSTANCE_TYPE_NONE_VALUE }]
+      : []),
+    ...instanceTypes
+      .flatMap((type) =>
+        type.name !== "Others" &&
+        !prefixNames.includes(type.name) &&
+        type.name.toLowerCase().includes(focused) &&
+        tokenCounts.get(getInstanceTypeAutocompleteToken(type.name)) === 1
+          ? [
+              {
+                name: [...prefixNames, type.name].join(", ").slice(0, 100),
+                value: [
+                  ...prefixValues,
+                  getInstanceTypeAutocompleteToken(type.name),
+                ].join(", "),
+              },
+            ]
+          : [],
       )
       .slice(0, 24)
-      .map((type) => ({ name: type.name, value: type.name })),
+      .filter((choice) => choice.value.length <= 100),
   ]);
 };
 
+/**
+ * Signup-sheet commands. `/ping` accepts up to `MAX_PING_MESSAGE_LENGTH`
+ * characters and defaults to the Main Roster in-channel. Direct Messages are
+ * sent once per unique participant after the interaction is acknowledged.
+ */
 export const signupCommands: Command[] =
   signupCommandDefinitions.map(restrictToGuild);

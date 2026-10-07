@@ -8,14 +8,21 @@ import type { SignupSheet } from "../types/signup-sheet.js";
 const getServerTimezoneOffset = (timezone: string): number =>
   timezone === "GMT" ? 0 : Number(timezone.slice(3));
 
-/** Formats a sheet's instance type as `<emoji> <name>`, or `null` when unset. */
+/** Formats single or multiple types as emoji/name pairs separated by pipes, or null when unset. */
 const formatInstanceType = (
-  instanceType: string | null,
+  instanceType: SignupSheet["instanceType"],
   instanceTypes: readonly InstanceType[],
 ): string | null => {
   if (!instanceType) return null;
-  const type = instanceTypes.find((t) => t.name === instanceType);
-  return `${type?.emoji ?? ""} ${instanceType}`.trim();
+  const names = Array.isArray(instanceType) ? instanceType : [instanceType];
+  return (
+    names
+      .map((name) => {
+        const type = instanceTypes.find((candidate) => candidate.name === name);
+        return `${type?.emoji ?? ""} ${name}`.trim();
+      })
+      .join(" | ") || null
+  );
 };
 
 /**
@@ -89,7 +96,8 @@ const formatReserve = (
 /**
  * Builds the full signup sheet embed: notes, one field per party with its
  * slots, the reserve list, fill and TBC counts as inline fields, the schedule,
- * and an organizer footer that includes the instance type (with emoji) when one is set.
+ * and an Instance Types field using configured emojis when selected.
+ * The organizer footer also lists selected types for legacy metadata readers.
  */
 export const buildSignupSheetEmbed = (
   sheet: SignupSheet,
@@ -161,6 +169,13 @@ export const buildSignupSheetEmbed = (
         .join(" | "),
       iconURL: sheet.organizerAvatarUrl,
     });
+  if (sheet.instanceType) {
+    embed.addFields({
+      name: "Instance Types:",
+      value: formatInstanceType(sheet.instanceType, instanceTypes) ?? "None",
+      inline: false,
+    });
+  }
   if (sheet.notes?.trim()) {
     embed.setDescription(`Important Notes:\n${sheet.notes.trim()}`);
   }

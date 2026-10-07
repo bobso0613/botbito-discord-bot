@@ -31,6 +31,7 @@ import {
   handleSignupAddCancelButton,
   handleSignupInfoButton,
   handleSignupInstanceTypeButton,
+  handleSignupInstanceTypeBackButton,
   handleSignupInstanceTypeSelect,
   handleSignupEditPartySetupButton,
   SIGNUP_ROSTER_BUTTON_ID,
@@ -40,6 +41,7 @@ import {
   SIGNUP_ADD_CANCEL_BUTTON_ID,
   SIGNUP_INFO_BUTTON_ID,
   SIGNUP_INSTANCE_TYPE_BUTTON_ID,
+  SIGNUP_INSTANCE_TYPE_BACK_BUTTON_ID,
   SIGNUP_INSTANCE_TYPE_SELECT_ID,
   SIGNUP_EDIT_PARTY_SETUP_BUTTON_ID,
   SIGNUP_ADD_BUTTON_ID,
@@ -140,6 +142,22 @@ const registerGuildSlashCommands = async (guildId: string): Promise<void> => {
   );
 };
 
+const initializeGuild = async (guildId: string): Promise<void> => {
+  try {
+    await ensureGuildSettings(guildId);
+  } catch (error) {
+    logger.error(`Failed to initialize settings for guild ${guildId}:`, error);
+  }
+  try {
+    await registerGuildSlashCommands(guildId);
+  } catch (error) {
+    logger.error(
+      `Failed to register slash commands for guild ${guildId}:`,
+      error,
+    );
+  }
+};
+
 client.once(Events.ClientReady, async (readyClient) => {
   readyClient.user.setPresence({
     activities: [
@@ -150,17 +168,9 @@ client.once(Events.ClientReady, async (readyClient) => {
     ],
   });
 
-  for (const guildId of readyClient.guilds.cache.keys()) {
-    try {
-      await ensureGuildSettings(guildId);
-    } catch (error) {
-      logger.error(
-        `Failed to initialize settings for guild ${guildId}:`,
-        error,
-      );
-    }
-    await registerGuildSlashCommands(guildId);
-  }
+  await Promise.all(
+    Array.from(readyClient.guilds.cache.keys(), initializeGuild),
+  );
   logger.log(
     `Loaded ${Object.keys(DISCORD_SETTINGS.guildScheduleSourceByGuild).length} guild setting file(s) for ${readyClient.guilds.cache.size} joined guild(s).`,
   );
@@ -255,6 +265,8 @@ const BUTTON_ACTIONS: Readonly<
     handleSignupWhenButton(buttonInteraction),
   [SIGNUP_INSTANCE_TYPE_BUTTON_ID]: (buttonInteraction) =>
     handleSignupInstanceTypeButton(buttonInteraction),
+  [SIGNUP_INSTANCE_TYPE_BACK_BUTTON_ID]: (buttonInteraction) =>
+    handleSignupInstanceTypeBackButton(buttonInteraction),
   [SIGNUP_EDIT_PARTY_SETUP_BUTTON_ID]: (buttonInteraction) =>
     handleSignupEditPartySetupButton(buttonInteraction),
 };
@@ -377,4 +389,9 @@ client.on(Events.Error, (error) => {
   logger.error("Discord client error:", error);
 });
 
-client.login(botToken);
+try {
+  await client.login(botToken);
+} catch (error) {
+  logger.error("Failed to log in to Discord:", error);
+  throw error;
+}

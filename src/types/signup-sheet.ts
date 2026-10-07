@@ -25,7 +25,8 @@ export interface SignupSheet {
   notes: string | null;
   thumbnailUrl: string | null;
   color: number | null;
-  instanceType: string | null;
+  /** A legacy single type, multiple selected type names, or null when unset. */
+  instanceType: string | string[] | null;
   timestamp: number | null;
   scheduleTimezone: string | null;
   serverTimezone: string | null;

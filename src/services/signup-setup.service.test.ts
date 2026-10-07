@@ -1,16 +1,25 @@
 import { describe, expect, it, jest } from "@jest/globals";
-import { MessageFlags } from "discord.js";
-import { INSTANCE_TYPE_NONE_VALUE } from "../constants/signup.js";
+import { DISCORD_SETTINGS } from "../config/discord-settings.js";
+import { MessageFlags, type ModalBuilder } from "discord.js";
+import type { InstanceType } from "../constants/cooldowns.js";
+import {
+  INSTANCE_TYPE_NONE_VALUE,
+  SIGNUP_CANCEL_SETUP_BUTTON_ID,
+  SIGNUP_INSTANCE_TYPE_BACK_BUTTON_ID,
+} from "../constants/signup.js";
 import type { SignupSheet } from "../types/signup-sheet.js";
 import {
   buildInstanceTypeSelectRow,
   buildRosterPromptButtons,
   buildSetupPromptButtons,
+  handleSignupInstanceTypeButton,
+  handleSignupInstanceTypeBackButton,
   handleSignupInstanceTypeSelect,
   handleSignupRosterButton,
   parseSetup,
   pendingRosterUsers,
   pendingSetupDrafts,
+  showSetup,
 } from "./signup-setup.service.js";
 
 const createSheet = (): SignupSheet => ({
@@ -104,6 +113,171 @@ describe("signup setup service", () => {
     });
   });
 
+  it("shows a Back button beneath the instance type menu", async () => {
+    const key = "guild-id:channel-id";
+    pendingSetupDrafts.set(key, createSheet());
+    pendingRosterUsers.set(key, "organizer-id");
+    const interaction = {
+      guildId: "guild-id",
+      channelId: "channel-id",
+      user: { id: "organizer-id" },
+      deferUpdate: jest.fn(),
+      editReply: jest.fn(),
+    };
+
+    await handleSignupInstanceTypeButton(interaction as never);
+
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        components: [
+          expect.anything(),
+          expect.objectContaining({
+            components: [
+              expect.objectContaining({
+                data: expect.objectContaining({
+                  custom_id: SIGNUP_INSTANCE_TYPE_BACK_BUTTON_ID,
+                  label: "Back to Setup",
+                }),
+              }),
+            ],
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("returns from instance selection to the setup controls", async () => {
+    const key = "guild-id:channel-id";
+    pendingSetupDrafts.set(key, createSheet());
+    pendingRosterUsers.set(key, "organizer-id");
+    const interaction = {
+      guildId: "guild-id",
+      channelId: "channel-id",
+      user: { id: "organizer-id" },
+      deferUpdate: jest.fn(),
+      editReply: jest.fn(),
+    };
+
+    await handleSignupInstanceTypeBackButton(interaction as never);
+
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.any(String),
+        components: [expect.anything()],
+      }),
+    );
+  });
+
+  it("preselects multiple instance types and allows multiple selections", () => {
+    const select = buildInstanceTypeSelectRow([
+      "Endless Tower",
+      "Endless Cellar",
+    ]).components[0]!.toJSON();
+    expect(select.max_values).toBeGreaterThan(1);
+    expect(
+      select.options
+        .filter((option) => option.default)
+        .map((option) => option.value),
+    ).toEqual(["Endless Tower", "Endless Cellar"]);
+  });
+
+  it.each([
+    {
+      values: ["Endless Tower", "Endless Cellar"],
+      expected: ["Endless Tower", "Endless Cellar"],
+    },
+    { values: [INSTANCE_TYPE_NONE_VALUE], expected: null },
+    {
+      values: [INSTANCE_TYPE_NONE_VALUE, "Endless Tower"],
+      expected: "Endless Tower",
+    },
+  ])(
+    "stores multiple instance selections or None: $values",
+    async ({ values, expected }) => {
+      const key = "guild-id:channel-id";
+      const sheet = createSheet();
+      pendingSetupDrafts.set(key, sheet);
+      pendingRosterUsers.set(key, "organizer-id");
+      await handleSignupInstanceTypeSelect({
+        guildId: "guild-id",
+        channelId: "channel-id",
+        user: { id: "organizer-id" },
+        values,
+        deferUpdate: jest.fn(),
+        editReply: jest.fn(),
+      } as never);
+      expect(sheet.instanceType).toEqual(expected);
+    },
+  );
+
+  it.each([
+    {
+      organizerName: "Organizer",
+      types: Array.from({ length: 24 }, (_, index) => ({
+        name: `Instance Type ${String(index).padStart(2, "0")} Name`,
+        keywords: [],
+        maxAttempts: 1,
+        emoji: "x".repeat(25),
+      })),
+      values: Array.from(
+        { length: 24 },
+        (_, index) => `Instance Type ${String(index).padStart(2, "0")} Name`,
+      ),
+    },
+    {
+      organizerName: "Organizer".repeat(260),
+      types: [
+        {
+          name: "Endless Tower",
+          keywords: ["ET"],
+          maxAttempts: 3,
+          emoji: "🪜",
+        },
+      ],
+      values: ["Endless Tower"],
+    },
+  ])(
+    "rejects instance metadata that exceeds embed limits",
+    async ({ organizerName, types, values }) => {
+      const guildId = "guild-id";
+      const settings = DISCORD_SETTINGS.cooldownInstanceTypesByGuild as Record<
+        string,
+        readonly InstanceType[]
+      >;
+      const previousTypes = settings[guildId];
+      settings[guildId] = types;
+      const key = `${guildId}:channel-id`;
+      const sheet = createSheet();
+      sheet.organizerName = organizerName;
+      pendingSetupDrafts.set(key, sheet);
+      pendingRosterUsers.set(key, "organizer-id");
+      const interaction = {
+        guildId,
+        channelId: "channel-id",
+        user: { id: "organizer-id" },
+        values,
+        deferUpdate: jest.fn(),
+        editReply: jest.fn(),
+      };
+
+      try {
+        await handleSignupInstanceTypeSelect(interaction as never);
+
+        expect(sheet.instanceType).toBeNull();
+        expect(interaction.editReply).toHaveBeenCalledWith(
+          expect.objectContaining({
+            content: expect.stringContaining("exceed Discord's embed limits"),
+          }),
+        );
+      } finally {
+        if (previousTypes) settings[guildId] = previousTypes;
+        else delete settings[guildId];
+        pendingSetupDrafts.delete(key);
+        pendingRosterUsers.delete(key);
+      }
+    },
+  );
+
   it("parses a valid new setup submission", () => {
     const result = parseSetup(
       createModalInteraction({
@@ -123,6 +297,40 @@ describe("signup setup service", () => {
         partySizes: [6, 6],
         serverTimezone: "GMT+8",
       },
+    });
+  });
+
+  it("rejects setup submissions with more than 8 parties", () => {
+    const result = parseSetup(
+      createModalInteraction({
+        title: "Friday Endless Tower",
+        datetime: "10/09 20:00 GMT+8",
+        timezone: "GMT+8",
+        parties: "9",
+        sizes: "1,1,1,1,1,1,1,1,1",
+      }),
+    );
+
+    expect(result).toEqual({ error: "A maximum of 8 parties is allowed." });
+  });
+
+  it("allows an existing 10-party count to fit its setup modal prefill", async () => {
+    const interaction = { showModal: jest.fn() };
+
+    await showSetup(interaction as never, {
+      ...createSheet(),
+      partySizes: Array.from({ length: 10 }, () => 1),
+    });
+
+    const modal = interaction.showModal.mock.calls[0]![0] as ModalBuilder;
+    const partyCountField = modal
+      .toJSON()
+      .components.find(
+        (component) =>
+          "label" in component && component.label === "Number of parties",
+      );
+    expect(partyCountField).toMatchObject({
+      component: expect.objectContaining({ value: "10", max_length: 2 }),
     });
   });
 
