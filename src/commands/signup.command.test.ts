@@ -293,6 +293,76 @@ describe("/setinstancetype", () => {
       true,
     );
   });
+
+  it("rejects configured instance types that would exceed embed field limits", async () => {
+    const mutableTypeConfigs =
+      DISCORD_SETTINGS.cooldownInstanceTypesByGuild as Record<
+        string,
+        readonly InstanceType[]
+      >;
+    const originalTypes = mutableTypeConfigs["guild-1"];
+    const hadGuildConfig = Object.hasOwn(mutableTypeConfigs, "guild-1");
+    const longName = "A".repeat(1_100);
+    mutableTypeConfigs["guild-1"] = [
+      { name: longName, keywords: [], maxAttempts: 1, emoji: "" },
+    ];
+    getSignupSheet.mockResolvedValue(buildSheet());
+    saveSignupSheet.mockClear();
+    const interaction = createInteraction();
+    interaction.options.getString.mockReturnValue(longName);
+    const command = signupCommands.find(
+      (candidate) => candidate.data.name === "setinstancetype",
+    )!;
+
+    try {
+      await command.execute(interaction as never);
+    } finally {
+      if (hadGuildConfig) mutableTypeConfigs["guild-1"] = originalTypes!;
+      else delete mutableTypeConfigs["guild-1"];
+    }
+
+    expect(saveSignupSheet).not.toHaveBeenCalled();
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining("exceed Discord's embed limits"),
+      }),
+    );
+  });
+
+  it("does not save instance types that exceed the embed field limit", async () => {
+    const mutableTypeConfigs =
+      DISCORD_SETTINGS.cooldownInstanceTypesByGuild as Record<
+        string,
+        readonly InstanceType[]
+      >;
+    const originalTypes = mutableTypeConfigs["guild-1"];
+    const hadGuildConfig = Object.hasOwn(mutableTypeConfigs, "guild-1");
+    const longName = "B".repeat(1_100);
+    mutableTypeConfigs["guild-1"] = [
+      { name: longName, keywords: [], maxAttempts: 1, emoji: "" },
+    ];
+    getSignupSheet.mockResolvedValue(buildSheet());
+    saveSignupSheet.mockClear();
+    const interaction = createInteraction();
+    interaction.options.getString.mockReturnValue(longName);
+    const command = signupCommands.find(
+      (candidate) => candidate.data.name === "setinstancetype",
+    )!;
+
+    try {
+      await command.execute(interaction as never);
+    } finally {
+      if (hadGuildConfig) mutableTypeConfigs["guild-1"] = originalTypes!;
+      else delete mutableTypeConfigs["guild-1"];
+    }
+
+    expect(saveSignupSheet).not.toHaveBeenCalled();
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining("exceed Discord's embed limits"),
+      }),
+    );
+  });
 });
 
 describe("/add options", () => {

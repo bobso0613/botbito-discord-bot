@@ -28,6 +28,7 @@ export const SIGNUP_MODAL_SWAP_ID = "signup-modal-swap";
 
 export const INSTANCE_TYPE_NONE_VALUE = "none";
 export const MAX_SIGNUP_PARTIES = 8;
-export const MAX_PING_MESSAGE_LENGTH = 1000;
+export const MAX_PING_MESSAGE_LENGTH = 500;
+export const MAX_DISCORD_MESSAGE_LENGTH = 2_000;
 export const SETUP_PROMPT_CONTENT =
   "Party setup saved. Complete the roster to post the signup sheet.";

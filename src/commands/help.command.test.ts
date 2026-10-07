@@ -62,9 +62,10 @@ describe("help command", () => {
     {
       command: "/ping",
       expected: [
-        "up to 1,000 characters",
+        "up to 500 characters",
+        "split large recipient lists",
         "DM delivery acknowledges first",
-        "maximum 1,000 characters",
+        "maximum 500 characters",
       ],
     },
   ])(

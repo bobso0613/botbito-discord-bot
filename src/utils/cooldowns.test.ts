@@ -73,6 +73,34 @@ describe("Cooldowns Utils", () => {
       const result2 = parseInstanceTypes("ET run");
       expect(result1).toEqual(result2);
     });
+
+    it("normalizes punctuation in short aliases with a two-character prefix", () => {
+      const instanceTypes = [
+        {
+          name: "Example Instance",
+          keywords: ["ET-C"],
+          maxAttempts: 1,
+          emoji: "✨",
+        },
+      ];
+
+      expect(parseInstanceTypes("ET-C run", instanceTypes)).toEqual(
+        instanceTypes,
+      );
+    });
+
+    it("does not match punctuation aliases with fewer than two prefix characters", () => {
+      const instanceTypes = [
+        {
+          name: "Example Instance",
+          keywords: ["E-C"],
+          maxAttempts: 1,
+          emoji: "✨",
+        },
+      ];
+
+      expect(parseInstanceTypes("E-C run", instanceTypes)).toEqual([]);
+    });
   });
 
   describe("extractMultiplierFromTitle", () => {

@@ -70,6 +70,19 @@ const buildSheet = (overrides: Partial<SignupSheet> = {}): SignupSheet => ({
   ...overrides,
 });
 
+const getPayloadContent = (payload: unknown): string => {
+  if (typeof payload === "string") return payload;
+  if (
+    typeof payload === "object" &&
+    payload !== null &&
+    "content" in payload &&
+    typeof payload.content === "string"
+  ) {
+    return payload.content;
+  }
+  throw new TypeError("Expected a message payload with string content.");
+};
+
 const createInteraction = (
   which: string | null,
   message = "hello",
@@ -83,6 +96,7 @@ const createInteraction = (
   user: { id: "invoker-1", displayName: "Invoker", tag: "invoker#1234" },
   client: { users: { fetch: fetchUser } },
   reply: jest.fn(),
+  followUp: jest.fn(),
   deferReply: jest.fn(),
   editReply: jest.fn(),
   options: {
@@ -100,12 +114,12 @@ describe("/ping", () => {
     jest.clearAllMocks();
   });
 
-  it("limits the message option to 1,000 characters", () => {
+  it("limits the message option to 500 characters", () => {
     const messageOption = pingCommand.data
       .toJSON()
       .options?.find((option) => option.name === "message");
 
-    expect(messageOption).toMatchObject({ max_length: 1000 });
+    expect(messageOption).toMatchObject({ max_length: 500 });
   });
 
   it.each([
@@ -136,6 +150,63 @@ describe("/ping", () => {
       content:
         "-# 🔔Ping from **Invoker**:\n\nhello\n\n<@user-1>\n-# ping to **Main Roster** | re: **Test Run**",
     });
+  });
+
+  it.each(["channel", "dm"])(
+    "replies ephemerally when the selected Reserves group is empty (%s)",
+    async (where) => {
+      getSignupSheet.mockResolvedValue(buildSheet({ reserves: [] }));
+      const fetchUser = jest.fn(async (_id: string) => ({ send: jest.fn() }));
+      const interaction = createInteraction(
+        "reserves",
+        "hello",
+        where,
+        fetchUser,
+      );
+
+      await pingCommand.execute(interaction as never);
+
+      expect(interaction.reply).toHaveBeenCalledWith({
+        content: "There are no Reserves users to ping.",
+        flags: 64,
+      });
+      expect(interaction.deferReply).not.toHaveBeenCalled();
+      expect(interaction.editReply).not.toHaveBeenCalled();
+      expect(interaction.followUp).not.toHaveBeenCalled();
+      expect(fetchUser).not.toHaveBeenCalled();
+    },
+  );
+
+  it("splits large channel pings into messages within Discord's content limit", async () => {
+    const userIds = Array.from({ length: 100 }, (_, index) =>
+      String(100000000000000000n + BigInt(index)),
+    );
+    getSignupSheet.mockResolvedValue(
+      buildSheet({
+        title: "A very long run title ".repeat(10),
+        slots: userIds.map((userId, index) => ({
+          number: index + 1,
+          role: "DPS",
+          signupUserId: userId,
+          signupDisplayName: `Member ${index}`,
+          charNote: null,
+        })),
+      }),
+    );
+    const interaction = createInteraction("main", "m".repeat(500));
+
+    await pingCommand.execute(interaction as never);
+
+    const sentContents = [
+      interaction.reply.mock.calls[0]![0],
+      ...interaction.followUp.mock.calls.map((call) => call[0]),
+    ].map(getPayloadContent);
+    expect(sentContents.length).toBeGreaterThan(1);
+    expect(sentContents.every((content) => content.length <= 2000)).toBe(true);
+    const sentUserIds = sentContents.flatMap((content) =>
+      Array.from(content.matchAll(/<@(\d+)>/g), (match) => match[1]!),
+    );
+    expect(sentUserIds).toEqual(userIds);
   });
 
   it("sends one timestamped DM per unique participant and confirms in the channel", async () => {

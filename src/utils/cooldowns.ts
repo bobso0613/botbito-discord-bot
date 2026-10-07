@@ -29,6 +29,44 @@ const parseAbbreviationSequence = (
   return prefixes.get(token.length) ?? new Set();
 };
 
+const normalizeShortAlias = (keyword: string): string => {
+  const prefix = /^[\p{L}\p{N}]*/u.exec(keyword)?.[0] ?? "";
+  const hasPunctuation = /[^\p{L}\p{N}\s]/u.test(keyword);
+  if (hasPunctuation && Array.from(prefix).length < 2) return "";
+  return keyword.replace(/[^\p{L}\p{N}]/gu, "").toLowerCase();
+};
+
+const getMatchedAbbreviations = (
+  title: string,
+  abbreviations: readonly string[],
+): Set<string> =>
+  new Set(
+    title
+      .toLowerCase()
+      .split(/\s+/)
+      .flatMap((token) => {
+        const alphanumericTokens = token.match(/[\p{L}\p{N}]+/gu) ?? [];
+        const normalizedToken = token.replace(/[^\p{L}\p{N}]/gu, "");
+        return /[^\p{L}\p{N}]/u.test(token)
+          ? [...alphanumericTokens, normalizedToken]
+          : alphanumericTokens;
+      })
+      .filter(Boolean)
+      .flatMap((token) => [...parseAbbreviationSequence(token, abbreviations)]),
+  );
+
+const titleMatchesKeyword = (
+  title: string,
+  keyword: string,
+  matchedAbbreviations: ReadonlySet<string>,
+): boolean => {
+  const normalizedKeyword = normalizeShortAlias(keyword);
+  if (!normalizedKeyword) return false;
+  return normalizedKeyword.length <= 3
+    ? matchedAbbreviations.has(normalizedKeyword)
+    : title.toUpperCase().includes(keyword.toUpperCase());
+};
+
 /**
  * Matches configured names and keywords case-insensitively in titles or metadata.
  * Supports either order, separators, full names, and joined abbreviation sequences.
@@ -46,15 +84,11 @@ export const parseInstanceTypes = (
       instanceTypes
         .filter((type) => type.name !== "Others")
         .flatMap((type) => [type.name, ...type.keywords])
-        .filter((keyword) => keyword.length > 0 && keyword.length <= 3)
-        .map((keyword) => keyword.toLowerCase()),
+        .map(normalizeShortAlias)
+        .filter((keyword) => keyword.length > 0 && keyword.length <= 3),
     ),
   ];
-  const matchedAbbreviations = new Set(
-    (title.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).flatMap((token) => [
-      ...parseAbbreviationSequence(token, abbreviations),
-    ]),
-  );
+  const matchedAbbreviations = getMatchedAbbreviations(title, abbreviations);
 
   for (const instanceType of instanceTypes) {
     if (instanceType.name === "Others") continue;
@@ -63,12 +97,7 @@ export const parseInstanceTypes = (
       instanceType.name,
       ...instanceType.keywords,
     ])) {
-      if (keyword.length <= 3) {
-        if (matchedAbbreviations.has(keyword.toLowerCase())) {
-          matches.push(instanceType);
-          break;
-        }
-      } else if (title.toUpperCase().includes(keyword.toUpperCase())) {
+      if (titleMatchesKeyword(title, keyword, matchedAbbreviations)) {
         matches.push(instanceType);
         break;
       }

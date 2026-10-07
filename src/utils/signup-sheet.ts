@@ -1,6 +1,7 @@
 import { randomInt } from "node:crypto";
 import type { Message, User } from "discord.js";
 import { MAX_SIGNUP_PARTIES } from "../constants/signup.js";
+import type { InstanceType } from "../constants/cooldowns.js";
 import type { SignupSheet, SignupSlot } from "../types/signup-sheet.js";
 
 /**
@@ -19,6 +20,26 @@ export const parseServerTimezone = (
   const offset = Number(match[2]) * (match[1] === "+" ? 1 : -1);
   if (offset < -12 || offset > 14) return undefined;
   return `GMT${offset >= 0 ? "+" : ""}${offset}`;
+};
+
+/** Validates instance metadata against Discord's field and footer character limits. */
+export const validateInstanceTypeEmbedLimits = (
+  instanceTypeNames: readonly string[],
+  organizerName: string,
+  instanceTypes: readonly InstanceType[],
+): string | null => {
+  if (instanceTypeNames.length === 0) return null;
+  const formattedTypes = instanceTypeNames
+    .map((name) => {
+      const type = instanceTypes.find((candidate) => candidate.name === name);
+      return `${type?.emoji ?? ""} ${name}`.trim();
+    })
+    .join(" | ");
+  const footer = `Organizer - ${organizerName} | ${formattedTypes}`;
+  if (formattedTypes.length > 1_024 || footer.length > 2_048) {
+    return "The selected instance types exceed Discord's embed limits. Please select fewer or shorter types.";
+  }
+  return null;
 };
 
 /** Returns the hour offset from GMT for a normalized timezone string (e.g. `GMT+8`). */

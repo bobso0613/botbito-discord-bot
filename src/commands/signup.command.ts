@@ -14,6 +14,7 @@ import {
 } from "../config/discord-settings.js";
 import { COOLDOWN_INSTANCE_TYPES } from "../constants/cooldowns.js";
 import {
+  MAX_DISCORD_MESSAGE_LENGTH,
   INSTANCE_TYPE_NONE_VALUE,
   MAX_PING_MESSAGE_LENGTH,
 } from "../constants/signup.js";
@@ -41,6 +42,7 @@ import {
   showSetup,
 } from "../services/signup-setup.service.js";
 import type { Command } from "../types/command.js";
+import type { SignupSheet } from "../types/signup-sheet.js";
 import {
   getInvokingUserSlot,
   getRosterPrompt,
@@ -48,6 +50,7 @@ import {
   parseNewRunTimestamp,
   parseServerTimezone,
   parseTimeShift,
+  validateInstanceTypeEmbedLimits,
 } from "../utils/signup-sheet.js";
 
 const INSTANCE_TYPE_AUTOCOMPLETE_HASH_LENGTH = 10;
@@ -141,6 +144,114 @@ const addSignupOptions = (
         .setDescription("Mark the signup as TBC")
         .setRequired(false),
     ) as SlashCommandBuilder;
+
+type PingContentFormatter = (recipientMentions: string) => string;
+
+const getPingRecipientIds = (sheet: SignupSheet, which: string): string[] => {
+  const mainIds = sheet.slots.flatMap((slot) =>
+    slot.signupUserId ? [slot.signupUserId] : [],
+  );
+  const reserveIds = sheet.reserves.map((reserve) => reserve.userId);
+  const tbcIds = [
+    ...sheet.slots.flatMap((slot) =>
+      slot.signupUserId && slot.isTbc ? [slot.signupUserId] : [],
+    ),
+    ...sheet.reserves.flatMap((reserve) =>
+      reserve.isTbc ? [reserve.userId] : [],
+    ),
+  ];
+  return [
+    ...new Set([
+      ...(which === "main" || which === "all" ? mainIds : []),
+      ...(which === "reserves" || which === "all" ? reserveIds : []),
+      ...(which === "tbc" ? tbcIds : []),
+    ]),
+  ];
+};
+
+const buildChannelPingContents = (
+  ids: readonly string[],
+  formatPingContent: PingContentFormatter,
+): string[] => {
+  const mentionChunks: string[][] = [[]];
+  for (const id of ids) {
+    const currentChunk = mentionChunks.at(-1)!;
+    const candidate = [...currentChunk, id]
+      .map((mentionId) => `<@${mentionId}>`)
+      .join(" ");
+    if (
+      currentChunk.length > 0 &&
+      formatPingContent(candidate).length > MAX_DISCORD_MESSAGE_LENGTH
+    ) {
+      mentionChunks.push([id]);
+    } else {
+      currentChunk.push(id);
+    }
+  }
+  return mentionChunks.map((chunk) =>
+    formatPingContent(chunk.map((id) => `<@${id}>`).join(" ")),
+  );
+};
+
+const sendChannelPing = async (
+  interaction: ChatInputCommandInteraction,
+  ids: readonly string[],
+  formatPingContent: PingContentFormatter,
+): Promise<void> => {
+  const [firstContent, ...followUpContents] = buildChannelPingContents(
+    ids,
+    formatPingContent,
+  );
+  await interaction.reply({ content: firstContent! });
+  await Promise.all(
+    followUpContents.map((content) => interaction.followUp({ content })),
+  );
+};
+
+const sendDirectMessagePing = async (
+  interaction: ChatInputCommandInteraction,
+  sheet: SignupSheet,
+  ids: readonly string[],
+  formatPingContent: PingContentFormatter,
+): Promise<void> => {
+  await interaction.deferReply();
+  const failedUserIds = (
+    await Promise.all(
+      ids.map(async (id) => {
+        try {
+          const user = await interaction.client.users.fetch(id);
+          await user.send({ content: formatPingContent(`<@${id}>`) });
+          return null;
+        } catch {
+          return id;
+        }
+      }),
+    )
+  ).filter((id): id is string => id !== null);
+  const displayNamesById = new Map<string, string>();
+  for (const slot of sheet.slots) {
+    if (slot.signupUserId) {
+      displayNamesById.set(
+        slot.signupUserId,
+        slot.signupDisplayName ?? slot.signupUserId,
+      );
+    }
+  }
+  for (const reserve of sheet.reserves) {
+    displayNamesById.set(reserve.userId, reserve.displayName);
+  }
+  const failedNames = failedUserIds.map((id) => displayNamesById.get(id) ?? id);
+  const failureNotice = failedNames.length
+    ? `\nI cannot ping ${failedNames.join(", ")}`
+    : "";
+  await interaction.editReply({
+    content: `Sent ping through DM${failureNotice}`.slice(
+      0,
+      MAX_DISCORD_MESSAGE_LENGTH,
+    ),
+    allowedMentions: { parse: [] },
+  });
+};
 
 const signupCommandDefinitions: Command[] = [
   setupCommand("newrun", "Create a signup sheet in this channel"),
@@ -367,6 +478,14 @@ const signupCommandDefinitions: Command[] = [
         ) {
           return "That instance type is not configured for this guild.";
         }
+        const embedLimitError = isNone
+          ? null
+          : validateInstanceTypeEmbedLimits(
+              types,
+              s.organizerName,
+              configuredTypes,
+            );
+        if (embedLimitError) return embedLimitError;
         if (isNone) s.instanceType = null;
         else s.instanceType = types.length > 1 ? types : types[0];
         return null;
@@ -770,85 +889,34 @@ const signupCommandDefinitions: Command[] = [
       }
       const which = i.options.getString("which") ?? "main";
       const where = i.options.getString("where") ?? "channel";
-      const mainIds = s.slots.flatMap((slot) =>
-        slot.signupUserId ? [slot.signupUserId] : [],
-      );
-      const reserveIds = s.reserves.map((reserve) => reserve.userId);
-      const tbcIds = [
-        ...s.slots.flatMap((slot) =>
-          slot.signupUserId && slot.isTbc ? [slot.signupUserId] : [],
-        ),
-        ...s.reserves.flatMap((reserve) =>
-          reserve.isTbc ? [reserve.userId] : [],
-        ),
-      ];
-      const ids = [
-        ...new Set([
-          ...(which === "main" || which === "all" ? mainIds : []),
-          ...(which === "reserves" || which === "all" ? reserveIds : []),
-          ...(which === "tbc" ? tbcIds : []),
-        ]),
-      ];
+      const ids = getPingRecipientIds(s, which);
+      const message = i.options.getString("message", true);
       const whichLabels: Record<string, string> = {
         main: "Main Roster",
         reserves: "Reserves",
         tbc: "TBC",
         all: "All",
       };
-      const message = i.options.getString("message", true);
-      const mentions = ids.map((id) => `<@${id}>`).join(" ");
+      if (ids.length === 0) {
+        await i.reply({
+          content: `There are no ${whichLabels[which] ?? which} users to ping.`,
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
       const dmDetails =
         where === "dm"
           ? ` | in <#${s.channelId}> | ${formatScheduleNotice(s.timestamp)}`
           : "";
-      const formatPingContent = (recipientMentions: string): string =>
+      const formatPingContent: PingContentFormatter = (recipientMentions) =>
         where === "dm"
           ? `-# 🔔Ping from **${i.user.displayName}** re: **${s.title}**:\n\n${message}\n\n${recipientMentions}\n-# ping to **${whichLabels[which] ?? which}**${dmDetails}`
           : `-# 🔔Ping from **${i.user.displayName}**:\n\n${message}\n\n${recipientMentions}\n-# ping to **${whichLabels[which] ?? which}** | re: **${s.title}**`;
-
       if (where === "dm") {
-        await i.deferReply();
-        const failedUserIds = (
-          await Promise.all(
-            ids.map(async (id) => {
-              try {
-                const user = await i.client.users.fetch(id);
-                await user.send({ content: formatPingContent(`<@${id}>`) });
-                return null;
-              } catch {
-                return id;
-              }
-            }),
-          )
-        ).filter((id): id is string => id !== null);
-        const displayNamesById = new Map<string, string>();
-        for (const slot of s.slots) {
-          if (slot.signupUserId) {
-            displayNamesById.set(
-              slot.signupUserId,
-              slot.signupDisplayName ?? slot.signupUserId,
-            );
-          }
-        }
-        for (const reserve of s.reserves) {
-          displayNamesById.set(reserve.userId, reserve.displayName);
-        }
-        const failedNames = failedUserIds.map(
-          (id) => displayNamesById.get(id) ?? id,
-        );
-        const failureNotice = failedNames.length
-          ? `\nI cannot ping ${failedNames.join(", ")}`
-          : "";
-        await i.editReply({
-          content: `Sent ping through DM${failureNotice}`.slice(0, 2_000),
-          allowedMentions: { parse: [] },
-        });
+        await sendDirectMessagePing(i, s, ids, formatPingContent);
         return;
       }
-
-      await i.reply({
-        content: formatPingContent(mentions),
-      });
+      await sendChannelPing(i, ids, formatPingContent);
     },
   },
   {

@@ -523,12 +523,12 @@ export const COMMAND_GUIDE: ReadonlyArray<{
   {
     name: "/ping",
     description:
-      "Send up to 1,000 characters to signup participants in the channel or by direct message. DM delivery acknowledges first, then confirms success and any failures.",
+      "Send up to 500 characters to signup participants in the channel or by direct message. Channel pings split large recipient lists into messages within Discord's content limit. DM delivery acknowledges first, then confirms success and any failures.",
     emoji: "📣",
     parameters: [
       {
         name: "message",
-        description: "Message to send (maximum 1,000 characters)",
+        description: "Message to send (maximum 500 characters)",
         required: true,
       },
       {
