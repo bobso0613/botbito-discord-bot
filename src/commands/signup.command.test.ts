@@ -189,6 +189,21 @@ describe("/setinstancetype", () => {
     );
   });
 
+  it("clears the instance type when None has empty trailing entries", async () => {
+    getSignupSheet.mockResolvedValue(buildSheet());
+    const interaction = createInteraction();
+    interaction.options.getString.mockReturnValue("None,");
+    const command = signupCommands.find(
+      (candidate) => candidate.data.name === "setinstancetype",
+    )!;
+
+    await command.execute(interaction as never);
+
+    expect(saveSignupSheet).toHaveBeenCalledWith(
+      expect.objectContaining({ instanceType: null }),
+    );
+  });
+
   it("accepts compact autocomplete selections", async () => {
     getSignupSheet.mockResolvedValue(buildSheet());
     const interaction = createInteraction();

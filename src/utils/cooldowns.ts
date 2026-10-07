@@ -91,8 +91,28 @@ export const getScheduleInstanceTypes = (
   if (selectedTypes === undefined) {
     return parseInstanceTypes(schedule.title, instanceTypes);
   }
+  const normalize = (value: string): string =>
+    value.trim().replace(/\s+/g, " ").toLowerCase();
   const matchedTypes = new Set(
-    selectedTypes.flatMap((name) => parseInstanceTypes(name, instanceTypes)),
+    selectedTypes.flatMap((name) =>
+      name.split(/\s*\|\s*/).flatMap((selection) => {
+        const normalizedName = normalize(selection);
+        const exactMatch = instanceTypes.find((type) => {
+          if (type.name === "Others") return false;
+          const aliases = [type.name, ...type.keywords].map(normalize);
+          return (
+            aliases.includes(normalizedName) ||
+            (selection.startsWith(`${type.emoji} `) &&
+              aliases.includes(
+                normalize(selection.slice(type.emoji.length)),
+              ))
+          );
+        });
+        return exactMatch
+          ? [exactMatch]
+          : parseInstanceTypes(selection, instanceTypes);
+      }),
+    ),
   );
   return instanceTypes.filter((type) => matchedTypes.has(type));
 };

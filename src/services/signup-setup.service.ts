@@ -566,6 +566,27 @@ export const handleSignupInstanceTypeSelect = async (
       interaction.values.filter((value) => value !== INSTANCE_TYPE_NONE_VALUE),
     ),
   ];
+  const instanceTypes =
+    DISCORD_SETTINGS.cooldownInstanceTypesByGuild[interaction.guildId] ??
+    COOLDOWN_INSTANCE_TYPES;
+  const formattedTypes = values
+    .map((name) => {
+      const type = instanceTypes.find((candidate) => candidate.name === name);
+      return `${type?.emoji ?? ""} ${name}`.trim();
+    })
+    .join(" | ");
+  const footer = `Organizer - ${sheet.organizerName}${
+    formattedTypes ? ` | ${formattedTypes}` : ""
+  }`;
+  if (formattedTypes.length > 1_024 || footer.length > 2_048) {
+    await interaction.editReply({
+      content:
+        "The selected instance types exceed Discord's embed limits. Please select fewer or shorter types.\n\n" +
+        SETUP_PROMPT_CONTENT,
+      components: [buildSetupPromptButtons()],
+    });
+    return;
+  }
   sheet.instanceType = values.length > 1 ? values : (values[0] ?? null);
   await interaction.editReply({
     content: SETUP_PROMPT_CONTENT,

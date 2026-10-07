@@ -336,7 +336,8 @@ const signupCommandDefinitions: Command[] = [
               }),
           ),
         ];
-        const isNone = type.trim().toLowerCase() === INSTANCE_TYPE_NONE_VALUE;
+        const isNone =
+          types.length === 1 && types[0]?.toLowerCase() === INSTANCE_TYPE_NONE_VALUE;
         if (
           !isNone &&
           (types.length === 0 ||
@@ -822,7 +823,8 @@ const signupCommandDefinitions: Command[] = [
           ? `\nI cannot ping ${failedNames.join(", ")}`
           : "";
         await i.editReply({
-          content: `Sent ping through DM - ${message}${failureNotice}`,
+          content: `Sent ping through DM${failureNotice}`.slice(0, 2_000),
+          allowedMentions: { parse: [] },
         });
         return;
       }

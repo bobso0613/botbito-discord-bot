@@ -181,7 +181,8 @@ describe("/ping", () => {
     });
     expect(interaction.deferReply).toHaveBeenCalledTimes(1);
     expect(interaction.editReply).toHaveBeenCalledWith({
-      content: "Sent ping through DM - hello",
+      content: "Sent ping through DM",
+      allowedMentions: { parse: [] },
     });
     expect(interaction.deferReply.mock.invocationCallOrder[0]).toBeLessThan(
       fetchUser.mock.invocationCallOrder[0]!,
@@ -201,7 +202,8 @@ describe("/ping", () => {
 
     expect(send).toHaveBeenCalledTimes(1);
     expect(interaction.editReply).toHaveBeenCalledWith({
-      content: "Sent ping through DM - hello\nI cannot ping Bob",
+      content: "Sent ping through DM\nI cannot ping Bob",
+      allowedMentions: { parse: [] },
     });
   });
 

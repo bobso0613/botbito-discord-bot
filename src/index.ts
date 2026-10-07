@@ -386,4 +386,5 @@ try {
   await client.login(botToken);
 } catch (error) {
   logger.error("Failed to log in to Discord:", error);
+  throw error;
 }

@@ -1,5 +1,7 @@
 import { describe, expect, it, jest } from "@jest/globals";
+import { DISCORD_SETTINGS } from "../config/discord-settings.js";
 import { MessageFlags } from "discord.js";
+import type { InstanceType } from "../constants/cooldowns.js";
 import {
   INSTANCE_TYPE_NONE_VALUE,
   SIGNUP_CANCEL_SETUP_BUTTON_ID,
@@ -204,6 +206,77 @@ describe("signup setup service", () => {
         editReply: jest.fn(),
       } as never);
       expect(sheet.instanceType).toEqual(expected);
+    },
+  );
+
+  it.each([
+    {
+      organizerName: "Organizer",
+      types: Array.from({ length: 24 }, (_, index) => ({
+        name: `Instance Type ${String(index).padStart(2, "0")} Name`,
+        keywords: [],
+        maxAttempts: 1,
+        emoji: "x".repeat(25),
+      })),
+      values: Array.from(
+        { length: 24 },
+        (_, index) => `Instance Type ${String(index).padStart(2, "0")} Name`,
+      ),
+    },
+    {
+      organizerName: "Organizer".repeat(260),
+      types: [
+        {
+          name: "Endless Tower",
+          keywords: ["ET"],
+          maxAttempts: 3,
+          emoji: "🪜",
+        },
+      ],
+      values: ["Endless Tower"],
+    },
+  ])(
+    "rejects instance metadata that exceeds embed limits",
+    async ({ organizerName, types, values }) => {
+      const guildId = "guild-id";
+      const settings =
+        DISCORD_SETTINGS.cooldownInstanceTypesByGuild as Record<
+          string,
+          readonly InstanceType[]
+        >;
+      const previousTypes = settings[guildId];
+      settings[guildId] = types;
+      const key = `${guildId}:channel-id`;
+      const sheet = createSheet();
+      sheet.organizerName = organizerName;
+      pendingSetupDrafts.set(key, sheet);
+      pendingRosterUsers.set(key, "organizer-id");
+      const interaction = {
+        guildId,
+        channelId: "channel-id",
+        user: { id: "organizer-id" },
+        values,
+        deferUpdate: jest.fn(),
+        editReply: jest.fn(),
+      };
+
+      try {
+        await handleSignupInstanceTypeSelect(interaction as never);
+
+        expect(sheet.instanceType).toBeNull();
+        expect(interaction.editReply).toHaveBeenCalledWith(
+          expect.objectContaining({
+            content: expect.stringContaining(
+              "exceed Discord's embed limits",
+            ),
+          }),
+        );
+      } finally {
+        if (previousTypes) settings[guildId] = previousTypes;
+        else delete settings[guildId];
+        pendingSetupDrafts.delete(key);
+        pendingRosterUsers.delete(key);
+      }
     },
   );
 

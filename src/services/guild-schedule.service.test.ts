@@ -1,6 +1,7 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import { ChannelType } from "discord.js";
 import { DISCORD_SETTINGS } from "../config/discord-settings.js";
+import { COOLDOWN_INSTANCE_TYPES } from "../constants/cooldowns.js";
 import { getActiveGuildSchedules } from "./guild-schedule.service.js";
 import type { GuildScheduleTimeWindow } from "../types/guild-schedule.js";
 
@@ -71,6 +72,67 @@ describe("getActiveGuildSchedules", () => {
       expect(schedules[0]?.instanceTypes).toEqual(expected);
     },
   );
+
+  it("recognizes configured custom emoji prefixes in legacy footer metadata", async () => {
+    const guildId = "custom-emoji-test";
+    const types = COOLDOWN_INSTANCE_TYPES.map((type) =>
+      type.name === "Endless Tower"
+        ? { ...type, emoji: "<:et:123>" }
+        : type,
+    );
+    const settings =
+      DISCORD_SETTINGS.cooldownInstanceTypesByGuild as Record<
+        string,
+        typeof types
+      >;
+    settings[guildId] = types;
+    try {
+      const channel = {
+        type: ChannelType.GuildText,
+        id: "channel",
+        parentId: "category",
+        name: "signup",
+        url: "https://discord.com/channels/guild/channel",
+        permissionsFor: jest.fn().mockReturnValue({ has: () => true }),
+        messages: {
+          fetch: jest.fn().mockResolvedValue(
+            new Map([
+              [
+                "message",
+                {
+                  author: { id: DISCORD_SETTINGS.guildScheduleBotIds[0] },
+                  createdTimestamp: 1,
+                  embeds: [
+                    {
+                      title: "Unrelated title",
+                      description:
+                        "Tank - **Alice**\nYour Time: <t:4070905800:F>",
+                      fields: [],
+                      footer: {
+                        text: "Organizer - Alice | <:et:123> Endless Tower",
+                      },
+                    },
+                  ],
+                },
+              ],
+            ]) as never,
+          ),
+        },
+      };
+      const schedules = await getActiveGuildSchedules(
+        {
+          id: guildId,
+          channels: { cache: new Map([["channel", channel]]) },
+        } as never,
+        { displayName: "Alice" } as never,
+        ["category"],
+      );
+
+      expect(schedules[0]?.instanceTypes).toEqual(["Endless Tower"]);
+    } finally {
+      delete settings[guildId];
+    }
+  });
 
   it("returns the newest accessible schedule from each channel, ordered by time", async () => {
     const member = { displayName: "Lucian Blight" };

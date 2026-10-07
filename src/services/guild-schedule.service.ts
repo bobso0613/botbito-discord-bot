@@ -50,16 +50,29 @@ const getEmbedInstanceTypes = (
   if (field) return /^none$/i.test(field.value.trim()) ? [] : [field.value];
   const footer = embed.footer?.text;
   if (footer?.startsWith("Organizer - ")) {
-    const configuredNames = new Set(
-      instanceTypes.flatMap((type) =>
-        [type.name, ...type.keywords].map((name) => name.toLowerCase()),
-      ),
-    );
     const selectedTypes = footer
       .split(" | ")
       .slice(1)
-      .map((value) => value.replace(/^[^\p{L}\p{N}]*/u, "").trim())
-      .filter((value) => configuredNames.has(value.toLowerCase()));
+      .flatMap((value) => {
+        const normalizedValue = value.trim().toLowerCase();
+        const matchedType = instanceTypes.find((type) => {
+          const names = [type.name, ...type.keywords].map((name) =>
+            name.toLowerCase(),
+          );
+          return (
+            names.includes(normalizedValue) ||
+            (value.startsWith(`${type.emoji} `) &&
+              names.includes(value.slice(type.emoji.length).trim().toLowerCase()))
+          );
+        });
+        return matchedType
+          ? [
+              value.startsWith(`${matchedType.emoji} `)
+                ? value.slice(matchedType.emoji.length).trim()
+                : value.trim(),
+            ]
+          : [];
+      });
     return selectedTypes.length ? selectedTypes : undefined;
   }
   return undefined;

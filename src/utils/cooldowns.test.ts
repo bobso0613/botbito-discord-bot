@@ -179,6 +179,39 @@ describe("Cooldowns Utils", () => {
       expect(result.get("Endless Cellar")?.count).toBe(0);
     });
 
+    it("resolves explicit overlapping names exactly", () => {
+      const glastHeim = {
+        name: "Glast Heim",
+        keywords: ["GH"],
+        maxAttempts: 1,
+        emoji: "🏰",
+      };
+      const oldGlastHeim = {
+        name: "Old Glast Heim",
+        keywords: ["OGH"],
+        maxAttempts: 1,
+        emoji: "<:ogh:123>",
+      };
+      const result = countCooldowns(
+        [
+          {
+            title: "Glast Heim",
+            instanceTypes: ["<:ogh:123> Old Glast Heim"],
+            timestamp: "<t:1234567890:F>",
+            channelName: "signups",
+            channelUrl: "https://discord.com/channels/123/456",
+            isSignedUp: true,
+            isReserve: false,
+            guildName: "TestGuild",
+          },
+        ],
+        [glastHeim, oldGlastHeim],
+      );
+
+      expect(result.get("Glast Heim")?.count).toBe(0);
+      expect(result.get("Old Glast Heim")?.count).toBe(1);
+    });
+
     it("should initialize all instance types with 0", () => {
       const schedules: Array<GuildSchedule & { guildName: string }> = [];
       const result = countCooldowns(schedules);
