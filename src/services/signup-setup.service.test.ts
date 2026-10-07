@@ -3,6 +3,7 @@ import { MessageFlags } from "discord.js";
 import {
   INSTANCE_TYPE_NONE_VALUE,
   SIGNUP_CANCEL_SETUP_BUTTON_ID,
+  SIGNUP_INSTANCE_TYPE_BACK_BUTTON_ID,
 } from "../constants/signup.js";
 import type { SignupSheet } from "../types/signup-sheet.js";
 import {
@@ -10,6 +11,7 @@ import {
   buildRosterPromptButtons,
   buildSetupPromptButtons,
   handleSignupInstanceTypeButton,
+  handleSignupInstanceTypeBackButton,
   handleSignupInstanceTypeSelect,
   handleSignupRosterButton,
   parseSetup,
@@ -108,7 +110,7 @@ describe("signup setup service", () => {
     });
   });
 
-  it("shows a Cancel button beneath the instance type menu", async () => {
+  it("shows a Back button beneath the instance type menu", async () => {
     const key = "guild-id:channel-id";
     pendingSetupDrafts.set(key, createSheet());
     pendingRosterUsers.set(key, "organizer-id");
@@ -130,13 +132,35 @@ describe("signup setup service", () => {
             components: [
               expect.objectContaining({
                 data: expect.objectContaining({
-                  custom_id: SIGNUP_CANCEL_SETUP_BUTTON_ID,
-                  label: "Cancel",
+                  custom_id: SIGNUP_INSTANCE_TYPE_BACK_BUTTON_ID,
+                  label: "Back to Setup",
                 }),
               }),
             ],
           }),
         ],
+      }),
+    );
+  });
+
+  it("returns from instance selection to the setup controls", async () => {
+    const key = "guild-id:channel-id";
+    pendingSetupDrafts.set(key, createSheet());
+    pendingRosterUsers.set(key, "organizer-id");
+    const interaction = {
+      guildId: "guild-id",
+      channelId: "channel-id",
+      user: { id: "organizer-id" },
+      deferUpdate: jest.fn(),
+      editReply: jest.fn(),
+    };
+
+    await handleSignupInstanceTypeBackButton(interaction as never);
+
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.any(String),
+        components: [expect.anything()],
       }),
     );
   });
@@ -203,6 +227,20 @@ describe("signup setup service", () => {
         serverTimezone: "GMT+8",
       },
     });
+  });
+
+  it("rejects setup submissions with more than 8 parties", () => {
+    const result = parseSetup(
+      createModalInteraction({
+        title: "Friday Endless Tower",
+        datetime: "10/09 20:00 GMT+8",
+        timezone: "GMT+8",
+        parties: "9",
+        sizes: "1,1,1,1,1,1,1,1,1",
+      }),
+    );
+
+    expect(result).toEqual({ error: "A maximum of 8 parties is allowed." });
   });
 
   it("requires a valid scheduled time when creating a new sheet", () => {

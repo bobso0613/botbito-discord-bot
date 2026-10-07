@@ -17,10 +17,12 @@ import {
 import {
   CHANGE_ALL_MODAL_ID,
   INSTANCE_TYPE_NONE_VALUE,
+  MAX_SIGNUP_PARTIES,
   SETUP_MODAL_ID,
   SETUP_PROMPT_CONTENT,
   SIGNUP_CANCEL_SETUP_BUTTON_ID,
   SIGNUP_EDIT_PARTY_SETUP_BUTTON_ID,
+  SIGNUP_INSTANCE_TYPE_BACK_BUTTON_ID,
   SIGNUP_INSTANCE_TYPE_BUTTON_ID,
   SIGNUP_INSTANCE_TYPE_SELECT_ID,
   SIGNUP_MODAL_ADD_ID,
@@ -166,6 +168,7 @@ export const buildRosterPromptButtons = (): ActionRowBuilder<ButtonBuilder> =>
 
 /**
  * Validates the setup modal fields and builds the resulting sheet.
+ * Setups are limited to eight parties.
  * The datetime field may be blank or `TBD` to keep the schedule unset, except
  * when creating a brand-new sheet (`existingSheet` is `undefined`), where a
  * valid date/time is required.
@@ -191,6 +194,11 @@ export const parseSetup = (
     .getTextInputValue("sizes")
     .split(",")
     .map((value) => Number(value.trim()));
+  if (partyCount > MAX_SIGNUP_PARTIES) {
+    return {
+      error: `A maximum of ${MAX_SIGNUP_PARTIES} parties is allowed.`,
+    };
+  }
   if (partySizes.length !== partyCount) {
     return {
       error: `Number of parties (${partyCount}) must match the number of party sizes (${partySizes.length}). Enter one size for each party, separated by commas, e.g. 12,6.`,
@@ -303,7 +311,7 @@ export const showSetup = async (
             true,
             TextInputStyle.Short,
             existingSheet ? String(existingSheet.partySizes.length) : undefined,
-          ),
+          ).setMaxLength(String(MAX_SIGNUP_PARTIES).length),
         ),
       new LabelBuilder()
         .setLabel("Party sizes, e.g. 12,6,6")
@@ -501,8 +509,36 @@ export const handleSignupInstanceTypeButton = async (
         DISCORD_SETTINGS.cooldownInstanceTypesByGuild[interaction.guildId] ??
           COOLDOWN_INSTANCE_TYPES,
       ),
-      buildRosterPromptButtons(),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(SIGNUP_INSTANCE_TYPE_BACK_BUTTON_ID)
+          .setLabel("Back to Setup")
+          .setStyle(ButtonStyle.Secondary),
+      ),
     ],
+  });
+};
+
+/** Returns from instance selection to the pending setup controls. */
+export const handleSignupInstanceTypeBackButton = async (
+  interaction: ButtonInteraction,
+): Promise<void> => {
+  if (!interaction.guildId || !interaction.channelId) return;
+  const key = signupSheetKey(interaction.guildId, interaction.channelId);
+  if (
+    !pendingSetupDrafts.has(key) ||
+    pendingRosterUsers.get(key) !== interaction.user.id
+  ) {
+    await interaction.reply({
+      content: "This roster setup expired or belongs to another user.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  await interaction.deferUpdate();
+  await interaction.editReply({
+    content: SETUP_PROMPT_CONTENT,
+    components: [buildSetupPromptButtons()],
   });
 };
 

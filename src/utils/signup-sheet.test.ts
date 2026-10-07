@@ -157,6 +157,20 @@ describe("signup-sheet utils", () => {
       expect(parsed?.partySizes).toEqual([1, 2]);
     });
 
+    it("rejects roster edits with more than 8 parties", () => {
+      const slots = Array.from({ length: 9 }, (_, index) =>
+        buildSlot({ number: index + 1, role: "DPS" }),
+      );
+      const roster = slots
+        .map(
+          (_, index) =>
+            `Party ${index + 1}:\n${String(index + 1).padStart(2, "0")}: DPS -`,
+        )
+        .join("\n");
+
+      expect(parseRosterWithPartySizes(roster, slots)).toBeNull();
+    });
+
     it("keeps empty roster slots from gaining an extra dash", () => {
       const slots = [buildSlot({ number: 1, role: "Tank" })];
       const rosterText = getDefaultRoster(slots);

@@ -20,6 +20,11 @@ describe("getActiveGuildSchedules", () => {
       expected: ["ET", "EC"],
     },
     {
+      fields: [],
+      footer: { text: "Organizer - Alice" },
+      expected: undefined,
+    },
+    {
       fields: [{ name: "Instance Type", value: "None" }],
       footer: undefined,
       expected: [],

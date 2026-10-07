@@ -201,6 +201,9 @@ describe("buildSignupSheetEmbed", () => {
   it("omits the instance type from the footer when unset", () => {
     const embed = buildSignupSheetEmbed(buildSheet(), "Guild", null);
     expect(embed.data.footer?.text).toBe("Organizer - Organizer");
+    expect(
+      embed.data.fields?.some((field) => field.name === "Instance Types:"),
+    ).toBe(false);
   });
 
   it("renders both instance types as machine-readable metadata", () => {

@@ -83,6 +83,8 @@ const createInteraction = (
   user: { id: "invoker-1", displayName: "Invoker", tag: "invoker#1234" },
   client: { users: { fetch: fetchUser } },
   reply: jest.fn(),
+  deferReply: jest.fn(),
+  editReply: jest.fn(),
   options: {
     getString: jest.fn((name: string) => {
       if (name === "message") return message;
@@ -96,6 +98,14 @@ const createInteraction = (
 describe("/ping", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  it("limits the message option to 1,000 characters", () => {
+    const messageOption = pingCommand.data
+      .toJSON()
+      .options?.find((option) => option.name === "message");
+
+    expect(messageOption).toMatchObject({ max_length: 1000 });
   });
 
   it.each([
@@ -163,15 +173,19 @@ describe("/ping", () => {
     expect(send).toHaveBeenCalledTimes(2);
     expect(send).toHaveBeenNthCalledWith(1, {
       content:
-        "-# 🔔Ping from **Invoker** re: **Test Run**:\n\nhello\n\n<@user-1>\n-# ping to **All** |  in <#channel-1> | <t:1800000000:F> (<t:1800000000:R>)",
+        "-# 🔔Ping from **Invoker** re: **Test Run**:\n\nhello\n\n<@user-1>\n-# ping to **All** | in <#channel-1> | <t:1800000000:F> (<t:1800000000:R>)",
     });
     expect(send).toHaveBeenNthCalledWith(2, {
       content:
-        "-# 🔔Ping from **Invoker** re: **Test Run**:\n\nhello\n\n<@user-2>\n-# ping to **All** |  in <#channel-1> | <t:1800000000:F> (<t:1800000000:R>)",
+        "-# 🔔Ping from **Invoker** re: **Test Run**:\n\nhello\n\n<@user-2>\n-# ping to **All** | in <#channel-1> | <t:1800000000:F> (<t:1800000000:R>)",
     });
-    expect(interaction.reply).toHaveBeenCalledWith({
-      content: "Sent ping thru DM - hello",
+    expect(interaction.deferReply).toHaveBeenCalledTimes(1);
+    expect(interaction.editReply).toHaveBeenCalledWith({
+      content: "Sent ping through DM - hello",
     });
+    expect(interaction.deferReply.mock.invocationCallOrder[0]).toBeLessThan(
+      fetchUser.mock.invocationCallOrder[0]!,
+    );
   });
 
   it("reports users whose direct messages could not be sent", async () => {
@@ -186,8 +200,8 @@ describe("/ping", () => {
     await pingCommand.execute(interaction as never);
 
     expect(send).toHaveBeenCalledTimes(1);
-    expect(interaction.reply).toHaveBeenCalledWith({
-      content: "Sent ping thru DM - hello\nI cannot ping Bob",
+    expect(interaction.editReply).toHaveBeenCalledWith({
+      content: "Sent ping through DM - hello\nI cannot ping Bob",
     });
   });
 

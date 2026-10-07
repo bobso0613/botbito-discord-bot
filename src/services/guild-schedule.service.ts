@@ -8,6 +8,10 @@ import {
   type TextChannel,
 } from "discord.js";
 import { DISCORD_SETTINGS } from "../config/discord-settings.js";
+import {
+  COOLDOWN_INSTANCE_TYPES,
+  type InstanceType,
+} from "../constants/cooldowns.js";
 import type {
   GuildSchedule,
   GuildScheduleTimeWindow,
@@ -30,11 +34,14 @@ const getEmbedText = (embed: Embed): string =>
     .join("\n");
 
 /**
- * Reads explicit Instance Type(s) fields or the legacy Organizer footer suffixes.
- * None or an empty legacy selection yields []; missing metadata yields undefined
- * so downstream consumers can preserve title-based matching.
+ * Reads explicit Instance Type(s) fields or configured legacy Organizer footer
+ * suffixes. Explicit None yields []; absent or unrecognized footer metadata yields
+ * undefined so downstream consumers can preserve title-based matching.
  */
-const getEmbedInstanceTypes = (embed: Embed): readonly string[] | undefined => {
+const getEmbedInstanceTypes = (
+  embed: Embed,
+  instanceTypes: readonly InstanceType[],
+): readonly string[] | undefined => {
   const field = embed.fields.find((candidate) =>
     /^instance\s*types?\s*:?$/i.test(
       candidate.name.replace(/[*_]/g, "").trim(),
@@ -42,7 +49,19 @@ const getEmbedInstanceTypes = (embed: Embed): readonly string[] | undefined => {
   );
   if (field) return /^none$/i.test(field.value.trim()) ? [] : [field.value];
   const footer = embed.footer?.text;
-  if (footer?.startsWith("Organizer - ")) return footer.split(" | ").slice(1);
+  if (footer?.startsWith("Organizer - ")) {
+    const configuredNames = new Set(
+      instanceTypes.flatMap((type) =>
+        [type.name, ...type.keywords].map((name) => name.toLowerCase()),
+      ),
+    );
+    const selectedTypes = footer
+      .split(" | ")
+      .slice(1)
+      .map((value) => value.replace(/^[^\p{L}\p{N}]*/u, "").trim())
+      .filter((value) => configuredNames.has(value.toLowerCase()));
+    return selectedTypes.length ? selectedTypes : undefined;
+  }
   return undefined;
 };
 
@@ -155,12 +174,16 @@ const getScheduleFromMessage = (
   timeWindow: GuildScheduleTimeWindow | undefined,
   isRoleRestricted: boolean | undefined,
   includePast: boolean,
-  clearedBotIds: Set<string>,
+  options: {
+    clearedBotIds: Set<string>;
+    instanceTypes: readonly InstanceType[];
+  },
 ): GuildSchedule | undefined => {
-  if (clearedBotIds.has(message.author.id) && !timeWindow) return undefined;
+  if (options.clearedBotIds.has(message.author.id) && !timeWindow)
+    return undefined;
   const schedule = message.embeds.flatMap((embed) => {
     const embedText = getEmbedText(embed);
-    const instanceTypes = getEmbedInstanceTypes(embed);
+    const selectedTypes = getEmbedInstanceTypes(embed, options.instanceTypes);
     const timestamp = getActiveScheduleTimestamp(
       embedText,
       timeWindow,
@@ -172,7 +195,9 @@ const getScheduleFromMessage = (
       ? [
           {
             title: embed.title,
-            ...(instanceTypes === undefined ? {} : { instanceTypes }),
+            ...(selectedTypes === undefined
+              ? {}
+              : { instanceTypes: selectedTypes }),
             timestamp,
             channelName: channel.name,
             channelUrl: channel.url,
@@ -188,14 +213,14 @@ const getScheduleFromMessage = (
   })[0];
   if (
     schedule &&
-    (!clearedBotIds.has(message.author.id) ||
+    (!options.clearedBotIds.has(message.author.id) ||
       isPastTimestamp(schedule.timestamp))
   ) {
     return schedule;
   }
   const embedText = message.embeds.map(getEmbedText).join("\n");
   if (clearedScheduleTimePattern.test(embedText)) {
-    clearedBotIds.add(message.author.id);
+    options.clearedBotIds.add(message.author.id);
   }
   return undefined;
 };
@@ -221,6 +246,7 @@ const getNewestChannelSchedule = async (
   timeWindow?: GuildScheduleTimeWindow,
   isRoleRestricted?: boolean,
   includePast = false,
+  instanceTypes: readonly InstanceType[] = COOLDOWN_INSTANCE_TYPES,
 ): Promise<GuildSchedule | undefined> => {
   const displayNamePattern = escapeRegularExpression(member.displayName);
   const clearedBotIds = new Set<string>();
@@ -251,7 +277,7 @@ const getNewestChannelSchedule = async (
         timeWindow,
         isRoleRestricted,
         includePast,
-        clearedBotIds,
+        { clearedBotIds, instanceTypes },
       );
       if (schedule) return schedule;
     }
@@ -320,6 +346,8 @@ export const getActiveGuildSchedules = async (
         timeWindow,
         isRoleRestricted,
         includePast,
+        DISCORD_SETTINGS.cooldownInstanceTypesByGuild[guild.id] ??
+          COOLDOWN_INSTANCE_TYPES,
       );
     }),
   );

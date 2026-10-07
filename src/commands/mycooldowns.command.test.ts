@@ -30,10 +30,74 @@ jest.unstable_mockModule("../utils/interaction-context.js", () => ({
     userAvatarUrl: "https://example.com/avatar.png",
   }),
 }));
-const { myCooldowsCommand, sendMyCooldowns } =
+const { mergeGuildCooldownCounts, myCooldowsCommand, sendMyCooldowns } =
   await import("./mycooldowns.command.js");
 
 describe("my cooldowns command", () => {
+  it("merges exact aliases transitively across guilds without fuzzy matches", () => {
+    const firstType = {
+      name: "Old Glast Heim",
+      keywords: ["OGH"],
+      maxAttempts: 2,
+      emoji: "A",
+    };
+    const bridgeType = {
+      name: "Glast Heim",
+      keywords: ["OGH", "GH"],
+      maxAttempts: 4,
+      emoji: "B",
+    };
+    const lastType = {
+      name: "Tower",
+      keywords: ["GH"],
+      maxAttempts: 6,
+      emoji: "C",
+    };
+    const hardType = {
+      name: "Old Glast Heim Hard",
+      keywords: ["OGHH"],
+      maxAttempts: 3,
+      emoji: "D",
+    };
+    const bridgeHardType = {
+      name: "Glast Heim Hard",
+      keywords: ["OGHH", "GHH"],
+      maxAttempts: 5,
+      emoji: "E",
+    };
+    const result = mergeGuildCooldownCounts([
+      {
+        instanceTypes: [firstType, hardType],
+        counts: new Map([
+          [firstType.name, { type: firstType, count: 1 }],
+          [hardType.name, { type: hardType, count: 2 }],
+        ]),
+      },
+      {
+        instanceTypes: [bridgeType, bridgeHardType],
+        counts: new Map([
+          [bridgeType.name, { type: bridgeType, count: 3 }],
+          [bridgeHardType.name, { type: bridgeHardType, count: 4 }],
+        ]),
+      },
+      {
+        instanceTypes: [lastType],
+        counts: new Map([[lastType.name, { type: lastType, count: 5 }]]),
+      },
+    ]);
+
+    expect(result.get("Old Glast Heim")).toMatchObject({
+      count: 9,
+      type: { maxAttempts: 6 },
+    });
+    expect(result.get("Old Glast Heim Hard")).toMatchObject({
+      count: 6,
+      type: { maxAttempts: 5 },
+    });
+    expect(result.has("Glast Heim")).toBe(false);
+    expect(result.has("Tower")).toBe(false);
+  });
+
   it("merges cross-guild aliases and counts a combined metadata run for both instances", async () => {
     const schedule = {
       title: "Friday run",

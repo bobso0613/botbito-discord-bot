@@ -31,9 +31,19 @@ describe("help command", () => {
       expected: [
         "source guild",
         "metadata",
-        "run titles",
+        "absent metadata falls back to run-title matching",
         "configured emojis",
         "combined heading",
+        "explicit empty or unrecognized metadata",
+      ],
+    },
+    {
+      command: "/mycooldowns",
+      expected: [
+        "transitively merges types",
+        "match exactly across guilds",
+        "similar names alone do not merge",
+        "highest configured maxAttempts",
       ],
     },
     {
@@ -43,6 +53,18 @@ describe("help command", () => {
         "Endless Tower, Endless Cellar",
         "None clears",
         "multiple types",
+      ],
+    },
+    {
+      command: "/newrun",
+      expected: ["up to 8 parties"],
+    },
+    {
+      command: "/ping",
+      expected: [
+        "up to 1,000 characters",
+        "DM delivery acknowledges first",
+        "maximum 1,000 characters",
       ],
     },
   ])(

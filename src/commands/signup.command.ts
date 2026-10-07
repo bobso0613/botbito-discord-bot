@@ -12,7 +12,10 @@ import {
   SIGNUP_GUILD_IDS,
 } from "../config/discord-settings.js";
 import { COOLDOWN_INSTANCE_TYPES } from "../constants/cooldowns.js";
-import { INSTANCE_TYPE_NONE_VALUE } from "../constants/signup.js";
+import {
+  INSTANCE_TYPE_NONE_VALUE,
+  MAX_PING_MESSAGE_LENGTH,
+} from "../constants/signup.js";
 import {
   executeAdd,
   executeCharNote,
@@ -308,30 +311,45 @@ const signupCommandDefinitions: Command[] = [
           .setName("type")
           .setDescription("Instance types, separated by commas, or None")
           .setRequired(true)
+          .setMaxLength(100)
           .setAutocomplete(true),
       ) as SlashCommandBuilder,
     execute: async (i) => {
       await update(i, (s) => {
         const type = i.options.getString("type", true);
-        const types = [
-          ...new Set(type.split(",").map((value) => value.trim())),
-        ];
         const configuredTypes = i.guildId
           ? (DISCORD_SETTINGS.cooldownInstanceTypesByGuild[i.guildId] ??
             COOLDOWN_INSTANCE_TYPES)
           : COOLDOWN_INSTANCE_TYPES;
+        const types = [
+          ...new Set(
+            type
+              .split(",")
+              .map((value) => value.trim())
+              .filter(Boolean)
+              .map((value) => {
+                const index = /^~([\da-z]+)$/i.exec(value);
+                return index
+                  ? (configuredTypes[Number.parseInt(index[1]!, 36)]?.name ??
+                      value)
+                  : value;
+              }),
+          ),
+        ];
+        const isNone = type.trim().toLowerCase() === INSTANCE_TYPE_NONE_VALUE;
         if (
-          type !== INSTANCE_TYPE_NONE_VALUE &&
-          types.some(
-            (name) =>
-              !configuredTypes.some(
-                (instanceType) => instanceType.name === name,
-              ),
-          )
+          !isNone &&
+          (types.length === 0 ||
+            types.some(
+              (name) =>
+                !configuredTypes.some(
+                  (instanceType) => instanceType.name === name,
+                ),
+            ))
         ) {
           return "That instance type is not configured for this guild.";
         }
-        if (type === INSTANCE_TYPE_NONE_VALUE) s.instanceType = null;
+        if (isNone) s.instanceType = null;
         else s.instanceType = types.length > 1 ? types : types[0];
         return null;
       });
@@ -698,7 +716,11 @@ const signupCommandDefinitions: Command[] = [
       .setName("ping")
       .setDescription("Ping signed-up players")
       .addStringOption((o) =>
-        o.setName("message").setDescription("Message").setRequired(true),
+        o
+          .setName("message")
+          .setDescription("Message")
+          .setRequired(true)
+          .setMaxLength(MAX_PING_MESSAGE_LENGTH),
       )
       .addStringOption((o) =>
         o
@@ -759,7 +781,7 @@ const signupCommandDefinitions: Command[] = [
       const mentions = ids.map((id) => `<@${id}>`).join(" ");
       const dmDetails =
         where === "dm"
-          ? ` |  in <#${s.channelId}> | ${formatScheduleNotice(s.timestamp)}`
+          ? ` | in <#${s.channelId}> | ${formatScheduleNotice(s.timestamp)}`
           : "";
       const formatPingContent = (recipientMentions: string): string =>
         where === "dm"
@@ -767,6 +789,7 @@ const signupCommandDefinitions: Command[] = [
           : `-# 🔔Ping from **${i.user.displayName}**:\n\n${message}\n\n${recipientMentions}\n-# ping to **${whichLabels[which] ?? which}** | re: **${s.title}**`;
 
       if (where === "dm") {
+        await i.deferReply();
         const failedUserIds = (
           await Promise.all(
             ids.map(async (id) => {
@@ -798,8 +821,8 @@ const signupCommandDefinitions: Command[] = [
         const failureNotice = failedNames.length
           ? `\nI cannot ping ${failedNames.join(", ")}`
           : "";
-        await i.reply({
-          content: `Sent ping thru DM - ${message}${failureNotice}`,
+        await i.editReply({
+          content: `Sent ping through DM - ${message}${failureNotice}`,
         });
         return;
       }
@@ -836,7 +859,7 @@ const signupCommandDefinitions: Command[] = [
   },
 ];
 
-/** Responds with instance types configured for the guild running /setinstancetype. */
+/** Responds with compact autocomplete values for configured instance types. */
 export const handleSetInstanceTypeAutocomplete = async (
   interaction: AutocompleteInteraction,
 ): Promise<void> => {
@@ -847,30 +870,39 @@ export const handleSetInstanceTypeAutocomplete = async (
   const parts = input.split(",");
   const focused = (parts.pop() ?? "").trim().toLowerCase();
   const prefix = parts.map((part) => part.trim()).filter(Boolean);
+  const instanceTypes = source ?? COOLDOWN_INSTANCE_TYPES;
+  const prefixNames = prefix.map((part) => {
+    const index = /^~([\da-z]+)$/i.exec(part);
+    return index
+      ? (instanceTypes[Number.parseInt(index[1]!, 36)]?.name ?? part)
+      : part;
+  });
   await interaction.respond([
     ...(prefix.length === 0
       ? [{ name: "None", value: INSTANCE_TYPE_NONE_VALUE }]
       : []),
-    ...(source ?? COOLDOWN_INSTANCE_TYPES)
-      .filter(
-        (type) =>
-          type.name !== "Others" &&
-          !prefix.includes(type.name) &&
-          type.name.toLowerCase().includes(focused),
+    ...instanceTypes
+      .flatMap((type, index) =>
+        type.name !== "Others" &&
+        !prefixNames.includes(type.name) &&
+        type.name.toLowerCase().includes(focused)
+          ? [
+              {
+                name: [...prefixNames, type.name].join(", ").slice(0, 100),
+                value: [...prefix, `~${index.toString(36)}`].join(", "),
+              },
+            ]
+          : [],
       )
       .slice(0, 24)
-      .map((type) => {
-        const value = [...prefix, type.name].join(", ");
-        return { name: value, value };
-      })
       .filter((choice) => choice.value.length <= 100),
   ]);
 };
 
 /**
- * Signup-sheet commands. `/ping` defaults to the Main Roster in-channel;
- * selecting Direct Message sends one message per unique participant and
- * reports delivery failures in the signup channel.
+ * Signup-sheet commands. `/ping` accepts up to `MAX_PING_MESSAGE_LENGTH`
+ * characters and defaults to the Main Roster in-channel. Direct Messages are
+ * sent once per unique participant after the interaction is acknowledged.
  */
 export const signupCommands: Command[] =
   signupCommandDefinitions.map(restrictToGuild);

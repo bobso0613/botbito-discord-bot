@@ -32,6 +32,7 @@ jest.unstable_mockModule("../services/signup-sheet.service.js", () => ({
 
 const {
   signupCommands,
+  handleSetInstanceTypeAutocomplete,
   parseSetup,
   handleSignupAddButton,
   handleSignupRemoveButton,
@@ -170,6 +171,58 @@ describe("/setinstancetype", () => {
       expect.objectContaining({
         instanceType: ["Endless Tower", "Endless Cellar"],
       }),
+    );
+  });
+
+  it("ignores empty trailing type entries", async () => {
+    getSignupSheet.mockResolvedValue(buildSheet());
+    const interaction = createInteraction();
+    interaction.options.getString.mockReturnValue("Endless Tower,");
+    const command = signupCommands.find(
+      (candidate) => candidate.data.name === "setinstancetype",
+    )!;
+
+    await command.execute(interaction as never);
+
+    expect(saveSignupSheet).toHaveBeenCalledWith(
+      expect.objectContaining({ instanceType: "Endless Tower" }),
+    );
+  });
+
+  it("accepts compact autocomplete selections", async () => {
+    getSignupSheet.mockResolvedValue(buildSheet());
+    const interaction = createInteraction();
+    interaction.options.getString.mockReturnValue("~0,~1");
+    const command = signupCommands.find(
+      (candidate) => candidate.data.name === "setinstancetype",
+    )!;
+
+    await command.execute(interaction as never);
+
+    expect(saveSignupSheet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instanceType: ["Endless Tower", "Endless Cellar"],
+      }),
+    );
+  });
+
+  it("keeps autocomplete choice values compact as selections accumulate", async () => {
+    const interaction = {
+      guildId: "guild-1",
+      options: { getFocused: jest.fn().mockReturnValue("~0,") },
+      respond: jest.fn(),
+    };
+
+    await handleSetInstanceTypeAutocomplete(interaction as never);
+
+    const choices = interaction.respond.mock.calls[0]![0] as Array<{
+      name: string;
+      value: string;
+    }>;
+    expect(choices.length).toBeGreaterThan(0);
+    expect(choices.every((choice) => choice.value.length <= 100)).toBe(true);
+    expect(choices.every((choice) => choice.value.startsWith("~0,"))).toBe(
+      true,
     );
   });
 });

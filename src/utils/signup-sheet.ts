@@ -1,5 +1,6 @@
 import { randomInt } from "node:crypto";
 import type { Message, User } from "discord.js";
+import { MAX_SIGNUP_PARTIES } from "../constants/signup.js";
 import type { SignupSheet, SignupSlot } from "../types/signup-sheet.js";
 
 /**
@@ -264,6 +265,12 @@ type RosterStructure = {
   partySizes: number[] | null;
 };
 
+const isValidRosterPartyNumber = (
+  partyNumber: number,
+  expectedPartyNumber: number,
+): boolean =>
+  partyNumber === expectedPartyNumber && partyNumber <= MAX_SIGNUP_PARTIES;
+
 const parseRosterStructure = (roster: string): RosterStructure | null => {
   const slotLines: string[] = [];
   const partySizes: number[] = [];
@@ -278,7 +285,8 @@ const parseRosterStructure = (roster: string): RosterStructure | null => {
       currentPartySize += 1;
       continue;
     }
-    if (partyNumber !== expectedPartyNumber) return null;
+    if (!isValidRosterPartyNumber(partyNumber, expectedPartyNumber))
+      return null;
     if (hasPartyHeaders && currentPartySize === 0) return null;
     if (hasPartyHeaders) partySizes.push(currentPartySize);
     hasPartyHeaders = true;
