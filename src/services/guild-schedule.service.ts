@@ -248,9 +248,12 @@ const getScheduleFromMessage = (
       timestamp === `<t:${storedSheet.timestamp}:F>`
         ? storedSheet
         : null;
-    const selectedTypes = matchingSheet
-      ? [matchingSheet.instanceType ?? []].flat()
-      : getEmbedInstanceTypes(embed, options.instanceTypes);
+    let selectedTypes = getEmbedInstanceTypes(embed, options.instanceTypes);
+    if (matchingSheet) {
+      selectedTypes = matchingSheet.instanceType
+        ? [matchingSheet.instanceType].flat()
+        : undefined;
+    }
     return timestamp && embed.title
       ? [
           {

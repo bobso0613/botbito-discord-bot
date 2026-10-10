@@ -83,7 +83,7 @@ describe("getActiveGuildSchedules", () => {
       reserve: false,
       memberId: "member",
       messageId: "sheet-message",
-      expected: 0,
+      expected: 2,
       instanceType: null,
     },
     {
@@ -206,7 +206,9 @@ describe("getActiveGuildSchedules", () => {
       );
       expect(schedules[0]?.instanceTypes).toEqual(
         messageId === "sheet-message"
-          ? [instanceType ?? []].flat()
+          ? instanceType
+            ? [instanceType].flat()
+            : undefined
           : ["Endless Cellar"],
       );
       if (expected)
@@ -225,6 +227,7 @@ describe("getActiveGuildSchedules", () => {
         ["Endless Tower"],
       );
       expect(counts.get("Endless Tower")?.count).toBe(expected);
+      expect(counts.get("Others")?.count ?? 0).toBe(0);
     },
   );
 
