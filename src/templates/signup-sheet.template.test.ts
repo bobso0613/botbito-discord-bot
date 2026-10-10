@@ -206,17 +206,15 @@ describe("buildSignupSheetEmbed", () => {
     ).toBe(false);
   });
 
-  it("renders both instance types as machine-readable metadata", () => {
+  it("lists both instance types only in the organizer footer", () => {
     const embed = buildSignupSheetEmbed(
       buildSheet({ instanceType: ["Endless Tower", "Endless Cellar"] }),
       "Guild",
       null,
     );
-    const field = embed.data.fields?.find(
-      (candidate) => candidate.name === "Instance Types:",
-    );
-    expect(field?.value).toContain("Endless Tower");
-    expect(field?.value).toContain("Endless Cellar");
+    expect(
+      embed.data.fields?.some((field) => field.name === "Instance Types:"),
+    ).toBe(false);
     expect(embed.data.footer?.text).toContain("Endless Tower");
     expect(embed.data.footer?.text).toContain("Endless Cellar");
   });

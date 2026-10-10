@@ -159,6 +159,94 @@ const createInteraction = (
   },
 });
 
+describe("/add guild display names", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    pendingAddConfirmations.clear();
+  });
+
+  it.each([
+    { input: "2", mentioned: false, occupied: false, fetchFails: false },
+    { input: "reserve", mentioned: false, occupied: false, fetchFails: false },
+    {
+      input: "2 <@100000000000000001>",
+      mentioned: true,
+      occupied: false,
+      fetchFails: false,
+    },
+    { input: "2", mentioned: false, occupied: true, fetchFails: false },
+    { input: "2", mentioned: false, occupied: false, fetchFails: true },
+  ])(
+    "uses the guild name with a Discord fallback: $input, occupied=$occupied, fetchFails=$fetchFails",
+    async ({ input, mentioned, occupied, fetchFails }) => {
+      getSignupSheet.mockResolvedValue(
+        buildSheet({
+          slots: [
+            {
+              number: 2,
+              role: "DPS",
+              signupUserId: occupied ? "other" : null,
+              signupDisplayName: occupied ? "Other" : null,
+              charNote: null,
+            },
+          ],
+          reserves: [],
+        }),
+      );
+      const interaction = createInteraction(input);
+      const targetId = mentioned ? "100000000000000001" : interaction.user.id;
+      const fetchMember = jest.fn(async () => {
+        if (fetchFails) throw new Error("Member unavailable");
+        return { displayName: "Server Nickname" };
+      });
+      const extendedInteraction = {
+        ...interaction,
+        guild: { ...interaction.guild, members: { fetch: fetchMember } },
+        client: {
+          users: {
+            fetch: jest.fn(async () => ({
+              id: targetId,
+              displayName: "Discord Name",
+            })),
+          },
+        },
+      };
+      await addCommand.execute(extendedInteraction as never);
+      const expectedName = fetchFails ? "Invoker" : "Server Nickname";
+      expect(fetchMember).toHaveBeenCalledWith(targetId);
+      if (occupied) {
+        expect(
+          pendingAddConfirmations.get(
+            addConfirmationKey("guild-1", "channel-1", interaction.user.id),
+          ),
+        ).toMatchObject({ userId: targetId, displayName: expectedName });
+      } else if (input === "reserve") {
+        expect(saveSignupSheet).toHaveBeenCalledWith(
+          expect.objectContaining({
+            reserves: [
+              expect.objectContaining({
+                userId: targetId,
+                displayName: expectedName,
+              }),
+            ],
+          }),
+        );
+      } else {
+        expect(saveSignupSheet).toHaveBeenCalledWith(
+          expect.objectContaining({
+            slots: [
+              expect.objectContaining({
+                signupUserId: targetId,
+                signupDisplayName: expectedName,
+              }),
+            ],
+          }),
+        );
+      }
+    },
+  );
+});
+
 describe("/setinstancetype", () => {
   it("saves both configured cooldown types from comma-separated input", async () => {
     getSignupSheet.mockResolvedValue(buildSheet());

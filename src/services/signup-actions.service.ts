@@ -1153,14 +1153,25 @@ const replyAddInputError = async (
 const resolveAddTarget = async (
   interaction: SignupInteraction,
   mentionText: string,
-): Promise<User | null> => {
-  if (!mentionText) return interaction.user;
-  return resolveTargetUser(interaction, mentionText);
+): Promise<Pick<User, "id" | "displayName"> | null> => {
+  const user = mentionText
+    ? await resolveTargetUser(interaction, mentionText)
+    : interaction.user;
+  if (!user) return null;
+  const guild =
+    interaction.guild ??
+    (interaction.guildId
+      ? await interaction.client?.guilds
+          ?.fetch(interaction.guildId)
+          .catch(() => null)
+      : null);
+  const member = await guild?.members?.fetch(user.id).catch(() => null);
+  return { id: user.id, displayName: member?.displayName ?? user.displayName };
 };
 
 const addUserToReserve = async (
   interaction: SignupInteraction,
-  targetUser: User,
+  targetUser: Pick<User, "id" | "displayName">,
   options: AddOptions,
 ): Promise<void> => {
   const sheetAfterUpdate = await update(interaction, (sheet) => {
@@ -1188,7 +1199,7 @@ const addUserToReserve = async (
 
 const addUserToOpenSlots = async (
   interaction: SignupInteraction,
-  targetUser: User,
+  targetUser: Pick<User, "id" | "displayName">,
   slotNumbers: number[],
   options: AddOptions,
   randomSlotNumber?: number,
@@ -1229,7 +1240,7 @@ const addUserToOpenSlots = async (
 
 const requestAddConfirmation = async (
   interaction: SignupInteraction,
-  targetUser: User,
+  targetUser: Pick<User, "id" | "displayName">,
   slotNumbers: number[],
   occupiedSlotNumbers: number[],
   options: AddOptions,

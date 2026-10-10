@@ -96,8 +96,7 @@ const formatReserve = (
 /**
  * Builds the full signup sheet embed: notes, one field per party with its
  * slots, the reserve list, fill and TBC counts as inline fields, the schedule,
- * and an Instance Types field using configured emojis when selected.
- * The organizer footer also lists selected types for legacy metadata readers.
+ * with selected instance types listed only in the organizer footer.
  */
 export const buildSignupSheetEmbed = (
   sheet: SignupSheet,
@@ -169,13 +168,6 @@ export const buildSignupSheetEmbed = (
         .join(" | "),
       iconURL: sheet.organizerAvatarUrl,
     });
-  if (sheet.instanceType) {
-    embed.addFields({
-      name: "Instance Types:",
-      value: formatInstanceType(sheet.instanceType, instanceTypes) ?? "None",
-      inline: false,
-    });
-  }
   if (sheet.notes?.trim()) {
     embed.setDescription(`Important Notes:\n${sheet.notes.trim()}`);
   }

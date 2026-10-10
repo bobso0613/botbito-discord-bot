@@ -16,6 +16,8 @@ import type {
   GuildSchedule,
   GuildScheduleTimeWindow,
 } from "../types/guild-schedule.js";
+import type { SignupSheet } from "../types/signup-sheet.js";
+import { getSignupSheet } from "./signup-sheet.service.js";
 
 const scheduleTimestampPattern = /Your\s+Time:\s*(<t:(\d+):F>)/i;
 const clearedScheduleTimePattern = /Your\s+Time:\s*TBD\b/i;
@@ -190,6 +192,8 @@ const getScheduleFromMessage = (
   options: {
     clearedBotIds: Set<string>;
     instanceTypes: readonly InstanceType[];
+    signupSheet: SignupSheet | null;
+    memberId: string;
   },
 ): GuildSchedule | undefined => {
   if (options.clearedBotIds.has(message.author.id) && !timeWindow)
@@ -202,8 +206,25 @@ const getScheduleFromMessage = (
       timeWindow,
       includePast,
     );
-    const isReserve = isMemberReserve(embedText, displayNamePattern);
-    const isTbc = isMemberTbc(embedText, displayNamePattern);
+    const storedSheet = options.signupSheet;
+    const matchingSheet =
+      storedSheet?.messageId &&
+      storedSheet.messageId === message.id &&
+      timestamp === `<t:${storedSheet.timestamp}:F>`
+        ? storedSheet
+        : null;
+    const storedSlots = matchingSheet?.slots.filter(
+      (slot) => slot.signupUserId === options.memberId,
+    );
+    const storedReserve = matchingSheet?.reserves.find(
+      (reserve) => reserve.userId === options.memberId,
+    );
+    const isReserve = matchingSheet
+      ? Boolean(storedReserve)
+      : isMemberReserve(embedText, displayNamePattern);
+    const isTbc = matchingSheet
+      ? Boolean(storedReserve?.isTbc || storedSlots?.some((slot) => slot.isTbc))
+      : isMemberTbc(embedText, displayNamePattern);
     return timestamp && embed.title
       ? [
           {
@@ -215,10 +236,17 @@ const getScheduleFromMessage = (
             channelName: channel.name,
             channelUrl: channel.url,
             isSignedUp:
-              !isReserve && isMemberSignedUp(embedText, displayNamePattern),
+              !isReserve &&
+              (matchingSheet
+                ? Boolean(storedSlots?.length)
+                : isMemberSignedUp(embedText, displayNamePattern)),
             isReserve,
             ...(isTbc ? { isTbc: true } : {}),
-            charNote: getMemberCharNote(embedText, displayNamePattern),
+            charNote: matchingSheet
+              ? (storedReserve?.charNote ??
+                storedSlots?.[0]?.charNote ??
+                undefined)
+              : getMemberCharNote(embedText, displayNamePattern),
             isRoleRestricted,
           },
         ]
@@ -261,8 +289,22 @@ const getNewestChannelSchedule = async (
   includePast = false,
   instanceTypes: readonly InstanceType[] = COOLDOWN_INSTANCE_TYPES,
 ): Promise<GuildSchedule | undefined> => {
-  const displayNamePattern = escapeRegularExpression(member.displayName);
+  const displayNamePattern = `(?:${[
+    ...new Set(
+      [
+        member.displayName,
+        member.user?.globalName,
+        member.user?.username,
+        ...(member.id ? [`<@${member.id}>`, `<@!${member.id}>`] : []),
+      ].filter((name): name is string => Boolean(name)),
+    ),
+  ]
+    .map(escapeRegularExpression)
+    .join("|")})`;
   const clearedBotIds = new Set<string>();
+  const signupSheet = channel.guild?.id
+    ? await getSignupSheet(channel.guild.id, channel.id)
+    : null;
   let before: string | undefined;
 
   for (let page = 0; page < MAX_SCHEDULE_MESSAGE_PAGES; page++) {
@@ -290,7 +332,7 @@ const getNewestChannelSchedule = async (
         timeWindow,
         isRoleRestricted,
         includePast,
-        { clearedBotIds, instanceTypes },
+        { clearedBotIds, instanceTypes, signupSheet, memberId: member.id },
       );
       if (schedule) return schedule;
     }
