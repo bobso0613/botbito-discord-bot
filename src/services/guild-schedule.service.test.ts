@@ -6,11 +6,11 @@ import type { GuildScheduleTimeWindow } from "../types/guild-schedule.js";
 import { countCooldowns } from "../utils/cooldowns.js";
 import type { SignupSheet } from "../types/signup-sheet.js";
 
-const getSignupSheet = jest
-  .fn<() => Promise<SignupSheet | null>>()
-  .mockResolvedValue(null);
+const getGuildSignupSheets = jest
+  .fn<(guildId: string) => Promise<Record<string, SignupSheet>>>()
+  .mockResolvedValue({});
 jest.unstable_mockModule("./signup-sheet.service.js", () => ({
-  getSignupSheet,
+  getGuildSignupSheets,
 }));
 const { getActiveGuildSchedules } = await import("./guild-schedule.service.js");
 
@@ -18,7 +18,74 @@ const getDiscordTimestamp = (date: string): string =>
   `<t:${Math.floor(new Date(date).getTime() / 1_000)}:F>`;
 
 describe("getActiveGuildSchedules", () => {
+  it.each([null, new Error("read failed"), new SyntaxError("invalid JSON")])(
+    "reads storage once for multiple channels and falls back on errors: %s",
+    async (error) => {
+      getGuildSignupSheets.mockClear();
+      if (error) getGuildSignupSheets.mockRejectedValueOnce(error);
+      else getGuildSignupSheets.mockResolvedValueOnce({});
+      const channels = ["first", "second"].map(
+        (id) =>
+          [
+            id,
+            {
+              id,
+              type: ChannelType.GuildText,
+              parentId: "category",
+              name: id,
+              url: `https://discord.com/channels/guild/${id}`,
+              permissionsFor: () => ({ has: () => true }),
+              messages: {
+                fetch: jest.fn().mockResolvedValue(
+                  new Map([
+                    [
+                      "message",
+                      {
+                        author: { id: DISCORD_SETTINGS.guildScheduleBotIds[0] },
+                        createdTimestamp: 1,
+                        embeds: [
+                          {
+                            title: "Endless Tower",
+                            description:
+                              "Tank - **Alice**\nYour Time: <t:4070905800:F>",
+                            fields: [],
+                          },
+                        ],
+                      },
+                    ],
+                  ]) as never,
+                ),
+              },
+            },
+          ] as const,
+      );
+      const schedules = await getActiveGuildSchedules(
+        { id: "guild", channels: { cache: new Map(channels) } } as never,
+        { displayName: "Alice" } as never,
+        ["category"],
+      );
+      expect(getGuildSignupSheets).toHaveBeenCalledTimes(1);
+      expect(getGuildSignupSheets).toHaveBeenCalledWith("guild");
+      expect(schedules).toHaveLength(2);
+      expect(schedules.every((schedule) => schedule.isSignedUp)).toBe(true);
+    },
+  );
+
   it.each([
+    {
+      reserve: false,
+      memberId: "member",
+      messageId: "sheet-message",
+      expected: 2,
+      instanceType: "Endless Tower",
+    },
+    {
+      reserve: false,
+      memberId: "member",
+      messageId: "sheet-message",
+      expected: 0,
+      instanceType: null,
+    },
     {
       reserve: false,
       memberId: "member",
@@ -45,9 +112,16 @@ describe("getActiveGuildSchedules", () => {
     },
   ])(
     "counts persisted signups by ID without relying on names: reserve=$reserve, member=$memberId, message=$messageId",
-    async ({ reserve, memberId, messageId, expected }) => {
+    async ({
+      reserve,
+      memberId,
+      messageId,
+      expected,
+      instanceType = ["Endless Tower"],
+    }) => {
       const sheet = {
         messageId: "sheet-message",
+        instanceType,
         timestamp: 4070905800,
         slots: reserve
           ? []
@@ -70,7 +144,7 @@ describe("getActiveGuildSchedules", () => {
             ]
           : [],
       } as SignupSheet;
-      getSignupSheet.mockResolvedValueOnce(sheet);
+      getGuildSignupSheets.mockResolvedValueOnce({ channel: sheet });
       const channel = {
         guild: { id: "guild" },
         type: ChannelType.GuildText,
@@ -92,6 +166,7 @@ describe("getActiveGuildSchedules", () => {
                     {
                       title: "Endless Tower 2x",
                       description: "Your Time: <t:4070905800:F>",
+                      footer: { text: "Organizer - Alice | Endless Cellar" },
                       fields: [
                         {
                           name: reserve ? "Reserves:" : "Party 1:",
@@ -107,7 +182,10 @@ describe("getActiveGuildSchedules", () => {
         },
       };
       const schedules = await getActiveGuildSchedules(
-        { channels: { cache: new Map([["channel", channel]]) } } as never,
+        {
+          id: "guild",
+          channels: { cache: new Map([["channel", channel]]) },
+        } as never,
         {
           id: memberId,
           displayName: "New Nickname",
@@ -123,7 +201,14 @@ describe("getActiveGuildSchedules", () => {
       const personalSchedules = schedules.filter(
         (schedule) => schedule.isSignedUp || schedule.isReserve,
       );
-      expect(personalSchedules).toHaveLength(expected ? 1 : 0);
+      expect(personalSchedules).toHaveLength(
+        memberId === "member" && messageId === "sheet-message" ? 1 : 0,
+      );
+      expect(schedules[0]?.instanceTypes).toEqual(
+        messageId === "sheet-message"
+          ? [instanceType ?? []].flat()
+          : ["Endless Cellar"],
+      );
       if (expected)
         expect(personalSchedules[0]).toMatchObject({
           isSignedUp: !reserve,
@@ -147,6 +232,18 @@ describe("getActiveGuildSchedules", () => {
     { name: "Keiriatus", role: "High Priest", signedUp: true, reserve: false },
     { name: "Keira", role: "High Priest", signedUp: true, reserve: false },
     { name: "keira.user", role: "Reserve", signedUp: false, reserve: true },
+    {
+      name: "Keira** (wrong note)\nReserve - **Keiriatus",
+      role: "High Priest",
+      signedUp: false,
+      reserve: true,
+    },
+    {
+      name: "Keira** (wrong note)\nReserve - **<@123456789012345678>",
+      role: "High Priest",
+      signedUp: false,
+      reserve: true,
+    },
     {
       name: "<@123456789012345678>",
       role: "High Priest",

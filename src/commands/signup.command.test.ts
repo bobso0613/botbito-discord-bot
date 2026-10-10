@@ -382,7 +382,7 @@ describe("/setinstancetype", () => {
     );
   });
 
-  it("rejects configured instance types that would exceed embed field limits", async () => {
+  it("rejects configured instance types that would exceed the footer limit", async () => {
     const mutableTypeConfigs =
       DISCORD_SETTINGS.cooldownInstanceTypesByGuild as Record<
         string,
@@ -390,7 +390,7 @@ describe("/setinstancetype", () => {
       >;
     const originalTypes = mutableTypeConfigs["guild-1"];
     const hadGuildConfig = Object.hasOwn(mutableTypeConfigs, "guild-1");
-    const longName = "A".repeat(1_100);
+    const longName = "A".repeat(2_049);
     mutableTypeConfigs["guild-1"] = [
       { name: longName, keywords: [], maxAttempts: 1, emoji: "" },
     ];
@@ -417,7 +417,7 @@ describe("/setinstancetype", () => {
     );
   });
 
-  it("does not save instance types that exceed the embed field limit", async () => {
+  it("does not save instance types that exceed the footer limit", async () => {
     const mutableTypeConfigs =
       DISCORD_SETTINGS.cooldownInstanceTypesByGuild as Record<
         string,
@@ -425,7 +425,7 @@ describe("/setinstancetype", () => {
       >;
     const originalTypes = mutableTypeConfigs["guild-1"];
     const hadGuildConfig = Object.hasOwn(mutableTypeConfigs, "guild-1");
-    const longName = "B".repeat(1_100);
+    const longName = "B".repeat(2_049);
     mutableTypeConfigs["guild-1"] = [
       { name: longName, keywords: [], maxAttempts: 1, emoji: "" },
     ];
@@ -1353,6 +1353,49 @@ describe("signup modal submissions for action buttons", () => {
 });
 
 describe("/swap", () => {
+  it.each(["2", "random"])(
+    "uses the server nickname when joining %s and in self-notices",
+    async (first) => {
+      getSignupSheet.mockResolvedValue(
+        buildSheet({
+          slots: [
+            {
+              number: 2,
+              role: "DPS",
+              signupUserId: null,
+              signupDisplayName: null,
+              charNote: null,
+            },
+          ],
+          reserves: [],
+        }),
+      );
+      const interaction = createInteraction();
+      await swapCommand.execute({
+        ...interaction,
+        guild: {
+          ...interaction.guild,
+          members: {
+            fetch: jest.fn(async () => ({ displayName: "Server Nickname" })),
+          },
+        },
+        options: {
+          getString: (name: string) => (name === "first" ? first : null),
+        },
+      } as never);
+      expect(saveSignupSheet).toHaveBeenCalledWith(
+        expect.objectContaining({
+          slots: [
+            expect.objectContaining({ signupDisplayName: "Server Nickname" }),
+          ],
+        }),
+      );
+      expect(interaction.followUp).toHaveBeenCalledWith({
+        content: expect.stringContaining("**Server Nickname** swapped"),
+      });
+    },
+  );
+
   const createSwapInteraction = (
     first: string,
     second: string | null = null,

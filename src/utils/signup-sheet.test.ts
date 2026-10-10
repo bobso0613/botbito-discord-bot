@@ -59,23 +59,23 @@ describe("signup-sheet utils", () => {
       emoji: "✨",
     };
 
-    it("accepts instance names that fit both Discord metadata limits", () => {
+    it("accepts instance names that fit the Discord footer limit", () => {
       expect(
         validateInstanceTypeEmbedLimits([type.name], "Organizer", [type]),
       ).toBeNull();
     });
 
-    it("rejects formatted instance fields over 1,024 characters", () => {
+    it("accepts instance lists over 1,024 characters that fit the footer", () => {
       const longType = { ...type, name: "A".repeat(1_025), emoji: "" };
       expect(
         validateInstanceTypeEmbedLimits([longType.name], "Organizer", [
           longType,
         ]),
-      ).toContain("exceed Discord's embed limits");
+      ).toBeNull();
     });
 
     it("rejects organizer footers over 2,048 characters", () => {
-      const longType = { ...type, name: "A".repeat(1_900), emoji: "" };
+      const longType = { ...type, name: "A".repeat(2_049), emoji: "" };
       expect(
         validateInstanceTypeEmbedLimits([longType.name], "Organizer", [
           longType,
