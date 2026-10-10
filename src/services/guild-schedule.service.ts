@@ -16,6 +16,8 @@ import type {
   GuildSchedule,
   GuildScheduleTimeWindow,
 } from "../types/guild-schedule.js";
+import type { SignupSheet } from "../types/signup-sheet.js";
+import { getGuildSignupSheets } from "./signup-sheet.service.js";
 
 const scheduleTimestampPattern = /Your\s+Time:\s*(<t:(\d+):F>)/i;
 const clearedScheduleTimePattern = /Your\s+Time:\s*TBD\b/i;
@@ -180,30 +182,78 @@ const isPastTimestamp = (timestamp: string): boolean => {
 const SCHEDULE_MESSAGE_PAGE_LIMIT = 100;
 const MAX_SCHEDULE_MESSAGE_PAGES = 5;
 
+const getMemberScheduleStatus = (
+  embedText: string,
+  displayNamePattern: string,
+  matchingSheet: SignupSheet | null,
+  memberId: string,
+): Pick<GuildSchedule, "isSignedUp" | "isReserve" | "isTbc" | "charNote"> => {
+  if (!matchingSheet) {
+    const isReserve = isMemberReserve(embedText, displayNamePattern);
+    const isTbc = isMemberTbc(embedText, displayNamePattern);
+    return {
+      isSignedUp: !isReserve && isMemberSignedUp(embedText, displayNamePattern),
+      isReserve,
+      ...(isTbc ? { isTbc: true } : {}),
+      charNote: getMemberCharNote(embedText, displayNamePattern),
+    };
+  }
+  const slots = matchingSheet.slots.filter(
+    (slot) => slot.signupUserId === memberId,
+  );
+  const reserve = matchingSheet.reserves.find(
+    (entry) => entry.userId === memberId,
+  );
+  const isTbc = Boolean(reserve?.isTbc || slots.some((slot) => slot.isTbc));
+  return {
+    isSignedUp: !reserve && slots.length > 0,
+    isReserve: Boolean(reserve),
+    ...(isTbc ? { isTbc: true } : {}),
+    charNote: reserve?.charNote ?? slots[0]?.charNote ?? undefined,
+  };
+};
+
 const getScheduleFromMessage = (
   message: Message,
   channel: TextChannel,
-  displayNamePattern: string,
+  memberPatterns: { primary: string; fallback: string },
   timeWindow: GuildScheduleTimeWindow | undefined,
   isRoleRestricted: boolean | undefined,
   includePast: boolean,
   options: {
     clearedBotIds: Set<string>;
     instanceTypes: readonly InstanceType[];
+    signupSheet: SignupSheet | null;
+    memberId: string;
   },
 ): GuildSchedule | undefined => {
   if (options.clearedBotIds.has(message.author.id) && !timeWindow)
     return undefined;
   const schedule = message.embeds.flatMap((embed) => {
     const embedText = getEmbedText(embed);
-    const selectedTypes = getEmbedInstanceTypes(embed, options.instanceTypes);
+    const displayNamePattern = embedText
+      .split("\n")
+      .some((line) => isNameOnLine(line, memberPatterns.primary))
+      ? memberPatterns.primary
+      : memberPatterns.fallback;
     const timestamp = getActiveScheduleTimestamp(
       embedText,
       timeWindow,
       includePast,
     );
-    const isReserve = isMemberReserve(embedText, displayNamePattern);
-    const isTbc = isMemberTbc(embedText, displayNamePattern);
+    const storedSheet = options.signupSheet;
+    const matchingSheet =
+      storedSheet?.messageId &&
+      storedSheet.messageId === message.id &&
+      timestamp === `<t:${storedSheet.timestamp}:F>`
+        ? storedSheet
+        : null;
+    let selectedTypes = getEmbedInstanceTypes(embed, options.instanceTypes);
+    if (matchingSheet) {
+      selectedTypes = matchingSheet.instanceType
+        ? [matchingSheet.instanceType].flat()
+        : undefined;
+    }
     return timestamp && embed.title
       ? [
           {
@@ -214,11 +264,12 @@ const getScheduleFromMessage = (
             timestamp,
             channelName: channel.name,
             channelUrl: channel.url,
-            isSignedUp:
-              !isReserve && isMemberSignedUp(embedText, displayNamePattern),
-            isReserve,
-            ...(isTbc ? { isTbc: true } : {}),
-            charNote: getMemberCharNote(embedText, displayNamePattern),
+            ...getMemberScheduleStatus(
+              embedText,
+              displayNamePattern,
+              matchingSheet,
+              options.memberId,
+            ),
             isRoleRestricted,
           },
         ]
@@ -260,8 +311,23 @@ const getNewestChannelSchedule = async (
   isRoleRestricted?: boolean,
   includePast = false,
   instanceTypes: readonly InstanceType[] = COOLDOWN_INSTANCE_TYPES,
+  signupSheet: SignupSheet | null = null,
 ): Promise<GuildSchedule | undefined> => {
-  const displayNamePattern = escapeRegularExpression(member.displayName);
+  const buildPattern = (names: Array<string | null | undefined>): string => {
+    const aliases = [
+      ...new Set(names.filter((name): name is string => Boolean(name))),
+    ];
+    return aliases.length
+      ? `(?:${aliases.map(escapeRegularExpression).join("|")})`
+      : "(?!)";
+  };
+  const memberPatterns = {
+    primary: buildPattern([
+      member.displayName,
+      ...(member.id ? [`<@${member.id}>`, `<@!${member.id}>`] : []),
+    ]),
+    fallback: buildPattern([member.user?.globalName, member.user?.username]),
+  };
   const clearedBotIds = new Set<string>();
   let before: string | undefined;
 
@@ -286,11 +352,11 @@ const getNewestChannelSchedule = async (
       const schedule = getScheduleFromMessage(
         message,
         channel,
-        displayNamePattern,
+        memberPatterns,
         timeWindow,
         isRoleRestricted,
         includePast,
-        { clearedBotIds, instanceTypes },
+        { clearedBotIds, instanceTypes, signupSheet, memberId: member.id },
       );
       if (schedule) return schedule;
     }
@@ -348,6 +414,10 @@ export const getActiveGuildSchedules = async (
       !excludedChannelIds.includes(channel.id) &&
       isAccessibleScheduleChannel(channel, member, categoryIds),
   );
+  const signupSheets: Record<string, SignupSheet> =
+    guild.id && scheduleChannels.length
+      ? await getGuildSignupSheets(guild.id).catch(() => ({}))
+      : {};
   const schedules = await Promise.all(
     scheduleChannels.map((channel) => {
       const isRoleRestricted = Boolean(
@@ -361,6 +431,7 @@ export const getActiveGuildSchedules = async (
         includePast,
         DISCORD_SETTINGS.cooldownInstanceTypesByGuild[guild.id] ??
           COOLDOWN_INSTANCE_TYPES,
+        signupSheets[channel.id] ?? null,
       );
     }),
   );

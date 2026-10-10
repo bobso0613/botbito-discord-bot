@@ -374,6 +374,16 @@ const formatActionNotice = ({
   return (isSelf ? selfText : otherText)[action];
 };
 
+const sendOrderedNotices = async (
+  interaction: SignupInteraction,
+  contents: string[],
+): Promise<void> => {
+  await contents.reduce(async (previous, content) => {
+    await previous;
+    await interaction.followUp({ content });
+  }, Promise.resolve());
+};
+
 /** Posts one public log message per affected user: a plain display-name line for the invoker's own action, or a Discord mention when someone else was affected. */
 export const sendActionNotices = async (
   interaction: SignupInteraction,
@@ -383,27 +393,27 @@ export const sendActionNotices = async (
   detail?: string,
   randomSlotNumber?: number,
 ): Promise<void> => {
-  for (const notice of notices) {
-    if (!notice.labels.length) continue;
-    const labelText = notice.labels.join(", ");
-    const isSelf = notice.userId === interaction.user.id;
-    const invokerMention = `<@${interaction.user.id}>`;
-    const target = isSelf
-      ? `**${interaction.user.displayName}**`
-      : `<@${notice.userId}>`;
-    await interaction.followUp({
-      content: formatActionNotice({
+  const displayName = notices.some(
+    (notice) => notice.userId === interaction.user.id,
+  )
+    ? await resolveGuildDisplayName(interaction, interaction.user)
+    : interaction.user.displayName;
+  const contents = notices
+    .filter((notice) => notice.labels.length > 0)
+    .map((notice) => {
+      const isSelf = notice.userId === interaction.user.id;
+      return formatActionNotice({
         action,
         isSelf,
-        target,
-        labelText,
-        invokerMention,
+        target: isSelf ? `**${displayName}**` : `<@${notice.userId}>`,
+        labelText: notice.labels.join(", "),
+        invokerMention: `<@${interaction.user.id}>`,
         runTitle,
         detail,
         randomSlotNumber,
-      }),
+      });
     });
-  }
+  await sendOrderedNotices(interaction, contents);
 };
 
 /** Notifies users whose occupied slots were replaced by a confirmed `/add`. */
@@ -414,16 +424,21 @@ export const sendReplacementNotices = async (
   targetDisplayName: string,
   runTitle: string,
 ): Promise<void> => {
+  const displayName = await resolveGuildDisplayName(
+    interaction,
+    interaction.user,
+  );
   const replacement =
     targetUserId === interaction.user.id
       ? `**${targetDisplayName}**`
-      : `**${targetDisplayName}** (thru **${interaction.user.displayName}**)`;
-  for (const notice of notices) {
-    if (!notice.labels.length) continue;
-    await interaction.followUp({
-      content: `<@${notice.userId}>, you have been replaced by ${replacement} on **${notice.labels.join(", ")}** in ${runTitle}.`,
-    });
-  }
+      : `**${targetDisplayName}** (thru **${displayName}**)`;
+  const contents = notices
+    .filter((notice) => notice.labels.length > 0)
+    .map(
+      (notice) =>
+        `<@${notice.userId}>, you have been replaced by ${replacement} on **${notice.labels.join(", ")}** in ${runTitle}.`,
+    );
+  await sendOrderedNotices(interaction, contents);
 };
 
 /** Posts a public signup-sheet action notice after the updated embed is sent. */
@@ -976,6 +991,7 @@ const joinSlotAsInvoker = (
   interaction: SignupInteraction,
   first: SignupSheet["slots"][number],
   swapEntries: SwapEntry[],
+  displayName: string,
 ): string | null => {
   const userSlots = sheet.slots.filter(
     (slot) => slot.signupUserId === interaction.user.id,
@@ -1009,7 +1025,7 @@ const joinSlotAsInvoker = (
   }
   if (reserveIndex !== -1) sheet.reserves.splice(reserveIndex, 1);
   first.signupUserId = interaction.user.id;
-  first.signupDisplayName = interaction.user.displayName;
+  first.signupDisplayName = displayName;
   first.charNote = currentCharNote;
   first.isTbc = currentIsTbc;
   swapEntries.push({
@@ -1067,10 +1083,17 @@ const executeTargetSlotSwap = (
   first: SignupSheet["slots"][number],
   secondValue: string | undefined,
   swapEntries: SwapEntry[],
+  displayName: string,
   onRandomSlot?: (slotNumber: number) => void,
 ): string | null => {
   if (!secondValue)
-    return joinSlotAsInvoker(sheet, interaction, first, swapEntries);
+    return joinSlotAsInvoker(
+      sheet,
+      interaction,
+      first,
+      swapEntries,
+      displayName,
+    );
   if (secondValue === "reserve") {
     if (!first.signupUserId)
       return "That party slot does not have a signup to move to reserves.";
@@ -1110,6 +1133,7 @@ const executeSwapMutation = (
   firstValue: string,
   secondValue: string | undefined,
   swapEntries: SwapEntry[],
+  displayName: string,
   onRandomSlot?: (slotNumber: number) => void,
 ): string | null => {
   if (firstValue === "reserve") {
@@ -1135,6 +1159,7 @@ const executeSwapMutation = (
     first,
     secondValue,
     swapEntries,
+    displayName,
     onRandomSlot,
   );
 };
@@ -1150,17 +1175,38 @@ const replyAddInputError = async (
   await interaction.reply({ content, flags: MessageFlags.Ephemeral });
 };
 
+const resolveGuildDisplayName = async (
+  interaction: SignupInteraction,
+  user: Pick<User, "id" | "displayName">,
+): Promise<string> => {
+  const guild =
+    interaction.guild ??
+    (interaction.guildId
+      ? await interaction.client?.guilds
+          ?.fetch(interaction.guildId)
+          .catch(() => null)
+      : null);
+  const member = await guild?.members?.fetch(user.id).catch(() => null);
+  return member?.displayName ?? user.displayName;
+};
+
 const resolveAddTarget = async (
   interaction: SignupInteraction,
   mentionText: string,
-): Promise<User | null> => {
-  if (!mentionText) return interaction.user;
-  return resolveTargetUser(interaction, mentionText);
+): Promise<Pick<User, "id" | "displayName"> | null> => {
+  const user = mentionText
+    ? await resolveTargetUser(interaction, mentionText)
+    : interaction.user;
+  if (!user) return null;
+  return {
+    id: user.id,
+    displayName: await resolveGuildDisplayName(interaction, user),
+  };
 };
 
 const addUserToReserve = async (
   interaction: SignupInteraction,
-  targetUser: User,
+  targetUser: Pick<User, "id" | "displayName">,
   options: AddOptions,
 ): Promise<void> => {
   const sheetAfterUpdate = await update(interaction, (sheet) => {
@@ -1188,7 +1234,7 @@ const addUserToReserve = async (
 
 const addUserToOpenSlots = async (
   interaction: SignupInteraction,
-  targetUser: User,
+  targetUser: Pick<User, "id" | "displayName">,
   slotNumbers: number[],
   options: AddOptions,
   randomSlotNumber?: number,
@@ -1229,7 +1275,7 @@ const addUserToOpenSlots = async (
 
 const requestAddConfirmation = async (
   interaction: SignupInteraction,
-  targetUser: User,
+  targetUser: Pick<User, "id" | "displayName">,
   slotNumbers: number[],
   occupiedSlotNumbers: number[],
   options: AddOptions,
@@ -1391,6 +1437,7 @@ export const executeSwap = async (
 ): Promise<void> => {
   const swapEntries: { userId: string; label: string }[] = [];
   let randomSlotNumber: number | undefined;
+  const displayName = await resolveGuildDisplayName(i, i.user);
   const sheetAfterUpdate = await update(i, (s) => {
     const firstValue = firstValueInput.toLowerCase().trim();
     const secondValue = secondValueInput?.toLowerCase().trim() || undefined;
@@ -1400,6 +1447,7 @@ export const executeSwap = async (
       firstValue,
       secondValue,
       swapEntries,
+      displayName,
       (slotNumber) => {
         randomSlotNumber = slotNumber;
       },

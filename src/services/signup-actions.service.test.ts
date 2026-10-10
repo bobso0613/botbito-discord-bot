@@ -26,6 +26,8 @@ const {
   publishToChannel,
   replyMissing,
   resolveTargetUser,
+  sendActionNotices,
+  sendReplacementNotices,
 } = await import("./signup-actions.service.js");
 
 const createSheet = (): SignupSheet => ({
@@ -50,6 +52,75 @@ describe("signup actions service", () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
+
+  it.each(["action", "replacement"])(
+    "sends %s notices sequentially and skips empty labels",
+    async (kind) => {
+      const events: string[] = [];
+      const followUp = jest.fn(async ({ content }: { content: string }) => {
+        const userId = content.includes("<@first>") ? "first" : "second";
+        events.push(`start ${userId}`);
+        await Promise.resolve();
+        events.push(`end ${userId}`);
+      });
+      const interaction = {
+        user: { id: "invoker", displayName: "Invoker" },
+        followUp,
+      };
+      const notices = [
+        { userId: "first", labels: ["01: Tank"] },
+        { userId: "empty", labels: [] },
+        { userId: "second", labels: ["02: DPS"] },
+      ];
+      if (kind === "action") {
+        await sendActionNotices(interaction as never, "added", notices, "Run");
+      } else {
+        await sendReplacementNotices(
+          interaction as never,
+          notices,
+          "invoker",
+          "Invoker",
+          "Run",
+        );
+      }
+      expect(events).toEqual([
+        "start first",
+        "end first",
+        "start second",
+        "end second",
+      ]);
+      expect(followUp).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it.each(["action", "replacement"])(
+    "stops %s notices after a send failure",
+    async (kind) => {
+      const followUp = jest.fn(async () => {
+        throw new Error("send failed");
+      });
+      const interaction = {
+        user: { id: "invoker", displayName: "Invoker" },
+        followUp,
+      };
+      const notices = [
+        { userId: "first", labels: ["01: Tank"] },
+        { userId: "second", labels: ["02: DPS"] },
+      ];
+      const sending =
+        kind === "action"
+          ? sendActionNotices(interaction as never, "added", notices, "Run")
+          : sendReplacementNotices(
+              interaction as never,
+              notices,
+              "invoker",
+              "Invoker",
+              "Run",
+            );
+      await expect(sending).rejects.toThrow("send failed");
+      expect(followUp).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("builds the two expected rows of signup sheet action buttons", () => {
     const components = buildSignupSheetComponents();

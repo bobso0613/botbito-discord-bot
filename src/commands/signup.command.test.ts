@@ -159,6 +159,94 @@ const createInteraction = (
   },
 });
 
+describe("/add guild display names", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    pendingAddConfirmations.clear();
+  });
+
+  it.each([
+    { input: "2", mentioned: false, occupied: false, fetchFails: false },
+    { input: "reserve", mentioned: false, occupied: false, fetchFails: false },
+    {
+      input: "2 <@100000000000000001>",
+      mentioned: true,
+      occupied: false,
+      fetchFails: false,
+    },
+    { input: "2", mentioned: false, occupied: true, fetchFails: false },
+    { input: "2", mentioned: false, occupied: false, fetchFails: true },
+  ])(
+    "uses the guild name with a Discord fallback: $input, occupied=$occupied, fetchFails=$fetchFails",
+    async ({ input, mentioned, occupied, fetchFails }) => {
+      getSignupSheet.mockResolvedValue(
+        buildSheet({
+          slots: [
+            {
+              number: 2,
+              role: "DPS",
+              signupUserId: occupied ? "other" : null,
+              signupDisplayName: occupied ? "Other" : null,
+              charNote: null,
+            },
+          ],
+          reserves: [],
+        }),
+      );
+      const interaction = createInteraction(input);
+      const targetId = mentioned ? "100000000000000001" : interaction.user.id;
+      const fetchMember = jest.fn(async () => {
+        if (fetchFails) throw new Error("Member unavailable");
+        return { displayName: "Server Nickname" };
+      });
+      const extendedInteraction = {
+        ...interaction,
+        guild: { ...interaction.guild, members: { fetch: fetchMember } },
+        client: {
+          users: {
+            fetch: jest.fn(async () => ({
+              id: targetId,
+              displayName: "Discord Name",
+            })),
+          },
+        },
+      };
+      await addCommand.execute(extendedInteraction as never);
+      const expectedName = fetchFails ? "Invoker" : "Server Nickname";
+      expect(fetchMember).toHaveBeenCalledWith(targetId);
+      if (occupied) {
+        expect(
+          pendingAddConfirmations.get(
+            addConfirmationKey("guild-1", "channel-1", interaction.user.id),
+          ),
+        ).toMatchObject({ userId: targetId, displayName: expectedName });
+      } else if (input === "reserve") {
+        expect(saveSignupSheet).toHaveBeenCalledWith(
+          expect.objectContaining({
+            reserves: [
+              expect.objectContaining({
+                userId: targetId,
+                displayName: expectedName,
+              }),
+            ],
+          }),
+        );
+      } else {
+        expect(saveSignupSheet).toHaveBeenCalledWith(
+          expect.objectContaining({
+            slots: [
+              expect.objectContaining({
+                signupUserId: targetId,
+                signupDisplayName: expectedName,
+              }),
+            ],
+          }),
+        );
+      }
+    },
+  );
+});
+
 describe("/setinstancetype", () => {
   it("saves both configured cooldown types from comma-separated input", async () => {
     getSignupSheet.mockResolvedValue(buildSheet());
@@ -294,7 +382,7 @@ describe("/setinstancetype", () => {
     );
   });
 
-  it("rejects configured instance types that would exceed embed field limits", async () => {
+  it("rejects configured instance types that would exceed the footer limit", async () => {
     const mutableTypeConfigs =
       DISCORD_SETTINGS.cooldownInstanceTypesByGuild as Record<
         string,
@@ -302,7 +390,7 @@ describe("/setinstancetype", () => {
       >;
     const originalTypes = mutableTypeConfigs["guild-1"];
     const hadGuildConfig = Object.hasOwn(mutableTypeConfigs, "guild-1");
-    const longName = "A".repeat(1_100);
+    const longName = "A".repeat(2_049);
     mutableTypeConfigs["guild-1"] = [
       { name: longName, keywords: [], maxAttempts: 1, emoji: "" },
     ];
@@ -329,7 +417,7 @@ describe("/setinstancetype", () => {
     );
   });
 
-  it("does not save instance types that exceed the embed field limit", async () => {
+  it("does not save instance types that exceed the footer limit", async () => {
     const mutableTypeConfigs =
       DISCORD_SETTINGS.cooldownInstanceTypesByGuild as Record<
         string,
@@ -337,7 +425,7 @@ describe("/setinstancetype", () => {
       >;
     const originalTypes = mutableTypeConfigs["guild-1"];
     const hadGuildConfig = Object.hasOwn(mutableTypeConfigs, "guild-1");
-    const longName = "B".repeat(1_100);
+    const longName = "B".repeat(2_049);
     mutableTypeConfigs["guild-1"] = [
       { name: longName, keywords: [], maxAttempts: 1, emoji: "" },
     ];
@@ -1265,6 +1353,49 @@ describe("signup modal submissions for action buttons", () => {
 });
 
 describe("/swap", () => {
+  it.each(["2", "random"])(
+    "uses the server nickname when joining %s and in self-notices",
+    async (first) => {
+      getSignupSheet.mockResolvedValue(
+        buildSheet({
+          slots: [
+            {
+              number: 2,
+              role: "DPS",
+              signupUserId: null,
+              signupDisplayName: null,
+              charNote: null,
+            },
+          ],
+          reserves: [],
+        }),
+      );
+      const interaction = createInteraction();
+      await swapCommand.execute({
+        ...interaction,
+        guild: {
+          ...interaction.guild,
+          members: {
+            fetch: jest.fn(async () => ({ displayName: "Server Nickname" })),
+          },
+        },
+        options: {
+          getString: (name: string) => (name === "first" ? first : null),
+        },
+      } as never);
+      expect(saveSignupSheet).toHaveBeenCalledWith(
+        expect.objectContaining({
+          slots: [
+            expect.objectContaining({ signupDisplayName: "Server Nickname" }),
+          ],
+        }),
+      );
+      expect(interaction.followUp).toHaveBeenCalledWith({
+        content: expect.stringContaining("**Server Nickname** swapped"),
+      });
+    },
+  );
+
   const createSwapInteraction = (
     first: string,
     second: string | null = null,

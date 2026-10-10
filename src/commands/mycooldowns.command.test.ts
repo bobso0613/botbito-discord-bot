@@ -110,8 +110,11 @@ describe("my cooldowns command", () => {
     getActiveGuildSchedules
       .mockResolvedValueOnce([
         { ...schedule, instanceTypes: ["Endless Tower", "Endless Cellar"] },
+        { ...schedule, instanceTypes: ["Endless Cellar"], isSignedUp: false },
       ])
-      .mockResolvedValueOnce([{ ...schedule, title: "ET Friday" }]);
+      .mockResolvedValueOnce([
+        { ...schedule, title: "ET Friday", isSignedUp: false, isReserve: true },
+      ]);
     const interaction = {
       guildId: "first",
       user: { id: "user" },
@@ -125,7 +128,15 @@ describe("my cooldowns command", () => {
               {
                 id,
                 name: id,
-                members: { fetch: jest.fn().mockResolvedValue({} as never) },
+                members: {
+                  fetch: jest
+                    .fn()
+                    .mockResolvedValue({
+                      id: "user",
+                      displayName: `${id} nickname`,
+                      user: { username: "alice" },
+                    } as never),
+                },
               },
             ]),
           ),
@@ -133,6 +144,23 @@ describe("my cooldowns command", () => {
       },
     };
     await sendMyCooldowns(interaction as never);
+    for (const guild of interaction.client.guilds.cache.values()) {
+      expect(guild.members.fetch).toHaveBeenCalledWith("user");
+      expect(getActiveGuildSchedules).toHaveBeenCalledWith(
+        guild,
+        expect.objectContaining({
+          id: "user",
+          displayName: `${guild.id} nickname`,
+        }),
+        source.categoryIds,
+        [],
+        expect.objectContaining({
+          start: expect.any(Date),
+          end: expect.any(Date),
+        }),
+        undefined,
+      );
+    }
     const payload = interaction.editReply.mock.calls[0]![0] as {
       embeds: Array<{ data: { description: string } }>;
     };

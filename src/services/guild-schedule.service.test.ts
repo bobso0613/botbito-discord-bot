@@ -2,13 +2,338 @@ import { describe, expect, it, jest } from "@jest/globals";
 import { ChannelType } from "discord.js";
 import { DISCORD_SETTINGS } from "../config/discord-settings.js";
 import { COOLDOWN_INSTANCE_TYPES } from "../constants/cooldowns.js";
-import { getActiveGuildSchedules } from "./guild-schedule.service.js";
 import type { GuildScheduleTimeWindow } from "../types/guild-schedule.js";
+import { countCooldowns } from "../utils/cooldowns.js";
+import type { SignupSheet } from "../types/signup-sheet.js";
+
+const getGuildSignupSheets = jest
+  .fn<(guildId: string) => Promise<Record<string, SignupSheet>>>()
+  .mockResolvedValue({});
+jest.unstable_mockModule("./signup-sheet.service.js", () => ({
+  getGuildSignupSheets,
+}));
+const { getActiveGuildSchedules } = await import("./guild-schedule.service.js");
 
 const getDiscordTimestamp = (date: string): string =>
   `<t:${Math.floor(new Date(date).getTime() / 1_000)}:F>`;
 
 describe("getActiveGuildSchedules", () => {
+  it.each([null, new Error("read failed"), new SyntaxError("invalid JSON")])(
+    "reads storage once for multiple channels and falls back on errors: %s",
+    async (error) => {
+      getGuildSignupSheets.mockClear();
+      if (error) getGuildSignupSheets.mockRejectedValueOnce(error);
+      else getGuildSignupSheets.mockResolvedValueOnce({});
+      const channels = ["first", "second"].map(
+        (id) =>
+          [
+            id,
+            {
+              id,
+              type: ChannelType.GuildText,
+              parentId: "category",
+              name: id,
+              url: `https://discord.com/channels/guild/${id}`,
+              permissionsFor: () => ({ has: () => true }),
+              messages: {
+                fetch: jest.fn().mockResolvedValue(
+                  new Map([
+                    [
+                      "message",
+                      {
+                        author: { id: DISCORD_SETTINGS.guildScheduleBotIds[0] },
+                        createdTimestamp: 1,
+                        embeds: [
+                          {
+                            title: "Endless Tower",
+                            description:
+                              "Tank - **Alice**\nYour Time: <t:4070905800:F>",
+                            fields: [],
+                          },
+                        ],
+                      },
+                    ],
+                  ]) as never,
+                ),
+              },
+            },
+          ] as const,
+      );
+      const schedules = await getActiveGuildSchedules(
+        { id: "guild", channels: { cache: new Map(channels) } } as never,
+        { displayName: "Alice" } as never,
+        ["category"],
+      );
+      expect(getGuildSignupSheets).toHaveBeenCalledTimes(1);
+      expect(getGuildSignupSheets).toHaveBeenCalledWith("guild");
+      expect(schedules).toHaveLength(2);
+      expect(schedules.every((schedule) => schedule.isSignedUp)).toBe(true);
+    },
+  );
+
+  it.each([
+    {
+      reserve: false,
+      memberId: "member",
+      messageId: "sheet-message",
+      expected: 2,
+      instanceType: "Endless Tower",
+    },
+    {
+      reserve: false,
+      memberId: "member",
+      messageId: "sheet-message",
+      expected: 2,
+      instanceType: null,
+    },
+    {
+      reserve: false,
+      memberId: "member",
+      messageId: "sheet-message",
+      expected: 2,
+    },
+    {
+      reserve: true,
+      memberId: "member",
+      messageId: "sheet-message",
+      expected: 2,
+    },
+    {
+      reserve: false,
+      memberId: "someone-else",
+      messageId: "sheet-message",
+      expected: 0,
+    },
+    {
+      reserve: false,
+      memberId: "member",
+      messageId: "historical-message",
+      expected: 0,
+    },
+  ])(
+    "counts persisted signups by ID without relying on names: reserve=$reserve, member=$memberId, message=$messageId",
+    async ({
+      reserve,
+      memberId,
+      messageId,
+      expected,
+      instanceType = ["Endless Tower"],
+    }) => {
+      const sheet = {
+        messageId: "sheet-message",
+        instanceType,
+        timestamp: 4070905800,
+        slots: reserve
+          ? []
+          : [
+              {
+                signupUserId: "member",
+                signupDisplayName: "Old Nickname",
+                charNote: "Dancer 3x",
+                isTbc: true,
+              },
+            ],
+        reserves: reserve
+          ? [
+              {
+                userId: "member",
+                displayName: "Old Nickname",
+                charNote: "Dancer 3x",
+                isTbc: true,
+              },
+            ]
+          : [],
+      } as SignupSheet;
+      getGuildSignupSheets.mockResolvedValueOnce({ channel: sheet });
+      const channel = {
+        guild: { id: "guild" },
+        type: ChannelType.GuildText,
+        id: "channel",
+        parentId: "category",
+        name: "signup",
+        url: "https://discord.com/channels/guild/channel",
+        permissionsFor: jest.fn().mockReturnValue({ has: () => true }),
+        messages: {
+          fetch: jest.fn().mockResolvedValue(
+            new Map([
+              [
+                messageId,
+                {
+                  id: messageId,
+                  author: { id: DISCORD_SETTINGS.guildScheduleBotIds[0] },
+                  createdTimestamp: 1,
+                  embeds: [
+                    {
+                      title: "Endless Tower 2x",
+                      description: "Your Time: <t:4070905800:F>",
+                      footer: { text: "Organizer - Alice | Endless Cellar" },
+                      fields: [
+                        {
+                          name: reserve ? "Reserves:" : "Party 1:",
+                          value: "`01`: **Old Nickname** (Dancer 3x)",
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            ]) as never,
+          ),
+        },
+      };
+      const schedules = await getActiveGuildSchedules(
+        {
+          id: "guild",
+          channels: { cache: new Map([["channel", channel]]) },
+        } as never,
+        {
+          id: memberId,
+          displayName: "New Nickname",
+          user: { globalName: "Discord Name" },
+        } as never,
+        ["category"],
+        [],
+        {
+          start: new Date("2098-12-31T00:00:00Z"),
+          end: new Date("2099-01-03T00:00:00Z"),
+        },
+      );
+      const personalSchedules = schedules.filter(
+        (schedule) => schedule.isSignedUp || schedule.isReserve,
+      );
+      expect(personalSchedules).toHaveLength(
+        memberId === "member" && messageId === "sheet-message" ? 1 : 0,
+      );
+      expect(schedules[0]?.instanceTypes).toEqual(
+        messageId === "sheet-message"
+          ? instanceType
+            ? [instanceType].flat()
+            : undefined
+          : ["Endless Cellar"],
+      );
+      if (expected)
+        expect(personalSchedules[0]).toMatchObject({
+          isSignedUp: !reserve,
+          isReserve: reserve,
+          isTbc: true,
+          charNote: "Dancer 3x",
+        });
+      const counts = countCooldowns(
+        personalSchedules.map((schedule) => ({
+          ...schedule,
+          guildName: "Guild",
+        })),
+        COOLDOWN_INSTANCE_TYPES,
+        ["Endless Tower"],
+      );
+      expect(counts.get("Endless Tower")?.count).toBe(expected);
+      expect(counts.get("Others")?.count ?? 0).toBe(0);
+    },
+  );
+
+  it.each([
+    { name: "Keiriatus", role: "High Priest", signedUp: true, reserve: false },
+    { name: "Keira", role: "High Priest", signedUp: true, reserve: false },
+    { name: "keira.user", role: "Reserve", signedUp: false, reserve: true },
+    {
+      name: "Keira** (wrong note)\nReserve - **Keiriatus",
+      role: "High Priest",
+      signedUp: false,
+      reserve: true,
+    },
+    {
+      name: "Keira** (wrong note)\nReserve - **<@123456789012345678>",
+      role: "High Priest",
+      signedUp: false,
+      reserve: true,
+    },
+    {
+      name: "<@123456789012345678>",
+      role: "High Priest",
+      signedUp: true,
+      reserve: false,
+    },
+    {
+      name: "<@!123456789012345678>",
+      role: "Reserve",
+      signedUp: false,
+      reserve: true,
+    },
+    {
+      name: "<@123456789012345679>",
+      role: "High Priest",
+      signedUp: false,
+      reserve: false,
+    },
+    {
+      name: "keiraXuser",
+      role: "High Priest",
+      signedUp: false,
+      reserve: false,
+    },
+  ])(
+    "matches guild and Discord names in roster entries: $name",
+    async ({ name, role, signedUp, reserve }) => {
+      const channel = {
+        type: ChannelType.GuildText,
+        id: "channel",
+        parentId: "category",
+        name: "signup",
+        url: "https://discord.com/channels/guild/channel",
+        permissionsFor: jest.fn().mockReturnValue({ has: () => true }),
+        messages: {
+          fetch: jest.fn().mockResolvedValue(
+            new Map([
+              [
+                "message",
+                {
+                  author: { id: DISCORD_SETTINGS.guildScheduleBotIds[0] },
+                  createdTimestamp: 1,
+                  embeds: [
+                    {
+                      title: "Endless Tower 2x",
+                      description: `${role} - **${name}** (Dancer 3x)\nYour Time: <t:4070905800:F>`,
+                      fields: [],
+                    },
+                  ],
+                },
+              ],
+            ]) as never,
+          ),
+        },
+      };
+      const schedules = await getActiveGuildSchedules(
+        { channels: { cache: new Map([["channel", channel]]) } } as never,
+        {
+          id: "123456789012345678",
+          displayName: "Keiriatus",
+          user: { globalName: "Keira", username: "keira.user" },
+        } as never,
+        ["category"],
+        [],
+        {
+          start: new Date("2098-12-31T00:00:00Z"),
+          end: new Date("2099-01-03T00:00:00Z"),
+        },
+      );
+      expect(schedules[0]).toMatchObject({
+        isSignedUp: signedUp,
+        isReserve: reserve,
+        charNote: signedUp || reserve ? "Dancer 3x" : undefined,
+      });
+      const counts = countCooldowns(
+        schedules
+          .filter((schedule) => schedule.isSignedUp || schedule.isReserve)
+          .map((schedule) => ({ ...schedule, guildName: "Guild" })),
+        COOLDOWN_INSTANCE_TYPES,
+        ["Endless Tower"],
+      );
+      expect(counts.get("Endless Tower")?.count).toBe(
+        signedUp || reserve ? 2 : 0,
+      );
+    },
+  );
+
   it.each([
     {
       fields: [{ name: "Instance Types:", value: "ET | EC" }],
@@ -76,15 +401,12 @@ describe("getActiveGuildSchedules", () => {
   it("recognizes configured custom emoji prefixes in legacy footer metadata", async () => {
     const guildId = "custom-emoji-test";
     const types = COOLDOWN_INSTANCE_TYPES.map((type) =>
-      type.name === "Endless Tower"
-        ? { ...type, emoji: "<:et:123>" }
-        : type,
+      type.name === "Endless Tower" ? { ...type, emoji: "<:et:123>" } : type,
     );
-    const settings =
-      DISCORD_SETTINGS.cooldownInstanceTypesByGuild as Record<
-        string,
-        typeof types
-      >;
+    const settings = DISCORD_SETTINGS.cooldownInstanceTypesByGuild as Record<
+      string,
+      typeof types
+    >;
     settings[guildId] = types;
     try {
       const channel = {

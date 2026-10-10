@@ -11,7 +11,9 @@ type SignupSheets = Record<string, SignupSheet>;
 const mutationQueues = new Map<string, Promise<void>>();
 
 /** Reads all persisted signup sheets for a guild, returning an empty object when the storage file doesn't exist yet. */
-const readGuildSheets = async (guildId: string): Promise<SignupSheets> => {
+export const getGuildSignupSheets = async (
+  guildId: string,
+): Promise<SignupSheets> => {
   const filePath = getGuildStoragePath(guildId);
   try {
     return JSON.parse(await readFile(filePath, "utf8")) as SignupSheets;
@@ -26,7 +28,7 @@ export const getSignupSheet = async (
   guildId: string,
   channelId: string,
 ): Promise<SignupSheet | null> =>
-  (await readGuildSheets(guildId))[channelId] ?? null;
+  (await getGuildSignupSheets(guildId))[channelId] ?? null;
 
 /**
  * Queues a read-modify-write against the guild's storage file, applying `mutate`
@@ -41,7 +43,7 @@ const mutateGuildSheets = async (
   const filePath = getGuildStoragePath(guildId);
   const currentQueue = mutationQueues.get(guildId) ?? Promise.resolve();
   const operation = currentQueue.then(async () => {
-    const sheets = await readGuildSheets(guildId);
+    const sheets = await getGuildSignupSheets(guildId);
     const shouldWrite = mutate(sheets);
     if (shouldWrite === false) return;
     await mkdir(dirname(filePath), { recursive: true });

@@ -22,7 +22,7 @@ export const parseServerTimezone = (
   return `GMT${offset >= 0 ? "+" : ""}${offset}`;
 };
 
-/** Validates instance metadata against Discord's field and footer character limits. */
+/** Validates instance metadata against Discord's footer character limit. */
 export const validateInstanceTypeEmbedLimits = (
   instanceTypeNames: readonly string[],
   organizerName: string,
@@ -36,7 +36,7 @@ export const validateInstanceTypeEmbedLimits = (
     })
     .join(" | ");
   const footer = `Organizer - ${organizerName} | ${formattedTypes}`;
-  if (formattedTypes.length > 1_024 || footer.length > 2_048) {
+  if (footer.length > 2_048) {
     return "The selected instance types exceed Discord's embed limits. Please select fewer or shorter types.";
   }
   return null;

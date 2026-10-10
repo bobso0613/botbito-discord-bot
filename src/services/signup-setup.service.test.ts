@@ -217,7 +217,7 @@ describe("signup setup service", () => {
         name: `Instance Type ${String(index).padStart(2, "0")} Name`,
         keywords: [],
         maxAttempts: 1,
-        emoji: "x".repeat(25),
+        emoji: "x".repeat(65),
       })),
       values: Array.from(
         { length: 24 },
