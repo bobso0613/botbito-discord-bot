@@ -18,7 +18,7 @@ export interface RecoveredSignupExport {
   contents: readonly string[];
 }
 
-/** Looks up a coverage key, optionally repairing roster contents for a known thread. */
+/** Looks up a coverage key or known thread; null confirms absence, while read failures must reject. */
 export type FindExistingThread = (
   key: string,
   threadId?: string,

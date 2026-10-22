@@ -87,18 +87,26 @@ export const getExportRunKey = (
     ...(instanceName ? [instanceName] : []),
   ]);
 
+/** Rebuilds a footer from its persisted identity, independently of current signup selections. */
+export const buildExportIdentifierFromRunKey = (
+  guildId: string,
+  runKey: string,
+): string => {
+  const hash = createHash("sha256")
+    .update(JSON.stringify([guildId, runKey]))
+    .digest("hex");
+  return `-# Export ID: botbito-export:v1:${hash}`;
+};
+
 /** Creates a guild-scoped footer marker recoverable from existing forum starter messages. */
 export const buildExportIdentifier = (
   sheet: SignupSheet,
   instanceName?: string,
-): string => {
-  const hash = createHash("sha256")
-    .update(
-      JSON.stringify([sheet.guildId, getExportRunKey(sheet, instanceName)]),
-    )
-    .digest("hex");
-  return `-# Export ID: botbito-export:v1:${hash}`;
-};
+): string =>
+  buildExportIdentifierFromRunKey(
+    sheet.guildId,
+    getExportRunKey(sheet, instanceName),
+  );
 
 /** Authorizes the stored organizer only when its Discord avatar identity is consistent. */
 export const canExportSheet = (sheet: SignupSheet, userId: string): boolean => {

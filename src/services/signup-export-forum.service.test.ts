@@ -34,6 +34,32 @@ const createForum = () => ({
 });
 
 describe("signup export forum lookup", () => {
+  it.each([
+    { code: RESTJSONErrorCodes.UnknownChannel, missing: true },
+    { code: RESTJSONErrorCodes.MissingAccess, missing: false },
+  ])(
+    "handles thread recovery error $code without hiding access failures",
+    async ({ code, missing }) => {
+      const error = new DiscordAPIError(
+        { code, message: "Discord lookup failed" },
+        code,
+        404,
+        "GET",
+        "https://discord.com/api/channels/thread",
+        {},
+      );
+      const forum = {
+        threads: {
+          fetch: jest.fn(async () => {
+            throw error;
+          }),
+        },
+      };
+      const result = recoverExportThread(forum as never, "thread");
+      if (missing) await expect(result).resolves.toBeNull();
+      else await expect(result).rejects.toBe(error);
+    },
+  );
   it("fetches starters only for matching run dates across active and archived threads", async () => {
     const forum = createForum();
     const unrelated = buildThread("unrelated", identifier);

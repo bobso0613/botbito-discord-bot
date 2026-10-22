@@ -14,6 +14,37 @@ export type {
 
 const exportQueues = new Map<string, Promise<void>>();
 
+/** Reads structured run keys without interpreting legacy migration or older opaque keys. */
+const parseRunKey = (key: string): string[] | null => {
+  try {
+    const parts: unknown = JSON.parse(key);
+    return Array.isArray(parts) &&
+      (parts.length === 2 || parts.length === 3) &&
+      parts.every((part) => typeof part === "string")
+      ? parts
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+/** Combined exports overlap every saved split instance, even after signup selections change. */
+const getSavedSplitKeys = (
+  history: ExportHistory,
+  runKey: string,
+): string[] => {
+  const requested = parseRunKey(runKey);
+  if (requested?.length !== 2) return [];
+  return Object.keys(history).filter((key) => {
+    const saved = parseRunKey(key);
+    return (
+      saved?.length === 3 &&
+      saved[0] === requested[0] &&
+      saved[1] === requested[1]
+    );
+  });
+};
+
 /** Loads saved export history, treating an absent file as an empty history. */
 const readHistory = async (path: string): Promise<ExportHistory> => {
   try {
@@ -92,7 +123,10 @@ const repairHistoryEntry = async (
   const saved = history[key]!;
   if (saved.contents) return;
   const recovered = await findExistingThread(key, saved.threadId ?? undefined);
-  if (!recovered) return;
+  if (!recovered) {
+    if (saved.threadId) history[key] = { threadId: null };
+    return;
+  }
   history[key] =
     typeof recovered === "string" ? { threadId: recovered } : recovered;
   await writeHistory(path, history);
@@ -118,6 +152,7 @@ const findSavedExport = async (
 
 /**
  * Serializes guild exports, checks history/forum identifiers, and reserves before creating a post.
+ * Combined requests also check all saved split keys for the same full title/date identity.
  * Failed post creation releases the reservation; failed confirmation writes retain it for safety.
  * Empty reservations may retry after a successful forum recheck; lookup failures stay blocked.
  * @param guildId Guild whose private export history owns this run.
@@ -147,7 +182,13 @@ export const exportSignupRun = async (
   const previous = exportQueues.get(guildId) ?? Promise.resolve();
   const operation = previous.then(async () => {
     const history = await readHistory(path);
-    const keys = [...new Set([runKey, ...overlappingRunKeys])];
+    const keys = [
+      ...new Set([
+        runKey,
+        ...overlappingRunKeys,
+        ...getSavedSplitKeys(history, runKey),
+      ]),
+    ];
     const saved = await findSavedExport(
       path,
       history,

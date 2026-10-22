@@ -13,7 +13,7 @@ import type { SignupSheet } from "../types/signup-sheet.js";
 import { ORGANIZER_EXPORT_ERROR } from "../constants/signup.js";
 import { buildExportTitle } from "../templates/signup-export.template.js";
 import {
-  buildExportIdentifier,
+  buildExportIdentifierFromRunKey,
   canExportSheet,
   ExportValidationError,
   getExportDate,
@@ -27,15 +27,24 @@ import { exportSignupRun } from "./signup-export.service.js";
  * Reads every page of an existing export's bot-authored messages in chronological order.
  * @param channel Payout forum containing the export thread.
  * @param threadId Existing post ID from history or identifier lookup.
- * @returns Original roster contents, including follow-ups, rather than the current signup.
- * @throws If the thread is missing, message history is unreadable, or pagination stalls.
+ * @returns Original roster contents, or null when Discord confirms the thread no longer exists.
+ * @throws If message history is unreadable, permissions are missing, or pagination stalls.
  */
 export const recoverExportThread = async (
   channel: ForumChannel,
   threadId: string,
-): Promise<RecoveredSignupExport> => {
-  const thread = await channel.threads.fetch(threadId);
-  if (!thread) throw new Error("Could not read the existing export thread.");
+): Promise<RecoveredSignupExport | null> => {
+  const thread = await channel.threads
+    .fetch(threadId)
+    .catch((error: unknown) => {
+      if (
+        error instanceof DiscordAPIError &&
+        error.code === RESTJSONErrorCodes.UnknownChannel
+      )
+        return null;
+      throw error;
+    });
+  if (!thread) return null;
   const messages = [];
   let before: string | undefined;
   while (true) {
@@ -174,7 +183,7 @@ export const sendExport = async (
   sheet: SignupSheet,
   part: SignupExportPart,
 ): Promise<string> => {
-  const { slots, runKey, identifier } = part;
+  const { slots, runKey } = part;
   const contents = part.contents!;
   const recipientIds = [...new Set(slots.map((slot) => slot.signupUserId!))];
   const messageOptions = (content: string) => ({
@@ -188,17 +197,12 @@ export const sendExport = async (
   let createdThreadId: string | null = null;
   let result;
   const combinedKey = getExportRunKey(sheet);
-  const overlapping =
+  const overlappingRunKeys =
     runKey === combinedKey
-      ? getExportInstanceTypes(sheet).map((type) => ({
-          key: getExportRunKey(sheet, type.name),
-          identifier: buildExportIdentifier(sheet, type.name),
-        }))
-      : [{ key: combinedKey, identifier: buildExportIdentifier(sheet) }];
-  const identifiers = new Map([
-    [runKey, identifier],
-    ...overlapping.map((entry) => [entry.key, entry.identifier] as const),
-  ]);
+      ? getExportInstanceTypes(sheet).map((type) =>
+          getExportRunKey(sheet, type.name),
+        )
+      : [combinedKey];
   try {
     result = await exportSignupRun(
       sheet.guildId,
@@ -225,13 +229,13 @@ export const sendExport = async (
           savedThreadId ??
           (await findExistingExport(
             channel,
-            identifiers.get(key)!,
+            buildExportIdentifierFromRunKey(sheet.guildId, key),
             getExportDate(sheet).toISOString().slice(0, 10),
           ));
         return threadId ? recoverExportThread(channel, threadId) : null;
       },
       contents,
-      overlapping.map((entry) => entry.key),
+      overlappingRunKeys,
     );
   } catch (error) {
     if (error instanceof ExportValidationError) return error.message;

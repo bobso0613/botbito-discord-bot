@@ -14,6 +14,7 @@ jest.unstable_mockModule("../config/discord-settings.js", () => ({
 }));
 const {
   buildExportIdentifier,
+  buildExportIdentifierFromRunKey,
   canExportSheet,
   ExportValidationError,
   getExportDate,
@@ -46,6 +47,18 @@ beforeEach(() => {
 });
 
 describe("signup export utilities", () => {
+  test("retains an earlier split footer after the signup instance selections change", () => {
+    const sheet = buildSheet({
+      instanceType: ["Endless Tower", "Endless Cellar"],
+    });
+    const savedKey = getExportRunKey(sheet, "Endless Tower");
+    const identifier = buildExportIdentifier(sheet, "Endless Tower");
+    sheet.instanceType = null;
+    expect(buildExportIdentifierFromRunKey(sheet.guildId, savedKey)).toBe(
+      identifier,
+    );
+    expect(buildExportIdentifier(sheet)).not.toBe(identifier);
+  });
   test.each([
     {
       serverTimezone: "GMT+8",

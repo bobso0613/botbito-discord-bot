@@ -1,5 +1,8 @@
 import { jest } from "@jest/globals";
 import { resolve } from "node:path";
+import { Collection } from "discord.js";
+import type { SignupSheet } from "../types/signup-sheet.js";
+import type { SignupExportPart } from "../types/signup-export.js";
 
 const files = new Map<string, string>();
 const readFile = jest.fn(async (path: string) => {
@@ -22,13 +25,216 @@ jest.unstable_mockModule("node:fs/promises", () => ({
   writeFile,
   rename,
 }));
+const getSignupSheet = jest.fn<() => Promise<SignupSheet | null>>();
+jest.unstable_mockModule("./signup-sheet.service.js", () => ({
+  getSignupSheet,
+}));
 const { exportSignupRun, getCurrentlyVendingThreads } =
   await import("./signup-export.service.js");
+const { sendExport } = await import("./signup-export-forum.service.js");
+const { buildExportIdentifier, getExportRunKey } =
+  await import("../utils/signup-export.js");
 
 describe("signup export history", () => {
   beforeEach(() => {
     files.clear();
     jest.clearAllMocks();
+  });
+
+  it.each([
+    { selection: "cleared", instanceType: null },
+    { selection: "replaced", instanceType: ["Different One", "Different Two"] },
+  ])(
+    "does not post again after ET/EC split selections are $selection",
+    async ({ instanceType }) => {
+      const sheet: SignupSheet = {
+        guildId: "guild",
+        channelId: "signup",
+        title: "Endless Tower",
+        organizerId: "organizer",
+        organizerName: "Organizer",
+        organizerAvatarUrl: "",
+        partySizes: [1],
+        slots: [
+          {
+            number: 1,
+            role: "DPS",
+            signupUserId: "member",
+            signupDisplayName: "Member",
+            charNote: null,
+          },
+        ],
+        reserves: [],
+        notes: null,
+        thumbnailUrl: null,
+        color: null,
+        instanceType: ["Endless Tower", "Endless Cellar"],
+        timestamp: Date.UTC(2026, 9, 1) / 1000,
+        serverTimezone: "GMT",
+        scheduleTimezone: null,
+      };
+      getSignupSheet.mockImplementation(async () => sheet);
+      const create = jest.fn(async () => ({ id: "post", send: jest.fn() }));
+      const forum = {
+        client: { user: { id: "bot" } },
+        threads: {
+          create,
+          fetchActive: jest.fn(async () => ({ threads: new Collection() })),
+          fetchArchived: jest.fn(async () => ({
+            threads: new Collection(),
+            hasMore: false,
+          })),
+        },
+      };
+      const part = (instanceName?: string): SignupExportPart => ({
+        runKey: getExportRunKey(sheet, instanceName),
+        identifier: buildExportIdentifier(sheet, instanceName),
+        sheet: instanceName
+          ? { ...sheet, instanceType: [instanceName] }
+          : sheet,
+        slots: sheet.slots,
+        contents: ["<@member>"],
+        vendor: "Vendor",
+      });
+      await sendExport(
+        "organizer",
+        forum as never,
+        sheet,
+        part("Endless Tower"),
+      );
+      await sendExport(
+        "organizer",
+        forum as never,
+        sheet,
+        part("Endless Cellar"),
+      );
+      sheet.instanceType = instanceType;
+      sheet.title = "  ENDLESS   TOWER  ";
+      await expect(
+        sendExport("organizer", forum as never, sheet, part()),
+      ).resolves.toContain("already been exported");
+      expect(create).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it.each([
+    { selection: "cleared", currentSplitKeys: [] },
+    {
+      selection: "replaced",
+      currentSplitKeys: [
+        JSON.stringify(["endless tower", "2026-10-01", "Different Instance"]),
+      ],
+    },
+  ])(
+    "blocks a combined export after split selections are $selection",
+    async ({ currentSplitKeys }) => {
+      const combined = JSON.stringify(["endless tower", "2026-10-01"]);
+      const first = JSON.stringify([
+        "endless tower",
+        "2026-10-01",
+        "Endless Tower",
+      ]);
+      const second = JSON.stringify([
+        "endless tower",
+        "2026-10-01",
+        "Endless Cellar",
+      ]);
+      const create = jest.fn(async () => "split-thread");
+      await exportSignupRun(
+        "guild",
+        first,
+        create,
+        undefined,
+        ["<@member>"],
+        [combined],
+      );
+      await exportSignupRun(
+        "guild",
+        second,
+        create,
+        undefined,
+        ["<@member>"],
+        [combined],
+      );
+      await expect(
+        exportSignupRun(
+          "guild",
+          combined,
+          create,
+          undefined,
+          undefined,
+          currentSplitKeys,
+        ),
+      ).resolves.toEqual({ created: false, threadId: "split-thread" });
+      expect(create).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("keeps missing split parts retryable without matching unrelated titles or dates", async () => {
+    const combined = JSON.stringify(["run", "2026-10-01"]);
+    const first = JSON.stringify(["run", "2026-10-01", "ET"]);
+    const second = JSON.stringify(["run", "2026-10-01", "EC"]);
+    const create = jest.fn(async () => "thread");
+    await exportSignupRun("guild", first, create);
+    await expect(
+      exportSignupRun("guild", second, create, undefined, undefined, [
+        combined,
+      ]),
+    ).resolves.toEqual({ created: true, threadId: "thread" });
+    await exportSignupRun(
+      "guild",
+      JSON.stringify(["other", "2026-10-01"]),
+      create,
+    );
+    await exportSignupRun(
+      "guild",
+      JSON.stringify(["run", "2026-10-02"]),
+      create,
+    );
+    expect(create).toHaveBeenCalledTimes(4);
+  });
+
+  it("recovers an earlier split identity from a pending entry after selections are cleared", async () => {
+    const combined = JSON.stringify(["run", "2026-10-01"]);
+    const split = JSON.stringify(["run", "2026-10-01", "Endless Tower"]);
+    const path = resolve(
+      process.cwd(),
+      "private",
+      "signup-exports",
+      "guild.json",
+    );
+    files.set(path, JSON.stringify({ [split]: { threadId: null } }));
+    const recovered = {
+      threadId: "original",
+      contents: ["<@original-member>"],
+    };
+    const find = jest.fn(async (key: string) =>
+      key === split ? recovered : null,
+    );
+    const create = jest.fn(async () => "duplicate");
+    await expect(
+      exportSignupRun("guild", combined, create, find, ["<@changed-member>"]),
+    ).resolves.toEqual({ created: false, threadId: "original" });
+    expect(find).toHaveBeenCalledWith(split, undefined);
+    expect(JSON.parse(files.get(path)!)[split]).toEqual(recovered);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("rechecks identifiers and retries an ID-only entry whose original thread is deleted", async () => {
+    const path = resolve(
+      process.cwd(),
+      "private",
+      "signup-exports",
+      "guild.json",
+    );
+    files.set(path, JSON.stringify({ run: { threadId: "deleted" } }));
+    const find = jest.fn(async () => null);
+    const create = jest.fn(async () => "replacement");
+    await expect(
+      exportSignupRun("guild", "run", create, find),
+    ).resolves.toEqual({ created: true, threadId: "replacement" });
+    expect(find.mock.calls).toEqual([["run", "deleted"], ["run"]]);
+    expect(create).toHaveBeenCalledTimes(1);
   });
 
   it("lists only participating exports whose current thread title is still vending with shares", async () => {
