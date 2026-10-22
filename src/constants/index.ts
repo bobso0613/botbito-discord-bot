@@ -21,7 +21,8 @@ export const COMMAND_GUIDE: ReadonlyArray<{
 }> = [
   {
     name: "/payout",
-    description: "Get your payout details in this server",
+    description:
+      "View balances and 🛒Currently Vending below Distributed. Lists this server's signup-exports threads with your exact <@ID> in saved contents, a current title containing ⏳, and no NO SHARE (case-insensitive). Threads appear even with zero balances; an empty list shows None.",
     emoji: "💰",
     parameters: [
       {
@@ -117,6 +118,19 @@ export const COMMAND_GUIDE: ReadonlyArray<{
     description:
       "Show this guild's current schedule and cooldown settings (Administrator only)",
     emoji: "⚙️",
+  },
+  {
+    name: "/guildsetting set payout-channel-id",
+    description:
+      "Select the payout forum channel (Administrator only; payout-enabled servers)",
+    emoji: "⚙️",
+    parameters: [
+      {
+        name: "channel",
+        description: "Select or mention a forum channel in this server",
+        required: true,
+      },
+    ],
   },
   {
     name: "/guildsetting set tracked-category",
@@ -217,6 +231,12 @@ export const COMMAND_GUIDE: ReadonlyArray<{
         name: "emoji",
         description: "Display emoji",
         required: true,
+      },
+      {
+        name: "initials",
+        description:
+          "Short instance label; omitted values preserve existing initials",
+        required: false,
       },
     ],
   },
@@ -519,6 +539,12 @@ export const COMMAND_GUIDE: ReadonlyArray<{
     name: "/when",
     description: "Show the run time",
     emoji: "⌛",
+  },
+  {
+    name: "/export",
+    description:
+      "Export confirmed main slots to the payout forum (organizer only; payout-enabled servers). No reserves/TBC. Once per run title and full date; IDs check active/archived posts. DD/MM title with instance emojis; party headings, consecutive numbering, member mentions, Participants, instance names, and localized/relative timestamps. Success and failure replies are public.",
+    emoji: "📤",
   },
   {
     name: "/ping",

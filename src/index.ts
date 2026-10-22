@@ -20,6 +20,7 @@ import { sendHelp, handleHelpAutocomplete } from "./commands/help.command.js";
 import { sendMyCooldowns } from "./commands/mycooldowns.command.js";
 import { sendMySchedule } from "./commands/mysched.command.js";
 import { sendPayout } from "./commands/payout.command.js";
+import { executeExport } from "./commands/export.command.js";
 import {
   handleSetInstanceTypeAutocomplete,
   handleSignupModal,
@@ -40,6 +41,7 @@ import {
   SIGNUP_ADD_CONFIRM_BUTTON_ID,
   SIGNUP_ADD_CANCEL_BUTTON_ID,
   SIGNUP_INFO_BUTTON_ID,
+  SIGNUP_EXPORT_BUTTON_ID,
   SIGNUP_INSTANCE_TYPE_BUTTON_ID,
   SIGNUP_INSTANCE_TYPE_BACK_BUTTON_ID,
   SIGNUP_INSTANCE_TYPE_SELECT_ID,
@@ -249,6 +251,7 @@ const BUTTON_ACTIONS: Readonly<
     handleSignupAddCancelButton(buttonInteraction),
   [SIGNUP_INFO_BUTTON_ID]: (buttonInteraction) =>
     handleSignupInfoButton(buttonInteraction),
+  [SIGNUP_EXPORT_BUTTON_ID]: executeExport,
   [SIGNUP_ADD_BUTTON_ID]: (buttonInteraction) =>
     handleSignupAddButton(buttonInteraction),
   [SIGNUP_REMOVE_BUTTON_ID]: (buttonInteraction) =>

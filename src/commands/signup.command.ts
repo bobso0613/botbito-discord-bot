@@ -16,6 +16,7 @@ import { COOLDOWN_INSTANCE_TYPES } from "../constants/cooldowns.js";
 import {
   MAX_DISCORD_MESSAGE_LENGTH,
   INSTANCE_TYPE_NONE_VALUE,
+  MAX_INSTANCE_TYPES,
   MAX_PING_MESSAGE_LENGTH,
 } from "../constants/signup.js";
 import {
@@ -466,6 +467,9 @@ const signupCommandDefinitions: Command[] = [
         const isNone =
           types.length === 1 &&
           types[0]?.toLowerCase() === INSTANCE_TYPE_NONE_VALUE;
+        if (types.length > MAX_INSTANCE_TYPES) {
+          return `Select at most ${MAX_INSTANCE_TYPES} instance types.`;
+        }
         if (
           !isNone &&
           (types.length === 0 ||
@@ -974,30 +978,36 @@ export const handleSetInstanceTypeAutocomplete = async (
     const token = getInstanceTypeAutocompleteToken(type.name);
     tokenCounts.set(token, (tokenCounts.get(token) ?? 0) + 1);
   }
-  await interaction.respond([
-    ...(prefix.length === 0
-      ? [{ name: "None", value: INSTANCE_TYPE_NONE_VALUE }]
-      : []),
-    ...instanceTypes
-      .flatMap((type) =>
-        type.name !== "Others" &&
-        !prefixNames.includes(type.name) &&
-        type.name.toLowerCase().includes(focused) &&
-        tokenCounts.get(getInstanceTypeAutocompleteToken(type.name)) === 1
-          ? [
-              {
-                name: [...prefixNames, type.name].join(", ").slice(0, 100),
-                value: [
-                  ...prefixValues,
-                  getInstanceTypeAutocompleteToken(type.name),
-                ].join(", "),
-              },
-            ]
-          : [],
-      )
-      .slice(0, 24)
-      .filter((choice) => choice.value.length <= 100),
-  ]);
+  await interaction.respond(
+    prefix.length >= MAX_INSTANCE_TYPES
+      ? []
+      : [
+          ...(prefix.length === 0
+            ? [{ name: "None", value: INSTANCE_TYPE_NONE_VALUE }]
+            : []),
+          ...instanceTypes
+            .flatMap((type) =>
+              type.name !== "Others" &&
+              !prefixNames.includes(type.name) &&
+              type.name.toLowerCase().includes(focused) &&
+              tokenCounts.get(getInstanceTypeAutocompleteToken(type.name)) === 1
+                ? [
+                    {
+                      name: [...prefixNames, type.name]
+                        .join(", ")
+                        .slice(0, 100),
+                      value: [
+                        ...prefixValues,
+                        getInstanceTypeAutocompleteToken(type.name),
+                      ].join(", "),
+                    },
+                  ]
+                : [],
+            )
+            .slice(0, 24)
+            .filter((choice) => choice.value.length <= 100),
+        ],
+  );
 };
 
 /**

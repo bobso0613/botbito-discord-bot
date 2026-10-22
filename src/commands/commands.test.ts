@@ -7,6 +7,7 @@ import {
 import type { PayoutDetails, PayoutSummary } from "../types/payout.js";
 
 const getPayoutDetails = jest.fn<() => Promise<PayoutDetails>>();
+const getCurrentlyVendingThreads = jest.fn<() => Promise<string[]>>();
 const getPayoutSummary = jest.fn<() => Promise<PayoutSummary>>();
 const buildPayoutEmbed = jest.fn().mockReturnValue({ kind: "payout" });
 const buildPayoutEmbedNotJoined = jest
@@ -28,6 +29,9 @@ const resolvePayoutDisplayName = jest.fn().mockReturnValue("Alice");
 jest.unstable_mockModule("../services/payout.service.js", () => ({
   getPayoutDetails,
   getPayoutSummary,
+}));
+jest.unstable_mockModule("../services/signup-export.service.js", () => ({
+  getCurrentlyVendingThreads,
 }));
 jest.unstable_mockModule("../templates/payout.template.js", () => ({
   buildPayoutEmbed,
@@ -84,6 +88,7 @@ const createInteraction = (overrides: Record<string, unknown> = {}) => ({
 describe("command handlers", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    getCurrentlyVendingThreads.mockResolvedValue([]);
     getPayoutDetails.mockResolvedValue({
       pending: 100,
       shareReady: 0,

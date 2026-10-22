@@ -68,6 +68,8 @@ export const SIGNUP_COMMANDS_HELP_TEXT = [
   "",
   "**Schedule Commands:** `/when`, `/sdt`, `/gonow`, `/next week`, `/postpone`",
   "",
+  "**Payout Export:** `/export` - organizer only; exports filled slots with member mentions to the configured payout forum in payout-enabled servers.",
+  "",
   "Schedule, name, note, and organizer changes post a public action notice after the updated sheet is sent.",
   "",
   "Use: `/last` or `/show`",

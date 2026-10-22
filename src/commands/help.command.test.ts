@@ -18,6 +18,19 @@ const createInteraction = () => ({
 describe("help command", () => {
   it.each([
     {
+      command: "/payout",
+      expected: [
+        "Currently Vending below Distributed",
+        "signup-exports",
+        "exact <@ID> in saved contents",
+        "current title containing ⏳",
+        "no NO SHARE (case-insensitive)",
+        "even with zero balances",
+        "empty list shows None",
+        "default: public",
+      ],
+    },
+    {
       command: "/mycooldowns",
       expected: [
         "cooldownInstanceTypes",
@@ -58,6 +71,30 @@ describe("help command", () => {
     {
       command: "/newrun",
       expected: ["up to 8 parties"],
+    },
+    {
+      command: "/export",
+      expected: [
+        "organizer only",
+        "No reserves/TBC",
+        "full date",
+        "active/archived",
+        "DD/MM",
+        "instance emojis",
+        "party headings",
+        "consecutive numbering",
+        "Participants",
+        "timestamps",
+        "public",
+      ],
+    },
+    {
+      command: "/guildsetting set payout-channel-id",
+      expected: ["**channel** (required)", "Select or mention a forum channel"],
+    },
+    {
+      command: "/guildsetting set cooldown-instance-types",
+      expected: ["**initials** (optional)", "preserve existing initials"],
     },
     {
       command: "/ping",
@@ -158,6 +195,9 @@ describe("help command", () => {
     expect(administration?.value).toContain(
       "/guildsetting set tracked-category",
     );
+    for (const field of embeds[0]?.data.fields ?? []) {
+      expect(field.value.length).toBeLessThanOrEqual(1024);
+    }
   });
 
   it("configures /help for guilds and bot DMs with autocomplete", async () => {

@@ -89,6 +89,13 @@ const loadDiscordSettings = (): DiscordSettings => {
 
   return {
     payoutGuildIds: settings.payoutGuildIds,
+    payoutSheetChannelIdByGuild: Object.fromEntries(
+      Object.entries(guildSettings).flatMap(([guildId, guildSetting]) =>
+        guildSetting.payoutSheetChannelId
+          ? [[guildId, guildSetting.payoutSheetChannelId]]
+          : [],
+      ),
+    ),
     payoutToPingId: settings.payoutToPingId,
     payoutToPingTag: settings.payoutToPingTag,
     guildScheduleBotIds: guildScheduleSettings.guildScheduleBotIds,

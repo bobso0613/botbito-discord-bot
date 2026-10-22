@@ -2,6 +2,8 @@ import type { InstanceType } from "../constants/cooldowns.js";
 
 /** Runtime Discord settings loaded from private/discord_settings.json. */
 export interface DiscordSettings {
+  /** Maps guild IDs to configured payout forum channels, excluding unset destinations. */
+  payoutSheetChannelIdByGuild?: Readonly<Record<string, string>>;
   /** Guild IDs where payout commands are registered. */
   payoutGuildIds: readonly string[];
   /** Discord user ID mentioned as the payout contact. */
@@ -34,6 +36,8 @@ export interface DiscordSettings {
 
 /** Settings stored in private/guild-settings/<guild-id>.json. */
 export interface GuildSettings {
+  /** Forum destination for exported signup rosters; absent or null until configured. */
+  payoutSheetChannelId?: string | null;
   /** Source categories and optional restrictions for this guild's schedules. */
   guildScheduleSource: DiscordSettings["guildScheduleSourceByGuild"][string];
   /** Cooldown instance definitions selectable for this guild. */

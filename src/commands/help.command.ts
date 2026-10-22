@@ -17,10 +17,12 @@ export type HelpInteraction = ChatInputCommandInteraction | ButtonInteraction;
 const CATEGORY_BY_COMMAND_NAME: Record<string, string> = {
   "/payout": "Payout",
   "/payoutsummary": "Payout",
+  "/export": "Payout",
   "/guildsched": "Schedule",
   "/mysched": "Schedule",
   "/mycooldowns": "Schedule",
   "/guildsetting show": "Administration",
+  "/guildsetting set payout-channel-id": "Payout",
   "/guildsetting set tracked-category": "Administration",
   "/guildsetting set excluded-channels": "Administration",
   "/guildsetting set schedule-channels": "Administration",

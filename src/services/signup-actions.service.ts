@@ -13,6 +13,7 @@ import {
   SIGNUP_ADD_BUTTON_ID,
   SIGNUP_CHARNOTE_BUTTON_ID,
   SIGNUP_INFO_BUTTON_ID,
+  SIGNUP_EXPORT_BUTTON_ID,
   SIGNUP_REMOVE_BUTTON_ID,
   SIGNUP_REMOVE_CHARNOTE_BUTTON_ID,
   SIGNUP_SWAP_BUTTON_ID,
@@ -114,6 +115,10 @@ export const buildSignupSheetComponents =
       new ButtonBuilder()
         .setCustomId(SIGNUP_INFO_BUTTON_ID)
         .setLabel("Command List")
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(SIGNUP_EXPORT_BUTTON_ID)
+        .setLabel("Export")
         .setStyle(ButtonStyle.Secondary),
     ),
   ];

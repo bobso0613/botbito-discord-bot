@@ -135,7 +135,10 @@ describe("signup actions service", () => {
       components[1]?.components.map(
         (button) => (button.data as { label?: string }).label,
       ),
-    ).toEqual(["Char", "Remove Char", "Schedule", "Command List"]);
+    ).toEqual(["Char", "Remove Char", "Schedule", "Command List", "Export"]);
+    expect(components[1]?.components[4]?.data).toMatchObject({
+      custom_id: "signup-export",
+    });
   });
 
   it("loads a sheet only when the interaction identifies a guild and channel", async () => {

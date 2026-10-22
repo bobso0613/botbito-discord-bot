@@ -13,6 +13,7 @@ const updateGuildScheduleSource =
     ) => Promise<void>
   >();
 const publishGuildScheduleAnnouncement = jest.fn();
+const updateGuildPayoutChannel = jest.fn();
 const updateGuildCooldownSettings =
   jest.fn<
     (
@@ -39,6 +40,7 @@ const DISCORD_SETTINGS: DiscordSettings = {
 jest.unstable_mockModule("../services/guild-settings.service.js", () => ({
   updateGuildScheduleSource,
   updateGuildCooldownSettings,
+  updateGuildPayoutChannel,
 }));
 jest.unstable_mockModule(
   "../services/guild-schedule-announcement.service.js",
@@ -52,6 +54,7 @@ const { guildSettingCommand } = await import("./guildsetting.command.js");
 
 afterEach(() => {
   Object.assign(DISCORD_SETTINGS, {
+    payoutGuildIds: [],
     cooldownInstanceTypesByGuild: {},
     multiplierInstanceTypesByGuild: {},
   });
@@ -132,12 +135,112 @@ const createInteraction = (
   options: {
     getSubcommand: jest.fn().mockReturnValue(subcommand),
     getSubcommandGroup: jest.fn().mockReturnValue(subcommandGroup),
-    getString: jest.fn((name: string) => optionValues[name] ?? value),
+    getString: jest.fn((name: string) =>
+      name === "initials"
+        ? (optionValues[name] ?? null)
+        : (optionValues[name] ?? value),
+    ),
+    getChannel: jest.fn(() => ({ id: value })),
   },
   reply: jest.fn(),
 });
 
 describe("guild setting command", () => {
+  it("offers a forum-only Discord channel picker", () => {
+    const set = guildSettingCommand.data
+      .toJSON()
+      .options?.find((option) => option.name === "set");
+    expect(set).toMatchObject({
+      options: expect.arrayContaining([
+        expect.objectContaining({
+          name: "payout-channel-id",
+          options: [
+            {
+              name: "channel",
+              description: "Forum channel in this server",
+              type: 7,
+              required: true,
+              channel_types: [ChannelType.GuildForum],
+            },
+          ],
+        }),
+      ]),
+    });
+  });
+
+  it("sets a selected payout forum for payout-enabled guilds", async () => {
+    DISCORD_SETTINGS.payoutGuildIds = ["guild-id"];
+    guild.channels.fetch.mockResolvedValueOnce({
+      id: "123",
+      type: ChannelType.GuildForum,
+    });
+    const interaction = createInteraction("payout-channel-id", "123");
+    await guildSettingCommand.execute(interaction as never);
+    expect(interaction.options.getChannel).toHaveBeenCalledWith(
+      "channel",
+      true,
+    );
+    expect(interaction.options.getString).not.toHaveBeenCalled();
+    expect(updateGuildPayoutChannel).toHaveBeenCalledWith("guild-id", "123");
+    expect(interaction.reply).toHaveBeenCalledWith({
+      content: "Payout forum channel set to <#123>.",
+      flags: MessageFlags.Ephemeral,
+    });
+  });
+
+  it.each([
+    ChannelType.GuildText,
+    ChannelType.GuildVoice,
+    ChannelType.GuildCategory,
+  ])("rejects non-forum payout channels of type %s", async (type) => {
+    DISCORD_SETTINGS.payoutGuildIds = ["guild-id"];
+    guild.channels.fetch.mockResolvedValueOnce({ id: "123", type });
+    const interaction = createInteraction("payout-channel-id", "123");
+    await guildSettingCommand.execute(interaction as never);
+    expect(updateGuildPayoutChannel).not.toHaveBeenCalled();
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: "Select a forum channel in this server.",
+      }),
+    );
+  });
+
+  it("rejects payout settings outside payout-enabled guilds", async () => {
+    const interaction = createInteraction("payout-channel-id", "123");
+    await guildSettingCommand.execute(interaction as never);
+    expect(updateGuildPayoutChannel).not.toHaveBeenCalled();
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining("payout-enabled"),
+      }),
+    );
+  });
+
+  it("rejects payout settings from non-administrators", async () => {
+    DISCORD_SETTINGS.payoutGuildIds = ["guild-id"];
+    const interaction = createInteraction(
+      "payout-channel-id",
+      "123",
+      "set",
+      false,
+    );
+    await guildSettingCommand.execute(interaction as never);
+    expect(updateGuildPayoutChannel).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unknown or inaccessible selected payout forum", async () => {
+    DISCORD_SETTINGS.payoutGuildIds = ["guild-id"];
+    guild.channels.fetch.mockRejectedValueOnce(new Error("Unknown channel"));
+    const interaction = createInteraction("payout-channel-id", "123");
+    await guildSettingCommand.execute(interaction as never);
+    expect(updateGuildPayoutChannel).not.toHaveBeenCalled();
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: "Select a forum channel in this server.",
+      }),
+    );
+  });
+
   it("sets tracked categories from channel links and names", async () => {
     updateGuildScheduleSource.mockImplementation(
       async (_guildId, update: (value: typeof source) => void) =>
@@ -211,6 +314,134 @@ describe("guild setting command", () => {
       expect.anything(),
       expect.anything(),
       expect.anything(),
+    );
+  });
+
+  it.each([
+    { initials: " CR ", expected: "CR" },
+    { initials: undefined, expected: undefined },
+    { initials: " ", expected: undefined },
+  ])(
+    "stores optional initials ($initials) when creating an instance type",
+    async ({ initials, expected }) => {
+      const settings: Pick<
+        GuildSettings,
+        "cooldownInstanceTypes" | "multiplierInstanceTypes"
+      > = {
+        cooldownInstanceTypes: [],
+        multiplierInstanceTypes: [],
+      };
+      updateGuildCooldownSettings.mockImplementation(async (_guildId, update) =>
+        update(settings),
+      );
+      const options: Record<string, string> = {
+        name: "Custom Run",
+        keywords: "CR, Custom Run",
+        maxattempts: "2",
+        emoji: "x",
+      };
+      if (initials !== undefined) options.initials = initials;
+      await guildSettingCommand.execute(
+        createInteraction(
+          "cooldown-instance-types",
+          "Custom Run",
+          "set",
+          true,
+          options,
+        ) as never,
+      );
+      expect(settings.cooldownInstanceTypes[0]?.initials).toBe(expected);
+      if (expected === undefined) {
+        expect(settings.cooldownInstanceTypes[0]).not.toHaveProperty(
+          "initials",
+        );
+      }
+    },
+  );
+
+  it.each([
+    { initials: undefined, expected: "OLD" },
+    { initials: "NEW", expected: "NEW" },
+  ])(
+    "preserves or updates existing initials ($initials)",
+    async ({ initials, expected }) => {
+      const settings: Pick<
+        GuildSettings,
+        "cooldownInstanceTypes" | "multiplierInstanceTypes"
+      > = {
+        cooldownInstanceTypes: [
+          {
+            name: "Custom Run",
+            initials: "OLD",
+            keywords: ["CR"],
+            maxAttempts: 1,
+            emoji: "x",
+          },
+        ],
+        multiplierInstanceTypes: [],
+      };
+      updateGuildCooldownSettings.mockImplementation(async (_guildId, update) =>
+        update(settings),
+      );
+      const options: Record<string, string> = {
+        name: "Custom Run",
+        keywords: "CR",
+        maxattempts: "2",
+        emoji: "x",
+      };
+      if (initials !== undefined) options.initials = initials;
+      await guildSettingCommand.execute(
+        createInteraction(
+          "cooldown-instance-types",
+          "Custom Run",
+          "set",
+          true,
+          options,
+        ) as never,
+      );
+      expect(settings.cooldownInstanceTypes).toHaveLength(1);
+      expect(settings.cooldownInstanceTypes[0]?.initials).toBe(expected);
+    },
+  );
+
+  it("registers initials as an optional string option", () => {
+    const set = guildSettingCommand.data
+      .toJSON()
+      .options?.find((option) => option.name === "set");
+    expect(set).toMatchObject({
+      options: expect.arrayContaining([
+        expect.objectContaining({
+          name: "cooldown-instance-types",
+          options: expect.arrayContaining([
+            expect.objectContaining({
+              name: "initials",
+              type: 3,
+              required: false,
+            }),
+          ]),
+        }),
+      ]),
+    });
+  });
+
+  it("shows configured instance initials in the guild settings summary", async () => {
+    Object.assign(DISCORD_SETTINGS.cooldownInstanceTypesByGuild, {
+      "guild-id": [
+        {
+          name: "Custom Run",
+          initials: "CR",
+          keywords: ["CR"],
+          emoji: "x",
+          maxAttempts: 2,
+        },
+      ],
+    });
+    const interaction = createInteraction("show", "", null);
+    await guildSettingCommand.execute(interaction as never);
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining("Custom Run (CR) (max 2)"),
+      }),
     );
   });
 

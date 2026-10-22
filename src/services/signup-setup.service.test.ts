@@ -78,6 +78,47 @@ describe("signup setup service", () => {
     pendingRosterUsers.clear();
   });
 
+  it.each([undefined, null, "different-organizer-id"])(
+    "does not replace an existing sheet's organizer with the editor (stored ID: %s)",
+    (organizerId) => {
+      const sheet = createSheet();
+      sheet.organizerId = organizerId;
+      sheet.organizerName = "Different Organizer";
+      const result = parseSetup(
+        createModalInteraction({
+          title: "Edited Run",
+          datetime: "TBD",
+          timezone: "GMT",
+          parties: "1",
+          sizes: "2",
+        }),
+        sheet,
+      );
+      expect(result).toMatchObject({
+        sheet: {
+          organizerId: organizerId ?? null,
+          organizerName: "Different Organizer",
+          organizerAvatarUrl: sheet.organizerAvatarUrl,
+        },
+      });
+    },
+  );
+
+  it("assigns the creator as organizer for a new run", () => {
+    const result = parseSetup(
+      createModalInteraction({
+        title: "New Run",
+        datetime: "TBD",
+        timezone: "GMT",
+        parties: "1",
+        sizes: "2",
+      }),
+    );
+    expect(result).toMatchObject({
+      sheet: { organizerId: "organizer-id", organizerName: "Organizer" },
+    });
+  });
+
   it("builds the setup controls and roster prompt cancel button", () => {
     expect(
       buildSetupPromptButtons().components.map(

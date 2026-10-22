@@ -8,18 +8,37 @@ import { DISCORD_SETTINGS } from "../config/discord-settings.js";
 const pepeMoneyRainEmojiId = process.env.PEPEMONEYRAIN_EMOJI_ID;
 
 const getClaimMessage = (context: InteractionContext): string =>
-  `Please ping <@${DISCORD_SETTINGS.payoutToPingId}> (@${DISCORD_SETTINGS.payoutToPingTag}) if you want to claim.${
-    DISCORD_SETTINGS.payoutToPingId === context.userId
-      ? " Oh wait, that's me! lol"
-      : ""
-  }`;
+  DISCORD_SETTINGS.payoutToPingId === context.userId
+    ? ""
+    : `Please ping <@${DISCORD_SETTINGS.payoutToPingId}> (@${DISCORD_SETTINGS.payoutToPingTag}) if you want to claim.`;
 
-/** Builds the standard payout-status embed for a member. */
+/**
+ * Builds payout balances with Currently Vending directly below Distributed.
+ * Splits vending links into fields of at most 1,024 characters; an empty list displays None.
+ * Shows the claim reminder after vending only for share-ready members other than the payout contact.
+ * @param details Member's payout-sheet balances.
+ * @param context Invoking member and guild display information.
+ * @param vendingThreads Pre-filtered Discord thread mentions from signup-export history.
+ * @returns Payout-status embed, including when only vending threads are present.
+ */
 export const buildPayoutEmbed = (
   details: PayoutDetails,
   context: InteractionContext,
+  vendingThreads: readonly string[] = [],
 ): EmbedBuilder => {
   const footer = getEmbedFooter(context);
+  const claimMessage = details.shareReady > 0 ? getClaimMessage(context) : "";
+  const vendingFields: string[] = [];
+  for (const thread of vendingThreads) {
+    const lastIndex = vendingFields.length - 1;
+    const previous = vendingFields[lastIndex];
+    if (previous && previous.length + thread.length + 1 <= 1024) {
+      vendingFields[lastIndex] = `${previous}\n${thread}`;
+    } else {
+      vendingFields.push(thread);
+    }
+  }
+  if (vendingFields.length === 0) vendingFields.push("None");
 
   return new EmbedBuilder()
     .setAuthor({
@@ -41,11 +60,20 @@ export const buildPayoutEmbed = (
       { name: "\u200b", value: "", inline: false },
       {
         name: "✅ Distributed",
-        value: `${formatZeny(details.distributed)}${
-          details.shareReady > 0 ? `\n\n${getClaimMessage(context)}` : ""
-        }`,
+        value: formatZeny(details.distributed),
         inline: false,
       },
+      ...vendingFields.map((value, index) => ({
+        name:
+          index === 0
+            ? "🛒Currently Vending"
+            : "🛒Currently Vending (continued)",
+        value,
+        inline: false,
+      })),
+      ...(claimMessage
+        ? [{ name: "\u200b", value: claimMessage, inline: false }]
+        : []),
     )
     .setThumbnail(context.userAvatarUrl)
     .setColor("#00b0f4")
@@ -53,7 +81,7 @@ export const buildPayoutEmbed = (
     .setTimestamp();
 };
 
-/** Builds the payout-status embed shown when a member is not in the payout sheet. */
+/** Builds the not-joined response when all sheet balances are zero and no vending threads qualify. */
 export const buildPayoutEmbedNotJoined = (
   context: InteractionContext,
 ): EmbedBuilder => {
@@ -73,12 +101,13 @@ export const buildPayoutEmbedNotJoined = (
     .setTimestamp();
 };
 
-/** Builds the guild-wide payout summary embed for the selected amount. */
+/** Builds the guild-wide payout summary, omitting the claim reminder for the payout contact. */
 export const buildPayoutSummaryEmbed = (
   summary: PayoutSummary,
   context: InteractionContext,
 ): EmbedBuilder => {
   const footer = getEmbedFooter(context);
+  const claimMessage = getClaimMessage(context);
   const nameColumnWidth = 16;
   const amountColumnWidth = 16;
   const amountLabel =
@@ -122,11 +151,11 @@ export const buildPayoutSummaryEmbed = (
       value: formatZeny(summary.total),
       inline: false,
     },
-    ...(summary.amount === "shareReady"
+    ...(summary.amount === "shareReady" && claimMessage
       ? [
           {
             name: "Distribution",
-            value: getClaimMessage(context),
+            value: claimMessage,
             inline: false,
           },
         ]

@@ -17,6 +17,7 @@ import {
 import {
   CHANGE_ALL_MODAL_ID,
   INSTANCE_TYPE_NONE_VALUE,
+  MAX_INSTANCE_TYPES,
   MAX_SIGNUP_PARTIES,
   SETUP_MODAL_ID,
   SETUP_PROMPT_CONTENT,
@@ -110,7 +111,7 @@ export const buildInstanceTypeSelectRow = (
       .setMinValues(1)
       .setMaxValues(
         Math.min(
-          25,
+          MAX_INSTANCE_TYPES,
           instanceTypes.filter((type) => type.name !== "Others").length + 1,
         ),
       )
@@ -240,7 +241,9 @@ export const parseSetup = (
       guildId: interaction.guildId!,
       channelId: interaction.channelId!,
       title,
-      organizerId: existingSheet?.organizerId ?? interaction.user.id,
+      organizerId: existingSheet
+        ? (existingSheet.organizerId ?? null)
+        : interaction.user.id,
       organizerName:
         existingSheet?.organizerName ?? interaction.user.displayName,
       organizerAvatarUrl:
