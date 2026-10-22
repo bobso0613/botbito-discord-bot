@@ -1,5 +1,12 @@
-import { describe, expect, it, afterEach } from "@jest/globals";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { describe, expect, it, afterEach, jest } from "@jest/globals";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { InstanceType } from "../constants/cooldowns.js";
@@ -31,6 +38,29 @@ afterEach(async () => {
 });
 
 describe("retrofit cooldown initials", () => {
+  it("defaults to the bot working directory independently of the deployed script location", async () => {
+    const root = await createDirectory();
+    const directory = join(root, "private", "guild-settings");
+    await mkdir(directory, { recursive: true });
+    const path = join(directory, "guild.json");
+    const source = JSON.stringify({
+      cooldownInstanceTypes: [buildType(["ET"])],
+    });
+    await writeFile(path, source);
+    const cwd = jest.spyOn(process, "cwd").mockReturnValue(root);
+    try {
+      await expect(
+        retrofitGuildCooldownInitials(undefined, true),
+      ).resolves.toEqual([
+        { path, changes: [{ name: "Test Instance", initials: "ET" }] },
+      ]);
+      expect(await readFile(path, "utf8")).toBe(source);
+      expect(await readdir(directory)).toEqual(["guild.json"]);
+    } finally {
+      cwd.mockRestore();
+    }
+  });
+
   it("preserves the script's public helper export after extraction", () => {
     expect(addMissingCooldownInitials).toBe(inferInitials);
   });

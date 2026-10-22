@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it, jest } from "@jest/globals";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { ChannelType, Routes } from "discord.js";
-import { migrateSignupExports } from "./migrate-signup-exports.js";
+import {
+  migrateSignupExports,
+  parseSignupExportMigrationOptions,
+} from "./migrate-signup-exports.js";
 
 const directories: string[] = [];
 const createDirectory = async () => {
@@ -33,6 +36,38 @@ const createRest = (threads = [thread("legacy")]) => ({
 });
 
 describe("signup export migration", () => {
+  it("defaults to the bot working directory rather than the deployed script location", () => {
+    const root = resolve("deployed-bot");
+    expect(parseSignupExportMigrationOptions(["--dry-run"], root)).toEqual({
+      root,
+      directory: join(root, "private", "signup-exports"),
+      dryRun: true,
+    });
+  });
+
+  it("resolves an explicit bot root and relative history override without changing cwd", () => {
+    const cwd = process.cwd();
+    const root = resolve("deployed-bot");
+    expect(
+      parseSignupExportMigrationOptions([
+        "--root",
+        root,
+        "--directory",
+        "custom-exports",
+        "--dry-run",
+      ]),
+    ).toEqual({ root, directory: join(root, "custom-exports"), dryRun: true });
+    expect(process.cwd()).toBe(cwd);
+  });
+
+  it("honors an absolute history directory and does not enable dry-run by default", () => {
+    const root = resolve("deployed-bot");
+    const directory = resolve("separate-history");
+    expect(
+      parseSignupExportMigrationOptions(["--directory", directory], root),
+    ).toEqual({ root, directory, dryRun: false });
+  });
+
   it("dry-runs only eligible active pending forum threads without writing files", async () => {
     const directory = await createDirectory();
     const rest = createRest([

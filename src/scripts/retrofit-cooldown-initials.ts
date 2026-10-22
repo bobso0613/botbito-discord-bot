@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 import type { InstanceType } from "../constants/cooldowns.js";
 import { addMissingCooldownInitials } from "../utils/cooldown-initials.js";
 
@@ -10,12 +11,12 @@ export { addMissingCooldownInitials } from "../utils/cooldown-initials.js";
 
 /**
  * Plans all guild JSON changes before writing, then backs up and atomically replaces changed files.
- * @param directory Directory containing per-guild settings JSON files.
+ * @param directory Per-guild settings directory; defaults to private/guild-settings under the working directory.
  * @param dryRun Report changes without creating backups or updating files.
  * @returns Paths and inferred initials for files that need changes; repeated migrations are no-ops.
  */
 export const retrofitGuildCooldownInitials = async (
-  directory: string,
+  directory = resolve(process.cwd(), "private", "guild-settings"),
   dryRun = false,
 ) => {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -68,11 +69,18 @@ if (
   process.argv[1] &&
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
-  const directory = fileURLToPath(
-    new URL("../../private/guild-settings", import.meta.url),
-  );
-  const dryRun = process.argv.includes("--dry-run");
   try {
+    const { values } = parseArgs({
+      options: {
+        directory: { type: "string" },
+        "dry-run": { type: "boolean", default: false },
+      },
+    });
+    const directory = values.directory
+      ? resolve(values.directory)
+      : resolve(process.cwd(), "private", "guild-settings");
+    const dryRun = values["dry-run"];
+    console.log(`Using guild settings directory: ${directory}`);
     const results = await retrofitGuildCooldownInitials(directory, dryRun);
     for (const result of results) {
       const details = result.changes

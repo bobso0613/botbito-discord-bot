@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 import { ChannelType, REST, Routes, type APIMessage } from "discord.js";
 
 type ExportHistory = Record<
@@ -24,6 +25,31 @@ type MigrationPlan = {
   history: ExportHistory;
   added: number;
   updated: number;
+};
+
+/**
+ * Resolves CLI paths without depending on source, dist, or flattened hosting script locations.
+ * @param args Migration CLI arguments, excluding the node executable and script name.
+ * @param workingDirectory Default bot root when --root is omitted.
+ * @returns Absolute bot root and history directory, plus the dry-run setting.
+ */
+export const parseSignupExportMigrationOptions = (
+  args = process.argv.slice(2),
+  workingDirectory = process.cwd(),
+) => {
+  const { values } = parseArgs({
+    args,
+    options: {
+      root: { type: "string" },
+      directory: { type: "string" },
+      "dry-run": { type: "boolean", default: false },
+    },
+  });
+  const root = resolve(workingDirectory, values.root ?? ".");
+  const directory = values.directory
+    ? resolve(root, values.directory)
+    : resolve(root, "private", "signup-exports");
+  return { root, directory, dryRun: values["dry-run"] };
 };
 
 const loadHistory = async (path: string) => {
@@ -185,7 +211,7 @@ const writeMigrationPlan = async (plan: MigrationPlan): Promise<void> => {
  * @param rest Authenticated Discord REST client with message-history access.
  * @param guildIds Eligible payout guild IDs; guilds without a configured forum are skipped.
  * @param forumIds Configured payoutSheetChannelId values indexed by guild ID.
- * @param directory Destination signup-exports directory.
+ * @param directory Destination history directory; defaults to private/signup-exports under the working directory.
  * @param dryRun Whether to report changes without writing files or backups.
  * @returns Per-guild counts of added records and records with backfilled contents.
  */
@@ -222,16 +248,19 @@ if (
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   try {
+    const { root, directory, dryRun } = parseSignupExportMigrationOptions();
+    console.log(`Using bot root: ${root}`);
+    console.log(`Using signup export directory: ${directory}`);
+    process.chdir(root);
     await import("dotenv/config");
     if (!process.env.DISCORD_TOKEN)
       throw new Error("DISCORD_TOKEN must be set");
     const { DISCORD_SETTINGS } = await import("../config/discord-settings.js");
-    const dryRun = process.argv.includes("--dry-run");
     const results = await migrateSignupExports(
       new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN),
       DISCORD_SETTINGS.payoutGuildIds,
       DISCORD_SETTINGS.payoutSheetChannelIdByGuild ?? {},
-      undefined,
+      directory,
       dryRun,
     );
     for (const result of results) {

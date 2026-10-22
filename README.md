@@ -418,7 +418,8 @@ src/
 - `npm run build` compiles TypeScript to `dist/`.
 - `npm start` runs the compiled bot.
 - `npm run deploy-commands` registers `/help`, `/mysched`, and `/mycooldowns` globally and guild-specific payout and schedule commands in their configured guilds.
-- `npm run migrate:signup-exports -- --dry-run` previews legacy pending-thread imports; omit `--dry-run` to save them. After building, use `npm run migrate:signup-exports:dist -- --dry-run` for the compiled script.
+- `npm run retrofit:cooldown-initials -- --dry-run` previews inferred cooldown initials; omit `--dry-run` to save. After building, use `npm run retrofit:cooldown-initials:dist -- --dry-run`. Settings default to `private/guild-settings` under the working directory; `--directory /absolute/path/to/private/guild-settings` overrides that path.
+- `npm run migrate:signup-exports -- --dry-run` previews legacy pending-thread imports; omit `--dry-run` to save them. After building, use `npm run migrate:signup-exports:dist -- --dry-run` for the compiled script. `--root /absolute/path/to/bot` selects the bot root containing `.env` and `private/`; `--directory /absolute/path/to/signup-exports` overrides the destination history directory.
 - `npm test` runs the Jest unit tests.
 - `npm run test:coverage` runs Jest with coverage output for payout services and utilities.
 - `npm run docs` generates TypeDoc HTML reference pages in `docs/`.
@@ -426,6 +427,18 @@ src/
 - (On hosting) `nohup /opt/cpanel/ea-nodejs22/bin/node index.js & disown`
 
 Ensure `.env`, `private/discord_settings.json`, `private/guild_schedule_settings.json`, the relevant `private/guild-settings/<guild-id>.json` files, and the Google service-account JSON are present before starting the bot.
+
+### Running Migrations on Hosting
+
+By default, run migrations from the deployed bot root containing `.env` and `private/`, not from its `scripts/` directory. If the contents of `dist/` are uploaded directly into the bot root, the scripts live under `scripts/` rather than `dist/scripts/`. After rebuilding and uploading the updated JavaScript, preview migrations with:
+
+```sh
+cd /home/bd926c5/botbito-discord
+/opt/cpanel/ea-nodejs22/bin/node scripts/retrofit-cooldown-initials.js --dry-run
+/opt/cpanel/ea-nodejs22/bin/node scripts/migrate-signup-exports.js --dry-run
+```
+
+Omit `--dry-run` after reviewing the output; stop the bot before applying either migration. To run the cooldown migration from another working directory, pass `--directory /home/bd926c5/botbito-discord/private/guild-settings`. A missing settings directory is an error; the script does not create an empty replacement. For the signup-export migration, pass `--root /home/bd926c5/botbito-discord` when invoking it from another directory. The script switches to that root before loading `.env` and Discord settings, and logs the resolved root and history directory. Its optional `--directory` overrides only the signup-export history destination, not the configuration location; relative overrides resolve under the selected root.
 
 ### Legacy Payout Thread Migration
 
