@@ -68,9 +68,12 @@ export const buildPayoutEmbeds = (
       value: formatZeny(details.distributed),
       inline: false,
     },
+    { name: "\u200b", value: "", inline: false },
     ...vendingFields.map((value, index) => ({
       name:
-        index === 0 ? "🛒Currently Vending" : "🛒Currently Vending (continued)",
+        index === 0
+          ? "🛒 Currently Vending"
+          : "🛒 Currently Vending (continued)",
       value,
       inline: false,
     })),

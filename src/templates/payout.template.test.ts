@@ -62,7 +62,7 @@ describe("payout embed builders", () => {
       const allFields = pages.flatMap((page) => page.toJSON().fields!);
       expect(
         allFields
-          .filter((field) => field.name.startsWith("🛒Currently Vending"))
+          .filter((field) => field.name.startsWith("🛒 Currently Vending"))
           .flatMap((field) => field.value.split("\n")),
       ).toEqual(threads);
       expect(
@@ -71,7 +71,7 @@ describe("payout embed builders", () => {
       expect(allFields.at(-1)?.value).toContain("Please ping");
     },
   );
-  it("lists vending threads directly below Distributed", () => {
+  it("lists vending threads after a single non-inline spacer below Distributed", () => {
     const embed = buildPayoutEmbed(
       { pending: 0, shareReady: 0, distributed: 0, currency: "z" },
       context,
@@ -81,11 +81,14 @@ describe("payout embed builders", () => {
     const distributedIndex = fields.findIndex(
       (field) => field.name === "✅ Distributed",
     );
-    expect(fields[distributedIndex + 1]).toEqual({
-      name: "🛒Currently Vending",
-      value: "<#first-thread>\n<#second-thread>",
-      inline: false,
-    });
+    expect(fields.slice(distributedIndex + 1, distributedIndex + 3)).toEqual([
+      { name: "\u200b", value: "", inline: false },
+      {
+        name: "🛒 Currently Vending",
+        value: "<#first-thread>\n<#second-thread>",
+        inline: false,
+      },
+    ]);
   });
 
   it("splits long vending lists without dropping threads", () => {
@@ -99,8 +102,12 @@ describe("payout embed builders", () => {
       threads,
     )
       .toJSON()
-      .fields!.filter((field) => field.name.startsWith("🛒Currently Vending"));
+      .fields!.filter((field) => field.name.startsWith("🛒 Currently Vending"));
     expect(fields).toHaveLength(2);
+    expect(fields.map((field) => field.name)).toEqual([
+      "🛒 Currently Vending",
+      "🛒 Currently Vending (continued)",
+    ]);
     expect(fields.every((field) => field.value.length <= 1024)).toBe(true);
     expect(fields.flatMap((field) => field.value.split("\n"))).toEqual(threads);
   });
@@ -111,7 +118,7 @@ describe("payout embed builders", () => {
       context,
     );
     expect(embed.toJSON().fields).toContainEqual({
-      name: "🛒Currently Vending",
+      name: "🛒 Currently Vending",
       value: "None",
       inline: false,
     });
@@ -148,7 +155,7 @@ describe("payout embed builders", () => {
       ]),
     );
     const fields = embed.toJSON().fields!;
-    expect(fields.at(-2)?.name).toBe("🛒Currently Vending");
+    expect(fields.at(-2)?.name).toBe("🛒 Currently Vending");
     expect(fields.at(-1)?.value).toContain("Please ping");
   });
 
@@ -178,7 +185,7 @@ describe("payout embed builders", () => {
     const data = embed.toJSON();
     expect(JSON.stringify(data)).not.toContain("Please ping");
     expect(JSON.stringify(data)).not.toContain("Oh wait");
-    expect(data.fields?.at(-1)?.name).toBe("🛒Currently Vending");
+    expect(data.fields?.at(-1)?.name).toBe("🛒 Currently Vending");
   });
 
   it("builds the not-joined payout status message", () => {
