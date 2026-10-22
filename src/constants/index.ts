@@ -12,6 +12,7 @@ export const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1_000;
 export const COMMAND_GUIDE: ReadonlyArray<{
   name: string;
   description: string;
+  summary?: string;
   emoji: string;
   parameters?: ReadonlyArray<{
     name: string;
@@ -21,7 +22,10 @@ export const COMMAND_GUIDE: ReadonlyArray<{
 }> = [
   {
     name: "/payout",
-    description: "Get your payout details in this server",
+    summary:
+      "View your balances and Currently Vending links; overflow keeps the same privacy setting.",
+    description:
+      "View balances and 🛒Currently Vending below Distributed. Lists this server's signup-exports threads with your exact <@ID> in saved contents, a current title containing ⏳, and no NO SHARE (case-insensitive). Threads appear even with zero balances; an empty list shows None. Long lists continue in separate messages with the same privacy setting. Missing or malformed export history shows None without hiding balances.",
     emoji: "💰",
     parameters: [
       {
@@ -117,6 +121,19 @@ export const COMMAND_GUIDE: ReadonlyArray<{
     description:
       "Show this guild's current schedule and cooldown settings (Administrator only)",
     emoji: "⚙️",
+  },
+  {
+    name: "/guildsetting set payout-channel-id",
+    description:
+      "Select the payout forum channel (Administrator only; payout-enabled servers)",
+    emoji: "⚙️",
+    parameters: [
+      {
+        name: "channel",
+        description: "Select or mention a forum channel in this server",
+        required: true,
+      },
+    ],
   },
   {
     name: "/guildsetting set tracked-category",
@@ -217,6 +234,12 @@ export const COMMAND_GUIDE: ReadonlyArray<{
         name: "emoji",
         description: "Display emoji",
         required: true,
+      },
+      {
+        name: "initials",
+        description:
+          "Short instance label; omitted values preserve existing initials",
+        required: false,
       },
     ],
   },
@@ -452,13 +475,13 @@ export const COMMAND_GUIDE: ReadonlyArray<{
   },
   {
     name: "/setinstancetype",
-    description: "Set one or more configured instance types for this run",
+    description: "Set up to two configured instance types for this run",
     emoji: "🏷️",
     parameters: [
       {
         name: "type",
         description:
-          "Comma-separated instance names, e.g. Endless Tower, Endless Cellar. Autocomplete preserves previous selections. None clears the selection; empty comma entries are ignored. Setup also supports selecting multiple types.",
+          "Comma-separated instance names, e.g. Endless Tower, Endless Cellar; at most two types. Autocomplete preserves previous selections. None clears the selection; empty comma entries are ignored. Setup also supports selecting multiple types, up to two. Legacy saved selections are unchanged until submitted.",
         required: true,
       },
     ],
@@ -521,6 +544,44 @@ export const COMMAND_GUIDE: ReadonlyArray<{
     emoji: "⌛",
   },
   {
+    name: "/export",
+    summary:
+      "Export confirmed slots to the payout forum with vendor and optional split posts (organizer only).",
+    description:
+      "Export confirmed main slots to the configured payout forum (organizer only; payout-enabled servers). Set the run date with /sdt first. No reserves/TBC. Once per run title and full date across combined and split exports; IDs check active/archived posts. DD/MM title with Unicode instance emojis; custom emoji markup stays in the roster only. Keeps party headings, consecutive numbering, member mentions, Participants, vendors, instance names, and localized/relative timestamps. Preserve the - DD/MM title suffix when renaming posts for recovery. Interrupted exports recheck the forum before retrying. Missing split parts can be retried without duplicating completed parts. Success and failure replies are public and retain links to completed posts. Use this command, not an Export button; /show refreshes old sheet controls.",
+    emoji: "📤",
+    parameters: [
+      {
+        name: "vendor",
+        description: "Vendor name(s), or none",
+        required: true,
+      },
+      {
+        name: "split",
+        description:
+          "Create one post per instance type. Fewer than two types produces one post with an explanatory note. Use combined mode when both lineups are the same.",
+        required: false,
+      },
+      {
+        name: "second-vendor-name",
+        description: "Vendor for the second split post; defaults to vendor",
+        required: false,
+      },
+      {
+        name: "first-run-absent-slots",
+        description:
+          "Comma-separated original signup slot numbers absent from run one. Split: exclude only from the first post. Combined: exclude all specified absences.",
+        required: false,
+      },
+      {
+        name: "second-run-absent-slots",
+        description:
+          "Original signup slot numbers absent from run two. Split: exclude only from the second post. Combined: exclude all specified absences.",
+        required: false,
+      },
+    ],
+  },
+  {
     name: "/ping",
     description:
       "Send up to 500 characters to signup participants in the channel or by direct message. Channel pings split large recipient lists into messages within Discord's content limit. DM delivery acknowledges first, then confirms success and any failures.",
@@ -555,7 +616,9 @@ export const COMMAND_GUIDE: ReadonlyArray<{
   },
   {
     name: "/show",
-    description: "Show this channel's signup sheet (aliases: /last, /s)",
+    summary: "Show this channel's signup sheet (aliases: /last, /s)",
+    description:
+      "Show this channel's signup sheet with current action buttons (aliases: /last, /s). Refresh older sheets to remove the obsolete Export button; use /export with a vendor instead.",
     emoji: "👁️",
   },
   {

@@ -40,8 +40,11 @@ jest.unstable_mockModule("../config/discord-settings.js", () => ({
   reloadDiscordSettings,
 }));
 
-const { ensureGuildSettings, updateGuildScheduleSource } =
-  await import("./guild-settings.service.js");
+const {
+  ensureGuildSettings,
+  updateGuildScheduleSource,
+  updateGuildPayoutChannel,
+} = await import("./guild-settings.service.js");
 
 const getPath = (guildId: string): string =>
   resolve(process.cwd(), "private", "guild-settings", `${guildId}.json`);
@@ -56,6 +59,7 @@ describe("guild settings service", () => {
     await ensureGuildSettings("new-guild");
 
     expect(JSON.parse(files.get(getPath("new-guild")) ?? "")).toEqual({
+      payoutSheetChannelId: null,
       guildScheduleSource: {
         categoryIds: [],
         excludedChannelIds: [],
@@ -111,5 +115,16 @@ describe("guild settings service", () => {
     });
     expect(settings.guildIcons).toEqual({ DEV: "", PROD: "" });
     expect(reloadDiscordSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("persists a payout forum without changing schedule settings", async () => {
+    await ensureGuildSettings("payout-guild");
+    const before = JSON.parse(files.get(getPath("payout-guild"))!);
+    await updateGuildPayoutChannel("payout-guild", "forum-id");
+    expect(JSON.parse(files.get(getPath("payout-guild"))!)).toEqual({
+      ...before,
+      payoutSheetChannelId: "forum-id",
+    });
+    expect(reloadDiscordSettings).toHaveBeenCalledTimes(2);
   });
 });

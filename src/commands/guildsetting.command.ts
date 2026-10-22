@@ -14,6 +14,7 @@ import {
 import { DISCORD_SETTINGS } from "../config/discord-settings.js";
 import {
   updateGuildCooldownSettings,
+  updateGuildPayoutChannel,
   updateGuildScheduleSource,
 } from "../services/guild-settings.service.js";
 import { publishGuildScheduleAnnouncement } from "../services/guild-schedule-announcement.service.js";
@@ -29,11 +30,13 @@ const splitValues = (value: string): string[] =>
     .map((entry) => entry.trim())
     .filter(Boolean);
 
+/** Validates instance metadata and includes trimmed optional initials only when supplied. */
 const parseInstanceType = (
   name: string,
   keywords: string,
   maxAttempts: string,
   emoji: string,
+  initials: string | null,
 ): InstanceType => {
   const parsedMaxAttempts = Number(maxAttempts);
   const parsedKeywords = splitValues(keywords);
@@ -58,6 +61,7 @@ const parseInstanceType = (
     keywords: parsedKeywords,
     maxAttempts: parsedMaxAttempts,
     emoji: emoji.trim(),
+    ...(initials?.trim() ? { initials: initials.trim() } : {}),
   };
 };
 
@@ -144,8 +148,12 @@ const buildGuildSettingsSummary = (guild: Guild, guildId: string): string => {
   const roleRestrictedEntries = Object.entries(
     source?.roleRestrictedChannels ?? {},
   );
+  const payoutChannelId =
+    DISCORD_SETTINGS.payoutSheetChannelIdByGuild?.[guildId];
+  const payoutChannel = payoutChannelId ? `<#${payoutChannelId}>` : "none";
 
   return [
+    `**Payout channel:** ${payoutChannel}`,
     `**Tracked categories:** ${formatTrackedCategories(guild, source)}`,
     `**Schedule channels:** ${
       source?.scheduleTextChannelIds.length
@@ -167,8 +175,15 @@ const buildGuildSettingsSummary = (guild: Guild, guildId: string): string => {
     `**Cooldown instance types:** ${
       cooldownTypes.length
         ? cooldownTypes
-            .map(
-              (type) => `${type.emoji} ${type.name} (max ${type.maxAttempts})`,
+            .map((type) =>
+              [
+                type.emoji,
+                type.name,
+                type.initials ? `(${type.initials})` : "",
+                `(max ${type.maxAttempts})`,
+              ]
+                .filter(Boolean)
+                .join(" "),
             )
             .join(", ")
         : "none"
@@ -214,6 +229,38 @@ const handleShow = async (
 ): Promise<void> => {
   await interaction.reply({
     content: buildGuildSettingsSummary(guild, guildId),
+    flags: MessageFlags.Ephemeral,
+  });
+};
+
+/** Persists a selected forum channel only for guilds enabled for payouts. */
+const handleSetPayoutChannel = async (
+  interaction: ChatInputCommandInteraction,
+  guild: Guild,
+  guildId: string,
+): Promise<void> => {
+  if (!DISCORD_SETTINGS.payoutGuildIds.includes(guildId)) {
+    await interaction.reply({
+      content:
+        "Payout channels can only be configured in payout-enabled servers.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  const selectedChannel = interaction.options.getChannel("channel", true);
+  const channel = await guild.channels
+    .fetch(selectedChannel.id)
+    .catch(() => null);
+  if (channel?.type !== ChannelType.GuildForum) {
+    await interaction.reply({
+      content: "Select a forum channel in this server.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  await updateGuildPayoutChannel(guildId, channel.id);
+  await interaction.reply({
+    content: `Payout forum channel set to <#${channel.id}>.`,
     flags: MessageFlags.Ephemeral,
   });
 };
@@ -289,6 +336,7 @@ const handleClear = async (
   });
 };
 
+/** Upserts one instance type, retaining stored initials when the optional input is absent. */
 const setCooldownInstanceType = async (
   interaction: ChatInputCommandInteraction,
   guildId: string,
@@ -298,13 +346,14 @@ const setCooldownInstanceType = async (
     interaction.options.getString("keywords", true),
     interaction.options.getString("maxattempts", true),
     interaction.options.getString("emoji", true),
+    interaction.options.getString("initials"),
   );
   await updateGuildCooldownSettings(guildId, (settings) => {
     settings.cooldownInstanceTypes = settings.cooldownInstanceTypes.some(
       ({ name }) => name === type.name,
     )
       ? settings.cooldownInstanceTypes.map((existing) =>
-          existing.name === type.name ? type : existing,
+          existing.name === type.name ? { ...existing, ...type } : existing,
         )
       : [...settings.cooldownInstanceTypes, type];
   });
@@ -502,6 +551,18 @@ export const guildSettingCommand: Command = {
         )
         .addSubcommand((subcommand) =>
           subcommand
+            .setName("payout-channel-id")
+            .setDescription("Set the forum channel for exported signup rosters")
+            .addChannelOption((option) =>
+              option
+                .setName("channel")
+                .setDescription("Forum channel in this server")
+                .addChannelTypes(ChannelType.GuildForum)
+                .setRequired(true),
+            ),
+        )
+        .addSubcommand((subcommand) =>
+          subcommand
             .setName("tracked-category")
             .setDescription("Set tracked schedule categories")
             .addStringOption((option) =>
@@ -571,6 +632,12 @@ export const guildSettingCommand: Command = {
                 .setName("emoji")
                 .setDescription("Display emoji")
                 .setRequired(true),
+            )
+            .addStringOption((option) =>
+              option
+                .setName("initials")
+                .setDescription("Optional short instance label, for example ET")
+                .setRequired(false),
             ),
         )
         .addSubcommand((subcommand) =>
@@ -673,6 +740,11 @@ export const guildSettingCommand: Command = {
 
     if (subcommandGroup === "clear") {
       await handleClear(interaction, guildId, subcommand);
+      return;
+    }
+
+    if (subcommand === "payout-channel-id") {
+      await handleSetPayoutChannel(interaction, guild, guildId);
       return;
     }
 

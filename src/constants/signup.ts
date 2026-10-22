@@ -27,8 +27,12 @@ export const SIGNUP_MODAL_REMOVE_CHARNOTE_ID = "signup-modal-removecharnote";
 export const SIGNUP_MODAL_SWAP_ID = "signup-modal-swap";
 
 export const INSTANCE_TYPE_NONE_VALUE = "none";
+/** Matches the two-way split supported by `/export`. */
+export const MAX_INSTANCE_TYPES = 2;
 export const MAX_SIGNUP_PARTIES = 8;
 export const MAX_PING_MESSAGE_LENGTH = 500;
 export const MAX_DISCORD_MESSAGE_LENGTH = 2_000;
+export const ORGANIZER_EXPORT_ERROR =
+  "Only the run organizer can export this signup sheet. If the organizer details are missing or inconsistent, use `/swaporganizer` to set the correct organizer first.";
 export const SETUP_PROMPT_CONTENT =
   "Party setup saved. Complete the roster to post the signup sheet.";

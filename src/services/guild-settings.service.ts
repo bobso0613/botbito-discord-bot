@@ -14,6 +14,7 @@ const getGuildSettingsPath = (guildId: string): string =>
 
 /** Creates the default settings persisted when the bot first joins a guild. */
 const createEmptyGuildSettings = (): GuildSettings => ({
+  payoutSheetChannelId: null,
   guildScheduleSource: {
     categoryIds: [],
     excludedChannelIds: [],
@@ -80,6 +81,16 @@ const mutateGuildSettings = async (
 /** Creates a guild settings file if the bot has not seen the guild before. */
 export const ensureGuildSettings = async (guildId: string): Promise<void> => {
   await mutateGuildSettings(guildId, () => undefined);
+};
+
+/** Atomically sets the payout forum destination and refreshes the runtime guild settings. */
+export const updateGuildPayoutChannel = async (
+  guildId: string,
+  channelId: string,
+): Promise<void> => {
+  await mutateGuildSettings(guildId, (settings) => {
+    settings.payoutSheetChannelId = channelId;
+  });
 };
 
 /** Updates a guild's schedule source settings and reloads the runtime aggregate. */

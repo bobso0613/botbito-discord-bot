@@ -51,6 +51,7 @@ Create one `private/guild-settings/<guild-id>.json` file for each guild with sch
 
 ```json
 {
+  "payoutSheetChannelId": null,
   "guildScheduleSource": {
     "categoryIds": ["schedule-category-id", "other-category-id"],
     "scheduleTextChannelIds": ["public-schedule-channel-id"],
@@ -76,16 +77,58 @@ a value. Channel values accept Discord channel links or `#channel-name`; role
 restrictions use comma-separated `#channel=@role` mappings. `/guildsetting
 show` displays the current settings for the invoking guild.
 
+For guilds listed in `payoutGuildIds`, an administrator can configure the payout
+forum with `/guildsetting set payout-channel-id channel:#payouts` using Discord's
+channel picker or a channel mention.
+The channel must be a forum in the same server. Its ID is saved as
+`payoutSheetChannelId` in that guild's settings file and reloaded immediately.
+The bot needs permission to view the forum, read message history, create posts (Send Messages), and
+send messages in its threads. Forums that require tags must have that requirement
+disabled before exporting.
+
 Cooldown instance types are also stored per guild in `cooldownInstanceTypes` and
 `multiplierInstanceTypes`. Administrators can add or update one type with
 `/guildsetting set cooldown-instance-types` using the separate `name`,
-`keywords`, `maxattempts`, and `emoji` options; a name that already exists is
-updated in place instead of erroring. Use `/guildsetting remove
+`keywords`, `maxattempts`, and `emoji` options, plus optional `initials` (for
+example `initials:ET`). A name that already exists is updated in place instead
+of erroring. Omitting or leaving `initials` blank preserves the existing value;
+new types without initials leave the field unset. `/guildsetting show` includes
+configured initials beside each instance name. Use `/guildsetting remove
 cooldown-instance-type` to remove a single type by name. Multiplier types are
 still fully replaced with `/guildsetting set multiplier-instance-types` using
 comma-separated instance names. The matching clear commands remove all
 configured values for a setting. New guilds and the existing guild settings are
 initialized from `src/constants/cooldowns.ts`.
+
+To retrofit missing initials in existing `private/guild-settings/*.json` files:
+
+```sh
+npm run retrofit:cooldown-initials -- --dry-run
+npm run retrofit:cooldown-initials
+```
+
+For production deployments, `npm run build` also emits the migration as
+`dist/scripts/retrofit-cooldown-initials.js`. Run it with Node.js, without `tsx`
+or the source files:
+
+```sh
+npm run build
+npm run retrofit:cooldown-initials:dist -- --dry-run
+npm run retrofit:cooldown-initials:dist
+```
+
+The equivalent direct command is
+`node dist/scripts/retrofit-cooldown-initials.js --dry-run`; omit `--dry-run` to
+apply changes. Both versions resolve `private/guild-settings` relative to the
+project root, not inside `dist`. Deploy that private directory alongside `dist`.
+
+The script selects the first nonblank keyword of four characters or fewer,
+trimming surrounding whitespace and preserving its case. Existing `initials`
+fields are never overwritten; types with no qualifying keyword stay unchanged.
+The dry run only reports proposed changes. Applying the migration creates a
+`.json.initials.bak` backup for each changed file and replaces JSON atomically;
+rerunning it makes no further changes. Stop the bot before applying the script
+to avoid concurrent settings writes, then restart it to load the migrated values.
 
 ### Migrating from the monolithic `discord_settings.json` 🔀
 
@@ -113,9 +156,11 @@ Enable the **Server Members Intent** and **Message Content Intent** in the Disco
 
 `/help` ℹ️ requires a `command` autocomplete parameter. Start typing a command name to find a match; selecting it displays a private guide with that command's description and parameters. Suggestions come from the same command list used to power the guide, so new entries appear automatically. The "Help" button on guild schedule output still shows the full guide grouped by category.
 
-`/payout` 💰 displays the command user's Pending, Share Ready, and Distributed balances in zeny (`z`). It is available in every channel of configured payout guilds. When the user has no non-zero payout balance, it instead displays a message that they are not on the list. The optional `sendprivately` parameter sends the response ephemerally; it is public by default.
+`/payout` 💰 displays the command user's Pending, Share Ready, and Distributed balances in zeny (`z`), followed by **🛒Currently Vending** below Distributed. It is available in every channel of configured payout guilds. The optional `sendprivately` parameter sends the response ephemerally; it is public by default. The **My Payout Status** button shows the same information privately.
 
-`/payoutsummary` 📄 displays every non-zero payout and its total for the calling server. It is available in every channel of configured payout guilds. The optional `amount` parameter selects `Share Ready` (default), `Pending`, or `Distributed`. The optional `sendprivately` parameter sends the response ephemerally; it is public by default. Each row shows the Discord guild display name and its right-aligned zeny balance. It uses the Server Members Intent to resolve display names from the sheet's Discord tags. The optional `sort` parameter supports `Name` and `Amount`; the optional `direction` parameter supports `Ascending` and `Descending`. By default, payouts are sorted by the selected amount descending, with Name ascending as the tie-breaker. Share Ready summaries include the release description and distribution contact; Pending summaries use `Currently vending:` and Distributed summaries omit the description and distribution contact. When the configured payout contact invokes either payout command, the claim message adds `Oh wait, that's me! lol`.
+Currently Vending links unique threads recorded in this server's `private/signup-exports/<guildId>.json` only when stored `contents` includes the invoker's exact Discord mention (`<@ID>`). Candidate threads use Discord's channel cache when available: their titles must contain `⏳` and must not contain `NO SHARE` (case-insensitive). Entries without saved contents or a thread ID, deleted or inaccessible threads, non-thread channels, and threads from another server are skipped. Older exports without contents can be backfilled with `npm run migrate:signup-exports`; export retries also recover original roster messages, including follow-ups. An empty vending list displays `None`; long lists continue in additional fields and separate messages within Discord's field and message character limits, preserving the response's privacy setting. Malformed export-history JSON leaves the vending section empty without preventing balance display; exports still fail closed until the history is repaired. Qualifying threads are shown even when all sheet balances are zero. The not-on-the-list response appears only when all balances are zero and no vending threads qualify.
+
+`/payoutsummary` 📄 displays every non-zero payout and its total for the calling server. It is available in every channel of configured payout guilds. The optional `amount` parameter selects `Share Ready` (default), `Pending`, or `Distributed`. The optional `sendprivately` parameter sends the response ephemerally; it is public by default. Each row shows the Discord guild display name and its right-aligned zeny balance. It uses the Server Members Intent to resolve display names from the sheet's Discord tags. The optional `sort` parameter supports `Name` and `Amount`; the optional `direction` parameter supports `Ascending` and `Descending`. By default, payouts are sorted by the selected amount descending, with Name ascending as the tie-breaker. Share Ready summaries include the release description and distribution contact; Pending summaries use `Currently vending:` and Distributed summaries omit the description and distribution contact. In `/payout`, the claim reminder appears after Currently Vending when a Share Ready balance is available. Both commands omit the claim reminder entirely when the invoker's Discord ID matches `payoutToPingId`; `/payoutsummary` also omits the Distribution field in that case.
 
 `/guildsched` 🗓️ lists active runs from the configured guild schedule categories. It is available to all members of the guild. The bot includes only signup channels the invoking member can view and read, uses the newest active schedule per channel, and orders results earliest to latest. It checks the configured schedule bot's most recent 100 messages in each channel newest-first: replies without a `Your Time:` label, such as command confirmations and `Interaction cancelled`, are ignored; a newer schedule embed with `Your Time: TBD` clears that channel's older schedule. Every guild schedule output, including automatic announcements, includes four primary buttons: `My Sched` sends the clicking member's default `/mysched` result by DM, `My Payout Status` opens a private payout response, `My Cooldowns` opens private cooldown status, and `Help` opens the private command guide. Button success and failure logs record `button`, `buttonLabel`, status, guild, user, and the standard command context; button clicks log `parameters=[]`.
 
@@ -272,6 +317,13 @@ Channel-scoped signup sheets (created with `/newrun`) provide an interactive par
   - `/tbc`: Toggle To Be Confirmed (TBC) status for yourself or specified slot/reserve numbers. Marked with a `❓` emoji on the roster.
   - `/removetbc` (alias `/rtbc`): Remove TBC markings from your own positions or specified slot/reserve numbers.
   - `/ping`: Send a message of up to 500 characters to signup participants. `which` selects `Main Roster` (the default), `Reserves`, `TBC`, or `All`; `where` selects `Channel` (the default) or `Direct Message`. Channel delivery splits large recipient lists into follow-up messages that remain within Discord's 2,000-character limit. DM delivery acknowledges the command before sending an individual message to each unique participant, including the run title, signup channel, and scheduled time or `TBD`, then edits the confirmation to name anyone the bot could not DM. The message includes the invoker, message text, and selected target group.
+  - `/export`: Only the run organizer can export the filled main slots to the configured payout forum, in a guild listed in `payoutGuildIds`. Creates a post titled `⏳Run Title - DD/MM` (for example, `21/10` for October 21), using the server timezone, then the schedule timezone, then GMT. Long titles are shortened while retaining the date. The first message lists confirmed filled slots with consecutive numbering starting at 01, roles, actual Discord member mentions, and character notes; empty slots, reserves, and TBC signups are omitted. Numbering continues across parties without changing the signup sheet's original slot numbers. Rosters exceeding Discord's 2,000-character limit continue in subsequent messages. Set a run date with `/sdt` before exporting. Only one export is allowed per run title and calendar date within a guild; title comparison ignores case and repeated whitespace, and changing the time within that date does not permit another export. Repeated requests link to the existing post. A different run title or date can be exported. Duplicate detection still uses the full date including the year, even though the title only shows day and month.
+  - Export history is stored separately in `private/signup-exports/<guildId>.json` and survives bot restarts, sheet replacements, and forum-channel changes. Simultaneous attempts are serialized and a reservation is persisted before creating the post. Failed post creation releases the reservation so it can be retried; partial roster delivery still counts as an export. Retrying an interrupted reservation checks the forum first: an existing post is recovered with its original roster, otherwise creation can be retried after a successful lookup. Lookup errors keep creation blocked. Combined and split history are checked for overlapping coverage; a missing split part can still be retried. If a later part fails, the reply retains links to earlier successful posts. Posts created before export tracking was added can be imported with the migration command.
+  - Combined exports check every saved split key for the normalized title and full date, even after `/setinstancetype type:None` or replacement selections. Earlier instance identities remain available for identifier recovery. Missing split parts remain retryable; another title or date is unaffected.
+  - Exports preserve the original `Party x` headings for parties with confirmed filled slots. `Participants: **N**` counts unique exported Discord members, not slots; reserves and TBC entries do not count. When instance types are selected, their Unicode emojis are appended to the thread title in brackets; custom Discord emoji markup is omitted from titles but retained in the `Instance Types: emoji **Name**, emoji **Name**` footer. Guild-specific instance definitions take precedence over built-in defaults. The run's localized full Discord timestamp (`Your Time`) and relative timestamp follow, with the Export ID remaining the final line of the starter message. Long titles are shortened while preserving the date and instance emojis. Export success, failure, and duplicate notices are public channel responses. A `split:true` request with fewer than two instance types includes a note explaining why it was not split. Combined exports exclude all specified absent slots; use combined mode when the lineups are the same.
+  - Organizer authorization uses the saved Discord user ID and rejects records where that ID conflicts with the user ID in the displayed Discord avatar URL. It is checked again immediately before post creation. Editing a legacy sheet without an organizer ID no longer assigns the editor as organizer. For missing or inconsistent legacy organizer details, use `/swaporganizer user:@correct-organizer` before exporting.
+  - The first export message ends with `Export ID: botbito-export:v1:<hash>` in small text. The deterministic SHA-256 identifier includes the guild, normalized full run title, and scheduled calendar date, so title truncation, roster changes, and same-day time changes do not alter it. When local history has no record, the bot checks its own active and archived forum starter messages for this exact footer and restores the history if it finds a match. Thread names are filtered by the run's - DD/MM suffix before fetching starter messages; preserve that date suffix when renaming a post so identifier recovery can find it. Archived listings are still paginated without an unsafe archive-date cutoff. Deleted starter messages (`10008 Unknown Message`) are skipped; other lookup failures block creation. Older posts without the identifier still rely on saved export history.
+  - If a history entry is missing, renaming a thread so it no longer ends with ' DD/MM' or contains ' - DD/MM [' can hide it from forum recovery; appending `NO SHARE` or `DONE` after a bare date is one example. Saved thread IDs do not depend on the title filter. ID-only entries whose threads return `10003 Unknown Channel` can retry after a successful identifier recheck; access and other read failures still block creation.
   - After `/add`, `/remove`, `/swap`, `/tbc`, `/charnote`, and `/removecharnote` update and re-post the sheet embed, the bot posts a public log message in the channel: a plain display-name line for the invoker's own action (e.g. `**DisplayName** added as **01: Role**.`), or an @mention line when someone else was affected. Random add/swap notices include the rolled slot number.
   - `/name` posts a public notice after the updated embed: `invokerName has set the run name to **name**`.
   - `/note` posts a public notice after the updated embed, showing the new note on the next line; replying `remove` shows that the note was removed and displays `None`.
@@ -283,9 +335,10 @@ Channel-scoped signup sheets (created with `/newrun`) provide an interactive par
   - `/postpone`: Shift the scheduled time without modifying the roster, then post a public notice with the Discord-formatted timestamp.
   - `/next`: Shift the schedule for a fresh run and clear the roster, then post a public notice with the Discord-formatted timestamp.
   - `/last`, `/show`, `/s`: Re-post the channel's current signup sheet embed.
-- **Interactive Action Buttons**: Every published sheet embed includes two rows of interactive action buttons that open input modals:
+- **Interactive Action Buttons**: Every published sheet embed includes two rows of interactive action buttons:
   - **Row 1**: `Add` (Success), `Remove` (Danger), `TBC` (Primary), `Swap` (Primary)
   - **Row 2**: `Char` (Success), `Remove Char` (Danger), `Schedule` (Secondary), `Command List` (Secondary)
+  - Export through `/export`, which accepts the required vendor option. Use `/show` to refresh an older sheet and remove its obsolete Export button after updating the bot.
 
 ### Roster Editing
 
@@ -365,6 +418,7 @@ src/
 - `npm run build` compiles TypeScript to `dist/`.
 - `npm start` runs the compiled bot.
 - `npm run deploy-commands` registers `/help`, `/mysched`, and `/mycooldowns` globally and guild-specific payout and schedule commands in their configured guilds.
+- `npm run migrate:signup-exports -- --dry-run` previews legacy pending-thread imports; omit `--dry-run` to save them. After building, use `npm run migrate:signup-exports:dist -- --dry-run` for the compiled script.
 - `npm test` runs the Jest unit tests.
 - `npm run test:coverage` runs Jest with coverage output for payout services and utilities.
 - `npm run docs` generates TypeDoc HTML reference pages in `docs/`.
@@ -372,6 +426,21 @@ src/
 - (On hosting) `nohup /opt/cpanel/ea-nodejs22/bin/node index.js & disown`
 
 Ensure `.env`, `private/discord_settings.json`, `private/guild_schedule_settings.json`, the relevant `private/guild-settings/<guild-id>.json` files, and the Google service-account JSON are present before starting the bot.
+
+### Legacy Payout Thread Migration
+
+Stop the bot before applying this one-time migration to avoid concurrent writes to export history. Run from the project root with `DISCORD_TOKEN` in `.env` and the normal Discord settings files present. Google credentials are not needed for the migration. The bot needs View Channel and Read Message History in each payout forum, with Message Content Intent enabled in the Discord Developer Portal to read legacy roster text.
+
+```sh
+npm run migrate:signup-exports -- --dry-run
+npm run migrate:signup-exports
+```
+
+The script scans only guilds in `payoutGuildIds` with a configured `payoutSheetChannelId`. It validates that each channel is a forum belonging to that guild, then imports only its active, unarchived threads whose current titles contain `⏳` and do not contain `NO SHARE` (case-insensitive). Archived threads are not scanned or unarchived. All message pages are read, including message text and embed titles, descriptions, fields, and footer text, so older split rosters can establish participation for `/payout` using exact `<@ID>` mentions.
+
+Results are merged into `private/signup-exports/<guild-id>.json`. Existing records and nonempty contents are preserved; matching thread IDs with missing or empty contents are backfilled. Newly discovered threads use stable `["legacy-thread","<thread-id>"]` keys instead of guessing dates from old titles. Repeat runs do not duplicate records. Before replacing an existing file, the script preserves its original bytes in a non-overwriting `.json.migration.bak` backup, then writes the updated JSON through a temporary file and atomic rename. Missing export files are created when there are qualifying imports; dry runs create no files or backups.
+
+All guild scans and JSON validation finish before any writes begin. Access failures, unreadable message history, invalid configuration/history, or pending threads with no readable text abort the scan rather than saving incomplete results. Filesystem write failures can still leave earlier guilds updated; fix the failure and rerun. Restart the bot after applying the migration. `/payout` continues using stored contents for participation and fresh Discord titles for vending status; it does not scan forum history on every invocation.
 
 ## Git Hooks 🪝
 

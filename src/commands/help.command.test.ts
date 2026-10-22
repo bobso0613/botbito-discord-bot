@@ -18,6 +18,22 @@ const createInteraction = () => ({
 describe("help command", () => {
   it.each([
     {
+      command: "/payout",
+      expected: [
+        "Currently Vending below Distributed",
+        "signup-exports",
+        "exact <@ID> in saved contents",
+        "current title containing ⏳",
+        "no NO SHARE (case-insensitive)",
+        "even with zero balances",
+        "empty list shows None",
+        "default: public",
+        "separate messages",
+        "same privacy setting",
+        "malformed export history",
+      ],
+    },
+    {
       command: "/mycooldowns",
       expected: [
         "cooldownInstanceTypes",
@@ -53,11 +69,58 @@ describe("help command", () => {
         "Endless Tower, Endless Cellar",
         "None clears",
         "multiple types",
+        "at most two types",
+        "Legacy saved selections are unchanged",
       ],
     },
     {
       command: "/newrun",
       expected: ["up to 8 parties"],
+    },
+    {
+      command: "/export",
+      expected: [
+        "organizer only",
+        "No reserves/TBC",
+        "full date",
+        "active/archived",
+        "DD/MM",
+        "instance emojis",
+        "party headings",
+        "consecutive numbering",
+        "Participants",
+        "timestamps",
+        "public",
+        "across combined and split exports",
+        "Missing split parts can be retried",
+        "retain links to completed posts",
+        "custom emoji markup",
+        "Interrupted exports recheck the forum",
+        "**vendor** (required)",
+        "**split** (optional)",
+        "**second-vendor-name** (optional)",
+        "defaults to vendor",
+        "**first-run-absent-slots** (optional)",
+        "**second-run-absent-slots** (optional)",
+        "original signup slot numbers",
+        "Combined: exclude all specified absences",
+      ],
+    },
+    {
+      command: "/show",
+      expected: [
+        "current action buttons",
+        "obsolete Export button",
+        "/export with a vendor",
+      ],
+    },
+    {
+      command: "/guildsetting set payout-channel-id",
+      expected: ["**channel** (required)", "Select or mention a forum channel"],
+    },
+    {
+      command: "/guildsetting set cooldown-instance-types",
+      expected: ["**initials** (optional)", "preserve existing initials"],
     },
     {
       command: "/ping",
@@ -158,6 +221,9 @@ describe("help command", () => {
     expect(administration?.value).toContain(
       "/guildsetting set tracked-category",
     );
+    for (const field of embeds[0]?.data.fields ?? []) {
+      expect(field.value.length).toBeLessThanOrEqual(1024);
+    }
   });
 
   it("configures /help for guilds and bot DMs with autocomplete", async () => {

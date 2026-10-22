@@ -78,6 +78,47 @@ describe("signup setup service", () => {
     pendingRosterUsers.clear();
   });
 
+  it.each([undefined, null, "different-organizer-id"])(
+    "does not replace an existing sheet's organizer with the editor (stored ID: %s)",
+    (organizerId) => {
+      const sheet = createSheet();
+      sheet.organizerId = organizerId;
+      sheet.organizerName = "Different Organizer";
+      const result = parseSetup(
+        createModalInteraction({
+          title: "Edited Run",
+          datetime: "TBD",
+          timezone: "GMT",
+          parties: "1",
+          sizes: "2",
+        }),
+        sheet,
+      );
+      expect(result).toMatchObject({
+        sheet: {
+          organizerId: organizerId ?? null,
+          organizerName: "Different Organizer",
+          organizerAvatarUrl: sheet.organizerAvatarUrl,
+        },
+      });
+    },
+  );
+
+  it("assigns the creator as organizer for a new run", () => {
+    const result = parseSetup(
+      createModalInteraction({
+        title: "New Run",
+        datetime: "TBD",
+        timezone: "GMT",
+        parties: "1",
+        sizes: "2",
+      }),
+    );
+    expect(result).toMatchObject({
+      sheet: { organizerId: "organizer-id", organizerName: "Organizer" },
+    });
+  });
+
   it("builds the setup controls and roster prompt cancel button", () => {
     expect(
       buildSetupPromptButtons().components.map(
@@ -179,6 +220,27 @@ describe("signup setup service", () => {
         .filter((option) => option.default)
         .map((option) => option.value),
     ).toEqual(["Endless Tower", "Endless Cellar"]);
+  });
+
+  it("caps legacy saved defaults without mutating the saved selections", () => {
+    const saved = ["First", "Second", "Third"];
+    const types = saved.map((name) => ({
+      name,
+      emoji: "",
+      keywords: [],
+      maxAttempts: 1,
+    }));
+    const select = buildInstanceTypeSelectRow(
+      saved,
+      types,
+    ).components[0]!.toJSON();
+    expect(select.max_values).toBe(2);
+    expect(
+      select.options
+        .filter((option) => option.default)
+        .map((option) => option.value),
+    ).toEqual(["First", "Second"]);
+    expect(saved).toEqual(["First", "Second", "Third"]);
   });
 
   it.each([

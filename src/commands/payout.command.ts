@@ -6,8 +6,9 @@ import {
 } from "discord.js";
 import { PAYOUT_GUILD_IDS } from "../config/discord-settings.js";
 import { getPayoutDetails } from "../services/payout.service.js";
+import { getCurrentlyVendingThreads } from "../services/signup-export.service.js";
 import {
-  buildPayoutEmbed,
+  buildPayoutEmbeds,
   buildPayoutEmbedNotJoined,
 } from "../templates/payout.template.js";
 import type { Command } from "../types/command.js";
@@ -15,7 +16,12 @@ import { getInteractionContext } from "../utils/interaction-context.js";
 
 export type PayoutInteraction = ChatInputCommandInteraction | ButtonInteraction;
 
-/** Sends the invoking member's payout details, optionally as an ephemeral response. */
+/**
+ * Sends the invoking member's sheet balances and qualifying signup-export vending threads.
+ * Shows the not-joined response only when all balances are zero and no vending threads qualify.
+ * @param interaction Slash-command or payout-status button interaction in a supported guild.
+ * @param sendPrivately Whether to send the response ephemerally instead of publicly.
+ */
 export const sendPayout = async (
   interaction: PayoutInteraction,
   sendPrivately: boolean,
@@ -37,18 +43,29 @@ export const sendPayout = async (
     guildId: interaction.guildId,
     discordTag: context.discordTag,
   });
-  await interaction.editReply({
-    embeds: [
-      details.distributed !== 0 ||
-      details.pending !== 0 ||
-      details.shareReady !== 0
-        ? buildPayoutEmbed(details, context)
-        : buildPayoutEmbedNotJoined(context),
-    ],
-  });
+  const vendingThreads = await getCurrentlyVendingThreads(
+    interaction.client,
+    interaction.guildId,
+    context.userId,
+  );
+  const embeds =
+    details.distributed !== 0 ||
+    details.pending !== 0 ||
+    details.shareReady !== 0 ||
+    vendingThreads.length > 0
+      ? buildPayoutEmbeds(details, context, vendingThreads)
+      : [buildPayoutEmbedNotJoined(context)];
+  await interaction.editReply({ embeds: [embeds[0]!] });
+  await embeds.slice(1).reduce(async (previous, embed) => {
+    await previous;
+    await interaction.followUp({
+      embeds: [embed],
+      ...(sendPrivately ? { flags: MessageFlags.Ephemeral } : {}),
+    });
+  }, Promise.resolve());
 };
 
-/** Gets the invoking member's payout details from any channel in a supported guild. */
+/** Gets the member's payout balances and current vending threads in a supported guild. */
 export const payoutCommand: Command = {
   data: new SlashCommandBuilder()
     .setName("payout")

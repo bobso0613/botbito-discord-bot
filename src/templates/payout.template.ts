@@ -8,52 +8,105 @@ import { DISCORD_SETTINGS } from "../config/discord-settings.js";
 const pepeMoneyRainEmojiId = process.env.PEPEMONEYRAIN_EMOJI_ID;
 
 const getClaimMessage = (context: InteractionContext): string =>
-  `Please ping <@${DISCORD_SETTINGS.payoutToPingId}> (@${DISCORD_SETTINGS.payoutToPingTag}) if you want to claim.${
-    DISCORD_SETTINGS.payoutToPingId === context.userId
-      ? " Oh wait, that's me! lol"
-      : ""
-  }`;
+  DISCORD_SETTINGS.payoutToPingId === context.userId
+    ? ""
+    : `Please ping <@${DISCORD_SETTINGS.payoutToPingId}> (@${DISCORD_SETTINGS.payoutToPingTag}) if you want to claim.`;
 
-/** Builds the standard payout-status embed for a member. */
-export const buildPayoutEmbed = (
+/**
+ * Builds payout balances with Currently Vending directly below Distributed.
+ * Splits vending links into fields of at most 1,024 characters; an empty list displays None.
+ * Pages include at most 25 fields and 6,000 characters including author, title, and footer text.
+ * Shows the claim reminder after vending only for share-ready members other than the payout contact.
+ * @param details Member's payout-sheet balances.
+ * @param context Invoking member and guild display information.
+ * @param vendingThreads Pre-filtered Discord thread mentions from signup-export history.
+ * @returns Payout-status pages, each sent separately to respect the shared message character budget.
+ */
+export const buildPayoutEmbeds = (
   details: PayoutDetails,
   context: InteractionContext,
-): EmbedBuilder => {
+  vendingThreads: readonly string[] = [],
+): EmbedBuilder[] => {
   const footer = getEmbedFooter(context);
+  const claimMessage = details.shareReady > 0 ? getClaimMessage(context) : "";
+  const vendingFields: string[] = [];
+  for (const thread of vendingThreads) {
+    const lastIndex = vendingFields.length - 1;
+    const previous = vendingFields[lastIndex];
+    if (previous && previous.length + thread.length + 1 <= 1024) {
+      vendingFields[lastIndex] = `${previous}\n${thread}`;
+    } else {
+      vendingFields.push(thread);
+    }
+  }
+  if (vendingFields.length === 0) vendingFields.push("None");
 
-  return new EmbedBuilder()
+  const base = new EmbedBuilder()
     .setAuthor({
       name: `💵 ${context.displayName} (@${context.discordTag})`,
     })
     .setTitle("Payout Status")
-    .addFields(
-      {
-        name: `<a:pepemoneyrain:${pepeMoneyRainEmojiId}> Claimable`,
-        value: `${formatZeny(details.shareReady)}`,
-        inline: true,
-      },
-      {
-        name: "⌛ Pending",
-        value: formatZeny(details.pending),
-        inline: true,
-      },
-      { name: "\u200b", value: "", inline: true },
-      { name: "\u200b", value: "", inline: false },
-      {
-        name: "✅ Distributed",
-        value: `${formatZeny(details.distributed)}${
-          details.shareReady > 0 ? `\n\n${getClaimMessage(context)}` : ""
-        }`,
-        inline: false,
-      },
-    )
     .setThumbnail(context.userAvatarUrl)
     .setColor("#00b0f4")
     .setFooter(footer)
     .setTimestamp();
+  const fields = [
+    {
+      name: `<a:pepemoneyrain:${pepeMoneyRainEmojiId}> Claimable`,
+      value: `${formatZeny(details.shareReady)}`,
+      inline: true,
+    },
+    {
+      name: "⌛ Pending",
+      value: formatZeny(details.pending),
+      inline: true,
+    },
+    { name: "\u200b", value: "", inline: true },
+    { name: "\u200b", value: "", inline: false },
+    {
+      name: "✅ Distributed",
+      value: formatZeny(details.distributed),
+      inline: false,
+    },
+    ...vendingFields.map((value, index) => ({
+      name:
+        index === 0 ? "🛒Currently Vending" : "🛒Currently Vending (continued)",
+      value,
+      inline: false,
+    })),
+    ...(claimMessage
+      ? [{ name: "\u200b", value: claimMessage, inline: false }]
+      : []),
+  ];
+  const pages = [new EmbedBuilder(base.data)];
+  for (const field of fields) {
+    let page = pages.at(-1)!;
+    if (
+      (page.data.fields?.length ?? 0) >= 25 ||
+      page.length + field.name.length + field.value.length > 6000
+    ) {
+      page = new EmbedBuilder(base.data);
+      pages.push(page);
+    }
+    page.addFields(field);
+  }
+  return pages;
 };
 
-/** Builds the payout-status embed shown when a member is not in the payout sheet. */
+/**
+ * Builds only the first payout page for callers requiring the legacy single-embed API.
+ * @param details Member's payout-sheet balances.
+ * @param context Invoking member and guild display information.
+ * @param vendingThreads Pre-filtered thread mentions; overflow is not included in this result.
+ * @returns First payout page; use buildPayoutEmbeds to display every vending link.
+ */
+export const buildPayoutEmbed = (
+  details: PayoutDetails,
+  context: InteractionContext,
+  vendingThreads: readonly string[] = [],
+): EmbedBuilder => buildPayoutEmbeds(details, context, vendingThreads)[0]!;
+
+/** Builds the not-joined response when all sheet balances are zero and no vending threads qualify. */
 export const buildPayoutEmbedNotJoined = (
   context: InteractionContext,
 ): EmbedBuilder => {
@@ -73,12 +126,13 @@ export const buildPayoutEmbedNotJoined = (
     .setTimestamp();
 };
 
-/** Builds the guild-wide payout summary embed for the selected amount. */
+/** Builds the guild-wide payout summary, omitting the claim reminder for the payout contact. */
 export const buildPayoutSummaryEmbed = (
   summary: PayoutSummary,
   context: InteractionContext,
 ): EmbedBuilder => {
   const footer = getEmbedFooter(context);
+  const claimMessage = getClaimMessage(context);
   const nameColumnWidth = 16;
   const amountColumnWidth = 16;
   const amountLabel =
@@ -122,11 +176,11 @@ export const buildPayoutSummaryEmbed = (
       value: formatZeny(summary.total),
       inline: false,
     },
-    ...(summary.amount === "shareReady"
+    ...(summary.amount === "shareReady" && claimMessage
       ? [
           {
             name: "Distribution",
-            value: getClaimMessage(context),
+            value: claimMessage,
             inline: false,
           },
         ]

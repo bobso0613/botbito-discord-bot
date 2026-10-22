@@ -1,6 +1,8 @@
 /** Instance type definition for cooldown tracking. */
 export interface InstanceType {
   name: string;
+  /** Optional short display label; existing values are retained when a setter omits it. */
+  initials?: string;
   keywords: string[];
   maxAttempts: number;
   emoji: string;

@@ -17,6 +17,7 @@ import {
 import {
   CHANGE_ALL_MODAL_ID,
   INSTANCE_TYPE_NONE_VALUE,
+  MAX_INSTANCE_TYPES,
   MAX_SIGNUP_PARTIES,
   SETUP_MODAL_ID,
   SETUP_PROMPT_CONTENT,
@@ -102,15 +103,27 @@ export const input = (
 export const buildInstanceTypeSelectRow = (
   currentInstanceType: SignupSheet["instanceType"],
   instanceTypes = COOLDOWN_INSTANCE_TYPES,
-): ActionRowBuilder<StringSelectMenuBuilder> =>
-  new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+): ActionRowBuilder<StringSelectMenuBuilder> => {
+  const selected = new Set(
+    instanceTypes
+      .filter((type) => type.name !== "Others")
+      .slice(0, 24)
+      .filter((type) =>
+        Array.isArray(currentInstanceType)
+          ? currentInstanceType.includes(type.name)
+          : currentInstanceType === type.name,
+      )
+      .slice(0, MAX_INSTANCE_TYPES)
+      .map((type) => type.name),
+  );
+  return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
     new StringSelectMenuBuilder()
       .setCustomId(SIGNUP_INSTANCE_TYPE_SELECT_ID)
       .setPlaceholder("Select instance types")
       .setMinValues(1)
       .setMaxValues(
         Math.min(
-          25,
+          MAX_INSTANCE_TYPES,
           instanceTypes.filter((type) => type.name !== "Others").length + 1,
         ),
       )
@@ -126,12 +139,11 @@ export const buildInstanceTypeSelectRow = (
           .map((type) => ({
             label: `${type.emoji} ${type.name}`,
             value: type.name,
-            default: Array.isArray(currentInstanceType)
-              ? currentInstanceType.includes(type.name)
-              : currentInstanceType === type.name,
+            default: selected.has(type.name),
           })),
       ),
   );
+};
 
 /** Builds the button row shown after party setup: edit roster/party setup/instance type, save, or cancel. */
 export const buildSetupPromptButtons = (): ActionRowBuilder<ButtonBuilder> =>
@@ -240,7 +252,9 @@ export const parseSetup = (
       guildId: interaction.guildId!,
       channelId: interaction.channelId!,
       title,
-      organizerId: existingSheet?.organizerId ?? interaction.user.id,
+      organizerId: existingSheet
+        ? (existingSheet.organizerId ?? null)
+        : interaction.user.id,
       organizerName:
         existingSheet?.organizerName ?? interaction.user.displayName,
       organizerAvatarUrl:
