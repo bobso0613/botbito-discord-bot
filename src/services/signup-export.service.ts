@@ -2,18 +2,15 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import type { Client } from "discord.js";
-
-/** Durable run-key history; a null thread ID reserves an export that may be interrupted. */
-type ExportHistory = Record<
-  string,
-  { threadId: string | null; contents?: readonly string[] }
->;
-
-/** Outcome of attempting a new export or recovering an existing forum post. */
-export interface SignupExportResult {
-  created: boolean;
-  threadId: string | null;
-}
+import type {
+  ExportHistory,
+  FindExistingThread,
+  SignupExportResult,
+} from "../types/signup-export.js";
+export type {
+  RecoveredSignupExport,
+  SignupExportResult,
+} from "../types/signup-export.js";
 
 const exportQueues = new Map<string, Promise<void>>();
 
@@ -30,21 +27,28 @@ const readHistory = async (path: string): Promise<ExportHistory> => {
 /**
  * Lists unique thread mentions from this guild's saved signup exports for a member.
  * Participation requires the exact `<@userId>` mention in stored contents.
- * Fresh Discord titles must contain the hourglass (U+23F3) and omit NO SHARE (case-insensitive).
+ * Discord titles must contain the hourglass (U+23F3) and omit NO SHARE (case-insensitive).
  * Skips missing contents or IDs, unreadable channels, non-threads, and other guilds.
- * @param client Discord client used to fetch current thread titles, bypassing cache.
+ * @param client Discord client used to resolve thread titles, using cached channels when available.
  * @param guildId Guild whose private/signup-exports history is searched.
  * @param userId Invoking member's Discord ID, not their payout-sheet tag.
- * @returns Thread mentions, or an empty list when no exports qualify or history is absent.
+ * @returns Unique thread mentions, or an empty list for no matches, absent history, or malformed JSON.
+ * @throws For history read failures other than missing files or invalid JSON.
  */
 export const getCurrentlyVendingThreads = async (
   client: Client,
   guildId: string,
   userId: string,
 ): Promise<string[]> => {
-  const history = await readHistory(
-    resolve(process.cwd(), "private", "signup-exports", `${guildId}.json`),
-  );
+  let history: ExportHistory;
+  try {
+    history = await readHistory(
+      resolve(process.cwd(), "private", "signup-exports", `${guildId}.json`),
+    );
+  } catch (error) {
+    if (error instanceof SyntaxError) return [];
+    throw error;
+  }
   const mention = `<@${userId}>`;
   const threadIds = new Set(
     Object.values(history)
@@ -55,9 +59,7 @@ export const getCurrentlyVendingThreads = async (
   );
   const matches = await Promise.all(
     Array.from(threadIds, async (threadId) => {
-      const thread = await client.channels
-        .fetch(threadId, { force: true })
-        .catch(() => null);
+      const thread = await client.channels.fetch(threadId).catch(() => null);
       return thread?.isThread() &&
         thread.guildId === guildId &&
         thread.name.includes("\u23f3") &&
@@ -80,23 +82,60 @@ const writeHistory = async (
   await rename(temporaryPath, path);
 };
 
+/** Backfills ID-only or pending history from the original forum post without using a new roster. */
+const repairHistoryEntry = async (
+  path: string,
+  history: ExportHistory,
+  key: string,
+  findExistingThread: FindExistingThread,
+): Promise<void> => {
+  const saved = history[key]!;
+  if (saved.contents) return;
+  const recovered = await findExistingThread(key, saved.threadId ?? undefined);
+  if (!recovered) return;
+  history[key] =
+    typeof recovered === "string" ? { threadId: recovered } : recovered;
+  await writeHistory(path, history);
+};
+
+/** Finds overlapping saved coverage, releasing empty reservations only when forum lookup is available. */
+const findSavedExport = async (
+  path: string,
+  history: ExportHistory,
+  keys: readonly string[],
+  findExistingThread: FindExistingThread | undefined,
+): Promise<SignupExportResult | null> => {
+  for (const key of keys) {
+    if (!Object.hasOwn(history, key)) continue;
+    if (findExistingThread)
+      await repairHistoryEntry(path, history, key, findExistingThread);
+    const threadId = history[key]!.threadId;
+    if (threadId || !findExistingThread) return { created: false, threadId };
+    delete history[key];
+  }
+  return null;
+};
+
 /**
  * Serializes guild exports, checks history/forum identifiers, and reserves before creating a post.
  * Failed post creation releases the reservation; failed confirmation writes retain it for safety.
+ * Empty reservations may retry after a successful forum recheck; lookup failures stay blocked.
  * @param guildId Guild whose private export history owns this run.
- * @param runKey Normalized full run title and calendar date, including the year.
+ * @param runKey Normalized full title/date key including the year and optional split instance.
  * @param createThread Creates a post and returns its ID after any roster delivery attempt.
- * @param findExistingThread Finds an existing forum identifier when saved history has no record.
+ * @param findExistingThread Looks up coverage or recovers contents for a known thread ID. Without it, pending history stays blocked.
  * @param contents Exported roster messages saved with a newly created thread for participant lookup.
+ * @param overlappingRunKeys Combined or per-instance keys whose coverage would duplicate this post.
  * @returns Whether a new post was created and its ID, or null while an earlier export is pending.
+ * @throws For unreadable history, unsuccessful forum checks, creation failures, or persistence failures.
  */
 export const exportSignupRun = async (
   guildId: string,
   runKey: string,
   createThread: () => Promise<string>,
-  findExistingThread: () => Promise<string | null> = () =>
-    Promise.resolve(null),
+  findExistingThread?: FindExistingThread,
   contents?: readonly string[],
+  overlappingRunKeys: readonly string[] = [],
 ): Promise<SignupExportResult> => {
   const path = resolve(
     process.cwd(),
@@ -108,16 +147,26 @@ export const exportSignupRun = async (
   const previous = exportQueues.get(guildId) ?? Promise.resolve();
   const operation = previous.then(async () => {
     const history = await readHistory(path);
-    if (Object.hasOwn(history, runKey)) {
-      result.threadId = history[runKey]!.threadId;
+    const keys = [...new Set([runKey, ...overlappingRunKeys])];
+    const saved = await findSavedExport(
+      path,
+      history,
+      keys,
+      findExistingThread,
+    );
+    if (saved) {
+      result = saved;
       return;
     }
-    const existingThreadId = await findExistingThread();
-    if (existingThreadId) {
-      history[runKey] = { threadId: existingThreadId };
-      await writeHistory(path, history);
-      result.threadId = existingThreadId;
-      return;
+    for (const key of keys) {
+      const recovered = await findExistingThread?.(key);
+      if (recovered) {
+        history[key] =
+          typeof recovered === "string" ? { threadId: recovered } : recovered;
+        await writeHistory(path, history);
+        result.threadId = history[key]!.threadId;
+        return;
+      }
     }
     history[runKey] = { threadId: null };
     await writeHistory(path, history);

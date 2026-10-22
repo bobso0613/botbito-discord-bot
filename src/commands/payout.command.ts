@@ -8,7 +8,7 @@ import { PAYOUT_GUILD_IDS } from "../config/discord-settings.js";
 import { getPayoutDetails } from "../services/payout.service.js";
 import { getCurrentlyVendingThreads } from "../services/signup-export.service.js";
 import {
-  buildPayoutEmbed,
+  buildPayoutEmbeds,
   buildPayoutEmbedNotJoined,
 } from "../templates/payout.template.js";
 import type { Command } from "../types/command.js";
@@ -48,16 +48,21 @@ export const sendPayout = async (
     interaction.guildId,
     context.userId,
   );
-  await interaction.editReply({
-    embeds: [
-      details.distributed !== 0 ||
-      details.pending !== 0 ||
-      details.shareReady !== 0 ||
-      vendingThreads.length > 0
-        ? buildPayoutEmbed(details, context, vendingThreads)
-        : buildPayoutEmbedNotJoined(context),
-    ],
-  });
+  const embeds =
+    details.distributed !== 0 ||
+    details.pending !== 0 ||
+    details.shareReady !== 0 ||
+    vendingThreads.length > 0
+      ? buildPayoutEmbeds(details, context, vendingThreads)
+      : [buildPayoutEmbedNotJoined(context)];
+  await interaction.editReply({ embeds: [embeds[0]!] });
+  await embeds.slice(1).reduce(async (previous, embed) => {
+    await previous;
+    await interaction.followUp({
+      embeds: [embed],
+      ...(sendPrivately ? { flags: MessageFlags.Ephemeral } : {}),
+    });
+  }, Promise.resolve());
 };
 
 /** Gets the member's payout balances and current vending threads in a supported guild. */

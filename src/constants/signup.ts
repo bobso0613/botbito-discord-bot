@@ -7,7 +7,6 @@ export const SIGNUP_CANCEL_SETUP_BUTTON_ID = "signup-cancel-setup";
 export const SIGNUP_ADD_CONFIRM_BUTTON_ID = "signup-add-confirm";
 export const SIGNUP_ADD_CANCEL_BUTTON_ID = "signup-add-cancel";
 export const SIGNUP_INFO_BUTTON_ID = "signup-info";
-export const SIGNUP_EXPORT_BUTTON_ID = "signup-export";
 export const SIGNUP_INSTANCE_TYPE_BUTTON_ID = "signup-instance-type";
 export const SIGNUP_INSTANCE_TYPE_BACK_BUTTON_ID = "signup-instance-type-back";
 export const SIGNUP_INSTANCE_TYPE_SELECT_ID = "signup-instance-type-select";
@@ -33,5 +32,7 @@ export const MAX_INSTANCE_TYPES = 2;
 export const MAX_SIGNUP_PARTIES = 8;
 export const MAX_PING_MESSAGE_LENGTH = 500;
 export const MAX_DISCORD_MESSAGE_LENGTH = 2_000;
+export const ORGANIZER_EXPORT_ERROR =
+  "Only the run organizer can export this signup sheet. If the organizer details are missing or inconsistent, use `/swaporganizer` to set the correct organizer first.";
 export const SETUP_PROMPT_CONTENT =
   "Party setup saved. Complete the roster to post the signup sheet.";

@@ -1,149 +1,29 @@
 import {
   ApplicationIntegrationType,
   ChannelType,
-  escapeMarkdown,
   InteractionContextType,
   SlashCommandBuilder,
-  type ButtonInteraction,
   type ChatInputCommandInteraction,
-  type ForumChannel,
 } from "discord.js";
 import {
   DISCORD_SETTINGS,
   PAYOUT_GUILD_IDS,
 } from "../config/discord-settings.js";
 import { getSignupSheet } from "../services/signup-sheet.service.js";
-import { exportSignupRun } from "../services/signup-export.service.js";
-import { findExistingExport } from "../services/signup-export-forum.service.js";
+import { sendExport } from "../services/signup-export-forum.service.js";
+import { ORGANIZER_EXPORT_ERROR } from "../constants/signup.js";
 import type { Command } from "../types/command.js";
-import type { SignupSheet, SignupSlot } from "../types/signup-sheet.js";
-import {
-  buildExportContents,
-  buildExportTitle,
-} from "../templates/signup-export.template.js";
+import type { SignupSheet } from "../types/signup-sheet.js";
+import type { SignupExportPart as ExportPart } from "../types/signup-export.js";
+import { buildExportContents } from "../templates/signup-export.template.js";
 import {
   buildExportIdentifier,
   canExportSheet,
   ExportValidationError,
   getExportInstanceTypes,
   getExportRunKey,
+  parseExportAbsentSlots as parseAbsentSlots,
 } from "../utils/signup-export.js";
-
-/** One forum post: the whole run, or one instance type when split. */
-interface ExportPart {
-  runKey: string;
-  identifier: string;
-  sheet: SignupSheet;
-  slots: SignupSlot[];
-  contents: string[] | null;
-  vendor: string;
-  initials?: string;
-}
-
-/** Parses comma-separated slot numbers, rejecting values that are not slots of the sheet. */
-const parseAbsentSlots = (
-  input: string | null,
-  sheet: SignupSheet,
-  run: string,
-) => {
-  const absent = new Set<number>();
-  for (const raw of (input ?? "").split(",")) {
-    const value = raw.trim();
-    if (!value) continue;
-    const number = Number(value);
-    if (
-      !/^\d+$/.test(value) ||
-      !sheet.slots.some((slot) => slot.number === number)
-    ) {
-      throw new ExportValidationError(
-        `Invalid ${run} run absent slot "${value}". Use comma-separated slot numbers from the signup, e.g. \`3, 7\`.`,
-      );
-    }
-    absent.add(number);
-  }
-  return absent;
-};
-
-const ORGANIZER_EXPORT_ERROR =
-  "Only the run organizer can export this signup sheet. If the organizer details are missing or inconsistent, use `/swaporganizer` to set the correct organizer first.";
-
-/** Rechecks organizer ownership and run identity immediately before forum creation. */
-const validateCurrentExport = async (
-  sheet: SignupSheet,
-  userId: string,
-): Promise<void> => {
-  const current = await getSignupSheet(sheet.guildId, sheet.channelId);
-  if (!current || !canExportSheet(current, userId)) {
-    throw new ExportValidationError(ORGANIZER_EXPORT_ERROR);
-  }
-  if (
-    current.timestamp === null ||
-    getExportRunKey(current) !== getExportRunKey(sheet)
-  ) {
-    throw new ExportValidationError(
-      "The run title or date changed while exporting. Please run `/export` again.",
-    );
-  }
-};
-
-/** Creates or locates one payout post and returns a public notice for success, duplicates, or partial delivery. */
-const sendExport = async (
-  interaction: ChatInputCommandInteraction | ButtonInteraction,
-  channel: ForumChannel,
-  sheet: SignupSheet,
-  part: ExportPart,
-): Promise<string> => {
-  const { slots, runKey, identifier } = part;
-  const contents = part.contents!;
-  const recipientIds = [...new Set(slots.map((slot) => slot.signupUserId!))];
-  const messageOptions = (content: string) => ({
-    content,
-    allowedMentions: {
-      parse: [] as [],
-      users: recipientIds.filter((id) => content.includes(`<@${id}>`)),
-    },
-  });
-  let remainingFailed = false;
-  let createdThreadId: string | null = null;
-  let result;
-  try {
-    result = await exportSignupRun(
-      sheet.guildId,
-      runKey,
-      async () => {
-        await validateCurrentExport(sheet, interaction.user.id);
-        const thread = await channel.threads.create({
-          name: buildExportTitle(part.sheet, part.initials),
-          message: messageOptions(contents[0]!),
-        });
-        createdThreadId = thread.id;
-        try {
-          await contents.slice(1).reduce(async (previous, content) => {
-            await previous;
-            await thread.send(messageOptions(content));
-          }, Promise.resolve());
-        } catch {
-          remainingFailed = true;
-        }
-        return thread.id;
-      },
-      () => findExistingExport(channel, identifier),
-      contents,
-    );
-  } catch (error) {
-    if (error instanceof ExportValidationError) return error.message;
-    if (!createdThreadId) throw error;
-    return `Created <#${createdThreadId}>, but could not save the export confirmation. Export is blocked to prevent a duplicate; ask an administrator to check the export history.`;
-  }
-  if (!result.created) {
-    return result.threadId
-      ? `This run has already been exported for this date: <#${result.threadId}>.`
-      : "An export for this run and date is already pending. Ask an administrator to check the export history if it remains blocked.";
-  }
-  return remainingFailed
-    ? `Created <#${result.threadId}>, but could not send the remaining roster. Check the bot's permissions and complete the roster in that post; exporting again is blocked to prevent duplicates.`
-    : `Exported the signup roster to <#${result.threadId}>. Vendor - **${escapeMarkdown(part.vendor.replace(/[\r\n]/g, " "))}**`;
-};
 
 /** Validates `/export` options and builds the forum posts, or returns a user-facing error. */
 const prepareParts = (
@@ -210,9 +90,13 @@ const prepareParts = (
   return { parts, split };
 };
 
-/** Handles both export entry points with payout-guild, organizer, roster, and forum validation. */
+/**
+ * Handles the organizer-only slash command and reports each combined or split result publicly.
+ * @param interaction Export invocation with vendor, split, and optional absent-slot values.
+ * @returns Resolves after validation and the public success, duplicate, or failure reply.
+ */
 export const executeExport = async (
-  interaction: ChatInputCommandInteraction | ButtonInteraction,
+  interaction: ChatInputCommandInteraction,
 ): Promise<void> => {
   await interaction.deferReply();
   const { guildId, channelId, guild } = interaction;
@@ -247,12 +131,6 @@ export const executeExport = async (
     );
     return;
   }
-  if (!interaction.isChatInputCommand()) {
-    await interaction.editReply(
-      "Use `/export` and enter the vendor to export this signup sheet.",
-    );
-    return;
-  }
   const prepared = prepareParts(interaction, sheet);
   if (typeof prepared === "string") {
     await interaction.editReply(prepared);
@@ -270,7 +148,13 @@ export const executeExport = async (
     const notices = await parts.reduce<Promise<string[]>>(
       async (previous, part) => {
         const done = await previous;
-        const notice = await sendExport(interaction, channel, sheet, part);
+        let notice: string;
+        try {
+          notice = await sendExport(interaction.user.id, channel, sheet, part);
+        } catch {
+          notice =
+            "Could not create the payout forum post. Check the bot's channel permissions and any required forum tags.";
+        }
         return [
           ...done,
           part.initials && split ? `(${part.initials}) ${notice}` : notice,
@@ -278,6 +162,11 @@ export const executeExport = async (
       },
       Promise.resolve([]),
     );
+    if (interaction.options.getBoolean("split") && !split) {
+      notices.push(
+        "Split was not applied because this signup has fewer than two instance types.",
+      );
+    }
     await interaction.editReply(notices.join("\n"));
   } catch {
     await interaction.editReply(

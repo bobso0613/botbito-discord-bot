@@ -10,6 +10,37 @@ import { getGmtOffset } from "./signup-sheet.js";
 /** Identifies expected validation failures that should be shown to the exporter. */
 export class ExportValidationError extends Error {}
 
+/**
+ * Parses comma-separated absent slot numbers without changing the signup sheet.
+ * @param input Optional slot list; empty entries are ignored and duplicates collapse.
+ * @param sheet Signup whose original slot numbers are allowed.
+ * @param run First/second run label used in validation errors.
+ * @returns Unique absent slot numbers.
+ * @throws ExportValidationError if any value is not a slot on the sheet.
+ */
+export const parseExportAbsentSlots = (
+  input: string | null,
+  sheet: SignupSheet,
+  run: string,
+): Set<number> => {
+  const absent = new Set<number>();
+  for (const raw of (input ?? "").split(",")) {
+    const value = raw.trim();
+    if (!value) continue;
+    const number = Number(value);
+    if (
+      !/^\d+$/.test(value) ||
+      !sheet.slots.some((slot) => slot.number === number)
+    ) {
+      throw new ExportValidationError(
+        `Invalid ${run} run absent slot "${value}". Use comma-separated slot numbers from the signup, e.g. \`3, 7\`.`,
+      );
+    }
+    absent.add(number);
+  }
+  return absent;
+};
+
 /** Resolves the run's calendar date using server, schedule, then GMT timezone. */
 export const getExportDate = (sheet: SignupSheet): Date => {
   const timezone = sheet.serverTimezone ?? sheet.scheduleTimezone ?? "GMT";

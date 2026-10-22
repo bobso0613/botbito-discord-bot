@@ -71,6 +71,27 @@ beforeEach(() => {
 });
 
 describe("signup export title template", () => {
+  it("omits custom emoji markup from titles but preserves it in content", () => {
+    settings.cooldownInstanceTypesByGuild.guild = [
+      {
+        name: "Alpha",
+        emoji: "<:alpha:123456789012345678>",
+        keywords: [],
+        maxAttempts: 1,
+      },
+      {
+        name: "Beta",
+        emoji: "<a:beta:123456789012345679> \u{1FA9C}",
+        keywords: [],
+        maxAttempts: 1,
+      },
+    ];
+    const sheet = buildSheet({ instanceType: ["Alpha", "Beta"] });
+    expect(buildExportTitle(sheet)).toBe("\u23f3Run Title - 21/10 [\u{1FA9C}]");
+    expect(
+      buildExportContents(sheet, selectedSlots(sheet), identifier)![0],
+    ).toContain("<:alpha:123456789012345678>");
+  });
   it.each([
     { timestamp: Date.UTC(2026, 9, 21, 12) / 1000, expected: "21/10" },
     { timestamp: Date.UTC(2026, 0, 1, 12) / 1000, expected: "01/01" },

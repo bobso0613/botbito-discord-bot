@@ -7,7 +7,14 @@ import {
   getExportInstanceTypes,
 } from "../utils/signup-export.js";
 
-/** Builds a size-limited forum title while preserving DD/MM and selected instance emojis. */
+/**
+ * Builds a forum title of at most 100 characters, preserving DD/MM and Unicode instance emojis.
+ * Custom Discord emoji markup is omitted because forum titles do not render it.
+ * @param sheet Signup with a non-null timestamp and optional instance selections.
+ * @param initials Optional split-instance label displayed before the run title.
+ * @returns Sanitized, potentially truncated title using the run's configured calendar date.
+ * @throws ExportValidationError when metadata leaves no room for the run title.
+ */
 export const buildExportTitle = (
   sheet: SignupSheet,
   initials?: string,
@@ -22,7 +29,7 @@ export const buildExportTitle = (
   const emojis = [
     ...new Set(
       getExportInstanceTypes(sheet)
-        .map((type) => type.emoji)
+        .map((type) => type.emoji.replace(/<a?:\w+:\d+>/g, "").trim())
         .filter(Boolean),
     ),
   ].join(" ");
@@ -69,7 +76,15 @@ const buildExportRosterLines = (
   });
 };
 
-/** Builds message-sized roster chunks, reserving the first footer for metadata and its ID. */
+/**
+ * Builds 2,000-character roster messages with consecutive numbering and original party headings.
+ * Metadata and the final identifier stay in the starter message for duplicate recovery.
+ * @param sheet Original or per-instance signup with a scheduled timestamp.
+ * @param slots Confirmed, non-TBC slots after absent-slot exclusions.
+ * @param identifier Stable footer identifying this run's combined or split coverage.
+ * @param vendor Optional vendor names; custom emojis remain available in message metadata.
+ * @returns Roster messages, or null when a single roster line or metadata cannot fit.
+ */
 export const buildExportContents = (
   sheet: SignupSheet,
   slots: readonly SignupSlot[],

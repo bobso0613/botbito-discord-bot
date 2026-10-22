@@ -222,6 +222,27 @@ describe("signup setup service", () => {
     ).toEqual(["Endless Tower", "Endless Cellar"]);
   });
 
+  it("caps legacy saved defaults without mutating the saved selections", () => {
+    const saved = ["First", "Second", "Third"];
+    const types = saved.map((name) => ({
+      name,
+      emoji: "",
+      keywords: [],
+      maxAttempts: 1,
+    }));
+    const select = buildInstanceTypeSelectRow(
+      saved,
+      types,
+    ).components[0]!.toJSON();
+    expect(select.max_values).toBe(2);
+    expect(
+      select.options
+        .filter((option) => option.default)
+        .map((option) => option.value),
+    ).toEqual(["First", "Second"]);
+    expect(saved).toEqual(["First", "Second", "Third"]);
+  });
+
   it.each([
     {
       values: ["Endless Tower", "Endless Cellar"],

@@ -15,17 +15,18 @@ const getClaimMessage = (context: InteractionContext): string =>
 /**
  * Builds payout balances with Currently Vending directly below Distributed.
  * Splits vending links into fields of at most 1,024 characters; an empty list displays None.
+ * Pages include at most 25 fields and 6,000 characters including author, title, and footer text.
  * Shows the claim reminder after vending only for share-ready members other than the payout contact.
  * @param details Member's payout-sheet balances.
  * @param context Invoking member and guild display information.
  * @param vendingThreads Pre-filtered Discord thread mentions from signup-export history.
- * @returns Payout-status embed, including when only vending threads are present.
+ * @returns Payout-status pages, each sent separately to respect the shared message character budget.
  */
-export const buildPayoutEmbed = (
+export const buildPayoutEmbeds = (
   details: PayoutDetails,
   context: InteractionContext,
   vendingThreads: readonly string[] = [],
-): EmbedBuilder => {
+): EmbedBuilder[] => {
   const footer = getEmbedFooter(context);
   const claimMessage = details.shareReady > 0 ? getClaimMessage(context) : "";
   const vendingFields: string[] = [];
@@ -40,46 +41,70 @@ export const buildPayoutEmbed = (
   }
   if (vendingFields.length === 0) vendingFields.push("None");
 
-  return new EmbedBuilder()
+  const base = new EmbedBuilder()
     .setAuthor({
       name: `💵 ${context.displayName} (@${context.discordTag})`,
     })
     .setTitle("Payout Status")
-    .addFields(
-      {
-        name: `<a:pepemoneyrain:${pepeMoneyRainEmojiId}> Claimable`,
-        value: `${formatZeny(details.shareReady)}`,
-        inline: true,
-      },
-      {
-        name: "⌛ Pending",
-        value: formatZeny(details.pending),
-        inline: true,
-      },
-      { name: "\u200b", value: "", inline: true },
-      { name: "\u200b", value: "", inline: false },
-      {
-        name: "✅ Distributed",
-        value: formatZeny(details.distributed),
-        inline: false,
-      },
-      ...vendingFields.map((value, index) => ({
-        name:
-          index === 0
-            ? "🛒Currently Vending"
-            : "🛒Currently Vending (continued)",
-        value,
-        inline: false,
-      })),
-      ...(claimMessage
-        ? [{ name: "\u200b", value: claimMessage, inline: false }]
-        : []),
-    )
     .setThumbnail(context.userAvatarUrl)
     .setColor("#00b0f4")
     .setFooter(footer)
     .setTimestamp();
+  const fields = [
+    {
+      name: `<a:pepemoneyrain:${pepeMoneyRainEmojiId}> Claimable`,
+      value: `${formatZeny(details.shareReady)}`,
+      inline: true,
+    },
+    {
+      name: "⌛ Pending",
+      value: formatZeny(details.pending),
+      inline: true,
+    },
+    { name: "\u200b", value: "", inline: true },
+    { name: "\u200b", value: "", inline: false },
+    {
+      name: "✅ Distributed",
+      value: formatZeny(details.distributed),
+      inline: false,
+    },
+    ...vendingFields.map((value, index) => ({
+      name:
+        index === 0 ? "🛒Currently Vending" : "🛒Currently Vending (continued)",
+      value,
+      inline: false,
+    })),
+    ...(claimMessage
+      ? [{ name: "\u200b", value: claimMessage, inline: false }]
+      : []),
+  ];
+  const pages = [new EmbedBuilder(base.data)];
+  for (const field of fields) {
+    let page = pages.at(-1)!;
+    if (
+      (page.data.fields?.length ?? 0) >= 25 ||
+      page.length + field.name.length + field.value.length > 6000
+    ) {
+      page = new EmbedBuilder(base.data);
+      pages.push(page);
+    }
+    page.addFields(field);
+  }
+  return pages;
 };
+
+/**
+ * Builds only the first payout page for callers requiring the legacy single-embed API.
+ * @param details Member's payout-sheet balances.
+ * @param context Invoking member and guild display information.
+ * @param vendingThreads Pre-filtered thread mentions; overflow is not included in this result.
+ * @returns First payout page; use buildPayoutEmbeds to display every vending link.
+ */
+export const buildPayoutEmbed = (
+  details: PayoutDetails,
+  context: InteractionContext,
+  vendingThreads: readonly string[] = [],
+): EmbedBuilder => buildPayoutEmbeds(details, context, vendingThreads)[0]!;
 
 /** Builds the not-joined response when all sheet balances are zero and no vending threads qualify. */
 export const buildPayoutEmbedNotJoined = (

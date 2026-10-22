@@ -1,6 +1,9 @@
 import { describe, expect, it, jest } from "@jest/globals";
-import { Collection } from "discord.js";
-import { findExistingExport } from "./signup-export-forum.service.js";
+import { Collection, DiscordAPIError, RESTJSONErrorCodes } from "discord.js";
+import {
+  findExistingExport,
+  recoverExportThread,
+} from "./signup-export-forum.service.js";
 
 const identifier = "-# Export ID: botbito-export:v1:test-id";
 const buildThread = (
@@ -10,6 +13,7 @@ const buildThread = (
   archiveTimestamp: number | null = 1000,
 ) => ({
   id,
+  name: "\u23f3Run - 01/10",
   archiveTimestamp,
   fetchStarterMessage: jest.fn(async () =>
     content === null ? null : { content, author: { id: authorId } },
@@ -30,6 +34,93 @@ const createForum = () => ({
 });
 
 describe("signup export forum lookup", () => {
+  it("fetches starters only for matching run dates across active and archived threads", async () => {
+    const forum = createForum();
+    const unrelated = buildThread("unrelated", identifier);
+    unrelated.name = "\u23f3Other run - 02/10";
+    const matching = buildThread("matching", identifier);
+    matching.name = "\u23f3(ET) Renamed run - 01/10 [emoji]";
+    forum.threads.fetchActive.mockResolvedValueOnce({
+      threads: threads(unrelated),
+    });
+    forum.threads.fetchArchived.mockResolvedValueOnce({
+      threads: threads(unrelated, matching),
+      hasMore: false,
+    });
+    await expect(
+      findExistingExport(forum as never, identifier, "2026-10-01"),
+    ).resolves.toBe("matching");
+    expect(unrelated.fetchStarterMessage).not.toHaveBeenCalled();
+    expect(matching.fetchStarterMessage).toHaveBeenCalledTimes(1);
+  });
+  it.each(["active", "archived"])(
+    "skips deleted %s starters and still finds another export",
+    async (location) => {
+      const forum = createForum();
+      const deleted = buildThread("deleted", null);
+      deleted.fetchStarterMessage.mockRejectedValueOnce(
+        new DiscordAPIError(
+          {
+            code: RESTJSONErrorCodes.UnknownMessage,
+            message: "Unknown Message",
+          },
+          RESTJSONErrorCodes.UnknownMessage,
+          404,
+          "GET",
+          "https://discord.com/api/messages/deleted",
+          {},
+        ),
+      );
+      const candidates = threads(deleted, buildThread("match", identifier));
+      if (location === "active")
+        forum.threads.fetchActive.mockResolvedValueOnce({
+          threads: candidates,
+        });
+      else
+        forum.threads.fetchArchived.mockResolvedValueOnce({
+          threads: candidates,
+          hasMore: false,
+        });
+      await expect(
+        findExistingExport(forum as never, identifier),
+      ).resolves.toBe("match");
+    },
+  );
+  it("recovers the original bot roster across message pages, excluding participant replies", async () => {
+    const message = (id: string, content: string, authorId = "bot") => ({
+      id,
+      content,
+      author: { id: authorId },
+      createdTimestamp: Number(id),
+    });
+    const page = new Collection(
+      Array.from({ length: 100 }, (_, index) => {
+        const entry = message(
+          String(200 - index),
+          index === 0 ? "<@followup>" : "reply",
+          index === 0 ? "bot" : "member",
+        );
+        return [entry.id, entry] as const;
+      }),
+    );
+    const fetch = jest
+      .fn<(...args: unknown[]) => Promise<typeof page>>()
+      .mockResolvedValueOnce(page)
+      .mockResolvedValueOnce(
+        new Collection([["1", message("1", "<@original>")]]),
+      );
+    const forum = {
+      client: { user: { id: "bot" } },
+      threads: { fetch: jest.fn(async () => ({ messages: { fetch } })) },
+    };
+    await expect(
+      recoverExportThread(forum as never, "existing"),
+    ).resolves.toEqual({
+      threadId: "existing",
+      contents: ["<@original>", "<@followup>"],
+    });
+    expect(fetch).toHaveBeenNthCalledWith(2, { limit: 100, before: "101" });
+  });
   it("finds an active bot-authored identifier footer and skips archives", async () => {
     const forum = createForum();
     forum.threads.fetchActive.mockResolvedValueOnce({

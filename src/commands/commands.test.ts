@@ -34,7 +34,7 @@ jest.unstable_mockModule("../services/signup-export.service.js", () => ({
   getCurrentlyVendingThreads,
 }));
 jest.unstable_mockModule("../templates/payout.template.js", () => ({
-  buildPayoutEmbed,
+  buildPayoutEmbeds: (...args: unknown[]) => [buildPayoutEmbed(...args)],
   buildPayoutEmbedNotJoined,
   buildPayoutSummaryEmbed,
 }));

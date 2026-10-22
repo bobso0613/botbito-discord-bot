@@ -3,6 +3,7 @@ import { DISCORD_SETTINGS } from "../config/discord-settings.js";
 import type { InteractionContext } from "../types/interaction-context.js";
 import {
   buildPayoutEmbed,
+  buildPayoutEmbeds,
   buildPayoutEmbedNotJoined,
   buildPayoutSummaryEmbed,
 } from "./payout.template.js";
@@ -19,6 +20,57 @@ const context: InteractionContext = {
 };
 
 describe("payout embed builders", () => {
+  it.each([300, 1500])(
+    "paginates %s vending links within message character and field limits",
+    (count) => {
+      const threads = Array.from(
+        { length: count },
+        (_, index) => `<#${String(1234567890123456789n + BigInt(index))}>`,
+      );
+      const pages = buildPayoutEmbeds(
+        {
+          pending: 123456,
+          shareReady: 999999,
+          distributed: 456789,
+          currency: "z",
+        },
+        {
+          ...context,
+          displayName: "Member".repeat(20),
+          guildName: "Guild".repeat(20),
+        },
+        threads,
+      );
+      expect(pages.length).toBeGreaterThan(1);
+      for (const page of pages) {
+        const data = page.toJSON();
+        const textLength =
+          (data.author?.name.length ?? 0) +
+          (data.title?.length ?? 0) +
+          (data.description?.length ?? 0) +
+          (data.footer?.text.length ?? 0) +
+          data.fields!.reduce(
+            (sum, field) => sum + field.name.length + field.value.length,
+            0,
+          );
+        expect(textLength).toBeLessThanOrEqual(6000);
+        expect(data.fields!.length).toBeLessThanOrEqual(25);
+        expect(data.fields!.every((field) => field.value.length <= 1024)).toBe(
+          true,
+        );
+      }
+      const allFields = pages.flatMap((page) => page.toJSON().fields!);
+      expect(
+        allFields
+          .filter((field) => field.name.startsWith("🛒Currently Vending"))
+          .flatMap((field) => field.value.split("\n")),
+      ).toEqual(threads);
+      expect(
+        allFields.filter((field) => field.name.includes("Distributed")),
+      ).toHaveLength(1);
+      expect(allFields.at(-1)?.value).toContain("Please ping");
+    },
+  );
   it("lists vending threads directly below Distributed", () => {
     const embed = buildPayoutEmbed(
       { pending: 0, shareReady: 0, distributed: 0, currency: "z" },

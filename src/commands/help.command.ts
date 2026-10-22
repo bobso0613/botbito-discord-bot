@@ -121,7 +121,7 @@ export const sendHelp = async (
         value: commandsInCategory
           .map(
             (command) =>
-              `${command.emoji} \`${command.name}\` — ${command.description}`,
+              `${command.emoji} \`${command.name}\` — ${command.summary ?? command.description}`,
           )
           .join("\n"),
       });

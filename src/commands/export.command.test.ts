@@ -15,15 +15,23 @@ const exportSignupRun = jest.fn(
     guildId: string,
     runKey: string,
     createThread: () => Promise<string>,
-    findExistingThread: () => Promise<string | null>,
+    findExistingThread: (
+      key: string,
+    ) => Promise<{ threadId: string; contents: readonly string[] } | null>,
+    _contents?: readonly string[],
+    overlappingRunKeys: readonly string[] = [],
   ) => {
     const key = `${guildId}:${runKey}`;
-    const existing = exportHistory.get(key);
+    const existing = [runKey, ...overlappingRunKeys]
+      .map((candidate) => exportHistory.get(`${guildId}:${candidate}`))
+      .find(Boolean);
     if (existing) return { created: false, threadId: existing };
-    const found = await findExistingThread();
-    if (found) {
-      exportHistory.set(key, found);
-      return { created: false, threadId: found };
+    for (const candidate of [runKey, ...overlappingRunKeys]) {
+      const found = await findExistingThread(candidate);
+      if (found) {
+        exportHistory.set(`${guildId}:${candidate}`, found.threadId);
+        return { created: false, threadId: found.threadId };
+      }
     }
     const threadId = await createThread();
     exportHistory.set(key, threadId);
@@ -91,6 +99,7 @@ const identifier = `-# Export ID: botbito-export:v1:${createHash("sha256")
   .digest("hex")}`;
 const buildThread = (id: string, content: string, authorId = "bot") => ({
   id,
+  name: "\u23f3Endless Tower - 01/10",
   archiveTimestamp: Date.UTC(2026, 9, 1),
   fetchStarterMessage: jest.fn(async () => ({
     content,
@@ -104,6 +113,9 @@ const createInteraction = () => {
     client: { user: { id: "bot" } },
     threads: {
       create,
+      fetch: jest.fn(async () => ({
+        messages: { fetch: jest.fn(async () => new Collection()) },
+      })),
       fetchActive: jest.fn(async () => ({
         threads: new Collection<string, ReturnType<typeof buildThread>>(),
       })),
@@ -142,6 +154,20 @@ describe("/export", () => {
   });
   it("registers only in payout guilds", () => {
     expect(exportCommand.guildIds).toEqual(["guild"]);
+  });
+
+  it("explains why split produces one post for a single-instance sheet", async () => {
+    getSignupSheet.mockResolvedValue({
+      ...buildSheet(),
+      instanceType: "Endless Tower",
+    });
+    const interaction = createInteraction();
+    interaction.options.getBoolean.mockReturnValue(true);
+    await executeExport(interaction as never);
+    expect(interaction.create).toHaveBeenCalledTimes(1);
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      expect.stringContaining("fewer than two instance types"),
+    );
   });
   it("exports confirmed filled slots, excluding reserves and TBC users from content and mentions", async () => {
     const interaction = createInteraction();
@@ -263,6 +289,59 @@ describe("/export", () => {
       expect.stringContaining("Invalid first run absent slot"),
     );
   });
+
+  it.each([false, true])(
+    "blocks overlapping coverage when the first export is split=%s",
+    async (split) => {
+      getSignupSheet.mockResolvedValue({
+        ...buildSheet(),
+        instanceType: ["Endless Tower", "Endless Cellar"],
+      });
+      const first = createInteraction();
+      first.options.getBoolean.mockReturnValue(split);
+      await executeExport(first as never);
+      const second = createInteraction();
+      second.options.getBoolean.mockReturnValue(!split);
+      await executeExport(second as never);
+      expect(second.create).not.toHaveBeenCalled();
+      expect(second.editReply).toHaveBeenCalledWith(
+        expect.stringContaining("already been exported"),
+      );
+    },
+  );
+
+  it.each(["lookup", "creation"])(
+    "preserves the first split notice when second %s fails and retries only the missing part",
+    async (failure) => {
+      getSignupSheet.mockResolvedValue({
+        ...buildSheet(),
+        instanceType: ["Endless Tower", "Endless Cellar"],
+      });
+      const first = createInteraction();
+      first.options.getBoolean.mockReturnValue(true);
+      if (failure === "creation") {
+        first.create
+          .mockResolvedValueOnce({ id: "completed", send: jest.fn() })
+          .mockRejectedValueOnce(new Error("failed"));
+      } else {
+        first.create.mockResolvedValue({ id: "completed", send: jest.fn() });
+        first.forum.threads.fetchActive
+          .mockResolvedValueOnce({ threads: new Collection() })
+          .mockResolvedValueOnce({ threads: new Collection() })
+          .mockRejectedValueOnce(new Error("failed"));
+      }
+      await executeExport(first as never);
+      expect(first.editReply).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /\(ET\).*<#completed>.*\n\(EC\).*Could not create/,
+        ),
+      );
+      const retry = createInteraction();
+      retry.options.getBoolean.mockReturnValue(true);
+      await executeExport(retry as never);
+      expect(retry.create).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("keeps unknown instance names without inventing an emoji", async () => {
     getSignupSheet.mockResolvedValue({

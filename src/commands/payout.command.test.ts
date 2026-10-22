@@ -5,7 +5,7 @@ import type { PayoutDetails, PayoutLookup } from "../types/payout.js";
 const getPayoutDetails =
   jest.fn<(lookup: PayoutLookup) => Promise<PayoutDetails>>();
 const getCurrentlyVendingThreads = jest.fn<() => Promise<string[]>>();
-const buildPayoutEmbed = jest.fn().mockReturnValue({ kind: "payout" });
+const buildPayoutEmbed = jest.fn().mockReturnValue([{ kind: "payout" }]);
 const buildPayoutEmbedNotJoined = jest
   .fn()
   .mockReturnValue({ kind: "missing" });
@@ -17,7 +17,7 @@ jest.unstable_mockModule("../services/signup-export.service.js", () => ({
   getCurrentlyVendingThreads,
 }));
 jest.unstable_mockModule("../templates/payout.template.js", () => ({
-  buildPayoutEmbed,
+  buildPayoutEmbeds: buildPayoutEmbed,
   buildPayoutEmbedNotJoined,
 }));
 jest.unstable_mockModule("../utils/interaction-context.js", () => ({
@@ -32,12 +32,14 @@ const createInteraction = (guildIdValue: string | null = guildId) => ({
   reply: jest.fn(),
   deferReply: jest.fn(),
   editReply: jest.fn(),
+  followUp: jest.fn(),
   options: { getBoolean: jest.fn().mockReturnValue(false) },
 });
 
 describe("payout command", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    buildPayoutEmbed.mockReturnValue([{ kind: "payout" }]);
     getCurrentlyVendingThreads.mockResolvedValue([]);
     getPayoutDetails.mockResolvedValue({
       pending: 1,
@@ -100,4 +102,24 @@ describe("payout command", () => {
     await payoutCommand.execute(createInteraction() as never);
     expect(buildPayoutEmbedNotJoined).toHaveBeenCalled();
   });
+
+  it.each([false, true])(
+    "sends overflow in separate messages with private=%s",
+    async (privately) => {
+      buildPayoutEmbed.mockReturnValue([
+        { kind: "payout" },
+        { kind: "continued" },
+      ]);
+      const interaction = createInteraction();
+      interaction.options.getBoolean.mockReturnValue(privately);
+      await payoutCommand.execute(interaction as never);
+      expect(interaction.editReply).toHaveBeenCalledWith({
+        embeds: [{ kind: "payout" }],
+      });
+      expect(interaction.followUp).toHaveBeenCalledWith({
+        embeds: [{ kind: "continued" }],
+        ...(privately ? { flags: MessageFlags.Ephemeral } : {}),
+      });
+    },
+  );
 });
