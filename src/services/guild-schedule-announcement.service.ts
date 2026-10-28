@@ -240,13 +240,19 @@ const refreshGuildScheduleAnnouncement = async (
     getScheduleTitle(message),
   );
   const announcementChannels: TextChannel[] = [];
-
-  for (const channelId of source.scheduleTextChannelIds) {
-    const channel = await message.guild.channels.fetch(channelId);
-    if (channel?.type !== ChannelType.GuildText) continue;
-
-    announcementChannels.push(channel);
-  }
+  const guild = message.guild;
+  announcementChannels.push(
+    ...(
+      await Promise.all(
+        source.scheduleTextChannelIds.map((channelId) =>
+          guild.channels.fetch(channelId),
+        ),
+      )
+    ).filter(
+      (channel): channel is TextChannel =>
+        channel?.type === ChannelType.GuildText,
+    ),
+  );
 
   logger.log(
     buildGuildScheduleRefreshLogMessage(
@@ -260,13 +266,15 @@ const refreshGuildScheduleAnnouncement = async (
     ),
   );
 
-  for (const channel of announcementChannels) {
-    await deleteChannelMessages(channel);
-    await channel.send({
-      embeds: [embed],
-      components: [buildScheduleActionRow()],
-    });
-  }
+  await Promise.all(
+    announcementChannels.map(async (channel) => {
+      await deleteChannelMessages(channel);
+      await channel.send({
+        embeds: [embed],
+        components: [buildScheduleActionRow()],
+      });
+    }),
+  );
 };
 
 /** Publishes the current schedule embed to newly configured announcement channels. */
@@ -302,15 +310,17 @@ export const publishGuildScheduleAnnouncement = async (
     true,
   );
 
-  for (const channelId of scheduleTextChannelIds) {
-    const channel = await guild.channels.fetch(channelId).catch(() => null);
-    if (channel?.type !== ChannelType.GuildText) continue;
+  await Promise.all(
+    scheduleTextChannelIds.map(async (channelId) => {
+      const channel = await guild.channels.fetch(channelId).catch(() => null);
+      if (channel?.type !== ChannelType.GuildText) return;
 
-    await channel.send({
-      embeds: [embed],
-      components: [buildScheduleActionRow()],
-    });
-  }
+      await channel.send({
+        embeds: [embed],
+        components: [buildScheduleActionRow()],
+      });
+    }),
+  );
 };
 
 /** Checks whether an identifier (run title or channel name) appears in the latest announcement. */
