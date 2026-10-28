@@ -27,12 +27,12 @@ await rest.put(Routes.applicationCommands(clientId), {
   body: globalCommandBody,
 });
 
-for (const guildId of guildIds) {
+const deployGuildCommands = async (guildId: string): Promise<void> => {
   if (excludedGuildIds.has(guildId)) {
     logger.warn(
       `Skipping guild ${guildId}: command deployment is excluded for application ${clientId}.`,
     );
-    continue;
+    return;
   }
 
   const guildCommandBody = commands
@@ -42,7 +42,9 @@ for (const guildId of guildIds) {
   await rest.put(Routes.applicationGuildCommands(clientId, guildId), {
     body: guildCommandBody,
   });
-}
+};
+
+await Promise.all(guildIds.map(deployGuildCommands));
 
 logger.log(
   `Registered ${globalCommandBody.length} global and guild-specific slash command(s) for ${guildIds.length} guild(s).`,
