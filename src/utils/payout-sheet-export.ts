@@ -942,9 +942,12 @@ const rebaseSimpleSum = (
     return {
       userEnteredValue: {
         formulaValue: formula.replace(
-          /"[^"]*"|(\$?[A-Z]+)\d+/gi,
-          (reference, column: string | undefined) =>
-            column ? `${column}${row + 1}` : reference,
+          /"[^"]*"|(\$?[A-Z]+)(\d*)/gi,
+          (
+            reference,
+            column: string | undefined,
+            referenceRow: string | undefined,
+          ) => (column && referenceRow ? `${column}${row + 1}` : reference),
         ),
       },
     };
