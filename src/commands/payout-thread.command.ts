@@ -101,11 +101,10 @@ const getSharePost = async (
 };
 
 const parseStarter = (content: string): ParsedStarter | null => {
-  const match =
-    /^(?:([\s\S]*?)\n\n)?Participants: \*\*\d+\*\*([\s\S]*)$/.exec(content);
-  return match
-    ? { roster: match[1] ?? "", metadataSuffix: match[2]! }
-    : null;
+  const match = /^(?:([\s\S]*?)\n\n)?Participants: \*\*\d+\*\*([\s\S]*)$/.exec(
+    content,
+  );
+  return match ? { roster: match[1] ?? "", metadataSuffix: match[2]! } : null;
 };
 
 const normalizeUserMentions = (content: string): string =>
@@ -157,32 +156,16 @@ const splitRosterLines = (
   roster: string,
   firstChunkLimit: number,
 ): string[] => {
-  const [firstLine, ...remainingLines] = roster.split("\n");
-  const firstLineFits = firstLine!.length <= firstChunkLimit;
-  const chunks = firstLineFits ? [firstLine!] : [""];
-  const lines = firstLineFits ? remainingLines : [firstLine!, ...remainingLines];
+  const chunks = [""];
   const continuationLimit =
     MAX_DISCORD_MESSAGE_LENGTH - continuationPrefix.length;
-  for (const line of lines) {
-    if (!firstLineFits && chunks.length === 1 && chunks[0] === "") {
-      if (line.length > continuationLimit) {
-        throw new Error(
-          "A roster line exceeds Discord's message limit. Shorten the line and try again.",
-        );
-      }
-      chunks.push(line);
-      continue;
-    }
+  for (const line of roster.split("\n")) {
     const lastIndex = chunks.length - 1;
     const last = chunks[lastIndex];
-    const limit =
-      firstLineFits && chunks.length === 1
-        ? firstChunkLimit
-        : continuationLimit;
+    const limit = chunks.length === 1 ? firstChunkLimit : continuationLimit;
     const candidate = last ? `${last}\n${line}` : line;
     if (candidate.length <= limit) {
-      if (lastIndex < 0) chunks.push(candidate);
-      else chunks[lastIndex] = candidate;
+      chunks[lastIndex] = candidate;
       continue;
     }
     if (line.length > continuationLimit) {
@@ -203,16 +186,127 @@ const splitRoster = (
   const metadata = `\n\nParticipants: **${participantCount}**${metadataSuffix}`;
   const firstChunkLimit = MAX_DISCORD_MESSAGE_LENGTH - metadata.length;
   if (firstChunkLimit < 0) {
-    throw new Error("The payout post metadata exceeds Discord's message limit.");
+    throw new Error(
+      "The payout post metadata exceeds Discord's message limit.",
+    );
   }
   const chunks = splitRosterLines(roster, firstChunkLimit);
-  return chunks.map((chunk, index) =>
-    index === 0 && !chunk
-      ? metadata.slice(2)
-      : index === 0
-        ? `${chunk}${metadata}`
-      : `${continuationPrefix}${chunk}`,
+  return chunks.map((chunk, index) => {
+    if (index !== 0) return `${continuationPrefix}${chunk}`;
+    return chunk ? `${chunk}${metadata}` : metadata.slice(2);
+  });
+};
+
+type RosterOperation = () => Promise<unknown>;
+
+interface RosterChanges {
+  completedAdds: string[];
+  completedRemoves: string[];
+  editedMessages: Array<{ message: Message; content: string }>;
+  sentMessages: Message[];
+  deletedMessages: string[];
+}
+
+const runRosterOperations = (operations: RosterOperation[]): Promise<void> =>
+  operations.reduce(async (previous, operation) => {
+    await previous;
+    await operation();
+  }, Promise.resolve());
+
+const changeRosterMembership = async (
+  thread: ThreadChannel,
+  memberList: ReadonlyMap<string, unknown>,
+  oldUserIds: Set<string>,
+  newUserIds: Set<string>,
+  changes: RosterChanges,
+): Promise<void> => {
+  const additions = [...newUserIds]
+    .filter((userId) => !memberList.has(userId))
+    .map((userId) => async () => {
+      await thread.members.add(userId);
+      changes.completedAdds.push(userId);
+    });
+  const removals = [...oldUserIds]
+    .filter((userId) => !newUserIds.has(userId) && memberList.has(userId))
+    .map((userId) => async () => {
+      await thread.members.remove(userId);
+      changes.completedRemoves.push(userId);
+    });
+  await runRosterOperations([...additions, ...removals]);
+};
+
+const changeRosterMessages = async (
+  thread: ThreadChannel,
+  rosterMessages: Message[],
+  contents: string[],
+  changes: RosterChanges,
+): Promise<void> => {
+  const allowedMentions = { parse: [] as [] };
+  const writes = contents.map((content, index) => async () => {
+    const existing = rosterMessages[index];
+    if (existing) {
+      changes.editedMessages.push({
+        message: existing,
+        content: existing.content,
+      });
+      await existing.edit({ content, allowedMentions });
+    } else {
+      changes.sentMessages.push(
+        await thread.send({ content, allowedMentions }),
+      );
+    }
+  });
+  const deletions = rosterMessages
+    .slice(contents.length)
+    .map((message) => async () => {
+      await message.delete();
+      changes.deletedMessages.push(message.content);
+    });
+  await runRosterOperations([...writes, ...deletions]);
+};
+
+const reverseRosterOperations = <Item>(
+  items: Item[],
+  operation: (item: Item) => Promise<unknown>,
+): RosterOperation[] =>
+  items.reduceRight<RosterOperation[]>((operations, item) => {
+    operations.push(() => operation(item));
+    return operations;
+  }, []);
+
+const rollbackRosterChanges = async (
+  thread: ThreadChannel,
+  changes: RosterChanges,
+): Promise<unknown[]> => {
+  const allowedMentions = { parse: [] as [] };
+  const errors: unknown[] = [];
+  const operations = [
+    ...reverseRosterOperations(changes.deletedMessages, (content) =>
+      thread.send({ content, allowedMentions }),
+    ),
+    ...reverseRosterOperations(changes.editedMessages, ({ message, content }) =>
+      message.edit({ content, allowedMentions }),
+    ),
+    ...reverseRosterOperations(changes.sentMessages, (message) =>
+      message.delete(),
+    ),
+    ...reverseRosterOperations(changes.completedRemoves, (userId) =>
+      thread.members.add(userId),
+    ),
+    ...reverseRosterOperations(changes.completedAdds, (userId) =>
+      thread.members.remove(userId),
+    ),
+  ];
+  await runRosterOperations(
+    operations.map((operation) => async () => {
+      try {
+        await operation();
+      } catch (error) {
+        errors.push(error);
+      }
+    }),
   );
+  return errors;
 };
 
 const editRoster = async (
@@ -253,73 +347,24 @@ const editRoster = async (
     starterParts.metadataSuffix,
   );
   const memberList = await thread.members.fetch();
-  const allowedMentions = { parse: [] as [] };
-  const completedAdds: string[] = [];
-  const completedRemoves: string[] = [];
-  const editedMessages: Array<{ message: Message; content: string }> = [];
-  const sentMessages: Message[] = [];
-  const deletedMessages: string[] = [];
+  const changes: RosterChanges = {
+    completedAdds: [],
+    completedRemoves: [],
+    editedMessages: [],
+    sentMessages: [],
+    deletedMessages: [],
+  };
   try {
-    for (const userId of newUserIds) {
-      if (memberList.has(userId)) continue;
-      await thread.members.add(userId);
-      completedAdds.push(userId);
-    }
-    for (const userId of oldUserIds) {
-      if (newUserIds.has(userId) || !memberList.has(userId)) continue;
-      await thread.members.remove(userId);
-      completedRemoves.push(userId);
-    }
-    for (const [index, content] of contents.entries()) {
-      const existing = rosterMessages[index];
-      if (existing) {
-        editedMessages.push({ message: existing, content: existing.content });
-        await existing.edit({ content, allowedMentions });
-      } else {
-        sentMessages.push(await thread.send({ content, allowedMentions }));
-      }
-    }
-    for (const message of rosterMessages.slice(contents.length)) {
-      await message.delete();
-      deletedMessages.push(message.content);
-    }
+    await changeRosterMembership(
+      thread,
+      memberList,
+      oldUserIds,
+      newUserIds,
+      changes,
+    );
+    await changeRosterMessages(thread, rosterMessages, contents, changes);
   } catch (error) {
-    const rollbackErrors: unknown[] = [];
-    for (const content of deletedMessages.reverse()) {
-      try {
-        await thread.send({ content, allowedMentions });
-      } catch (rollbackError) {
-        rollbackErrors.push(rollbackError);
-      }
-    }
-    for (const { message, content } of editedMessages.reverse()) {
-      try {
-        await message.edit({ content, allowedMentions });
-      } catch (rollbackError) {
-        rollbackErrors.push(rollbackError);
-      }
-    }
-    for (const message of sentMessages.reverse()) {
-      try {
-        await message.delete();
-      } catch (rollbackError) {
-        rollbackErrors.push(rollbackError);
-      }
-    }
-    for (const userId of completedRemoves.reverse()) {
-      try {
-        await thread.members.add(userId);
-      } catch (rollbackError) {
-        rollbackErrors.push(rollbackError);
-      }
-    }
-    for (const userId of completedAdds.reverse()) {
-      try {
-        await thread.members.remove(userId);
-      } catch (rollbackError) {
-        rollbackErrors.push(rollbackError);
-      }
-    }
+    const rollbackErrors = await rollbackRosterChanges(thread, changes);
     if (rollbackErrors.length) {
       throw new Error(
         `Could not apply the roster edit (${errorMessage(error)}), and ${rollbackErrors.length} rollback operation(s) failed. Repair the thread roster and membership manually before syncing Sheets.`,
@@ -495,10 +540,11 @@ export const handleShareParticipantsMessage = async (
   try {
     await queuePayoutSheetOperation(async () => {
       const pendingEdit = pendingShareParticipantUsers.get(message.channelId);
-      if (!pendingEdit || pendingEdit.userId !== message.author.id) return;
+      if (pendingEdit?.userId !== message.author.id) return;
       if (message.content.trim().toLowerCase() !== "done") {
         const separator = pendingEdit.chunks.length ? 1 : 0;
-        const nextLength = pendingEdit.length + separator + message.content.length;
+        const nextLength =
+          pendingEdit.length + separator + message.content.length;
         if (nextLength > maximumRosterEditLength) {
           throw new Error("The updated roster is too large to process.");
         }

@@ -8,7 +8,6 @@ import type {
   SignupExportResult,
   SignupExportHistoryEntry,
 } from "../types/signup-export.js";
-import type { PayoutSheetSnapshot } from "../types/payout-sheet-export.js";
 export type {
   RecoveredSignupExport,
   SignupExportResult,
@@ -133,10 +132,9 @@ const repairHistoryEntry = async (
     typeof recovered === "string" ? null : recovered.contents;
   const deliveryIncomplete =
     Boolean(saved.sheetsSync && saved.contents) &&
-    (!recoveredContents ||
-      saved.contents!.length !== recoveredContents.length ||
+    (saved.contents!.length !== recoveredContents?.length ||
       saved.contents!.some(
-        (content, index) => content !== recoveredContents[index],
+        (content, index) => content !== recoveredContents?.[index],
       ));
   history[key] =
     typeof recovered === "string"
@@ -180,7 +178,7 @@ const findSavedExport = async (
  * @param findExistingThread Looks up coverage or recovers contents for a known thread ID. Without it, pending history stays blocked.
  * @param contents Exported roster messages saved with a newly created thread for participant lookup.
  * @param overlappingRunKeys Combined or per-instance keys whose coverage would duplicate this post.
- * @param sheetsSync Optional exact snapshot for configured worksheet synchronization and retries.
+ * @param metadata Optional exact Sheets retry snapshot and original organizer ID.
  * @returns Whether a new post was created and its ID, or null while an earlier export is pending.
  * @throws For unreadable history, unsuccessful forum checks, creation failures, or persistence failures.
  */
@@ -191,9 +189,9 @@ export const exportSignupRun = async (
   findExistingThread?: FindExistingThread,
   contents?: readonly string[],
   overlappingRunKeys: readonly string[] = [],
-  sheetsSync?: PayoutSheetSnapshot,
-  organizerId?: string,
+  metadata: Pick<SignupExportHistoryEntry, "sheetsSync" | "organizerId"> = {},
 ): Promise<SignupExportResult> => {
+  const { sheetsSync, organizerId } = metadata;
   const path = resolve(
     process.cwd(),
     "private",
@@ -309,12 +307,7 @@ export const getSignupExportOrganizerId = async (
   const previous = exportQueues.get(guildId) ?? Promise.resolve();
   const operation = previous.then(async () => {
     const history = await readHistory(
-      resolve(
-        process.cwd(),
-        "private",
-        "signup-exports",
-        `${guildId}.json`,
-      ),
+      resolve(process.cwd(), "private", "signup-exports", `${guildId}.json`),
     );
     const matches = Object.values(history).filter(
       (entry) => entry.threadId === threadId,

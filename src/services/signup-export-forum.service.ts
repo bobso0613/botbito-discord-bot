@@ -248,8 +248,10 @@ export const sendExport = async (
         },
         contents,
         overlappingRunKeys,
-        sheetsSnapshot,
-        sheet.organizerId ?? undefined,
+        {
+          sheetsSync: sheetsSnapshot,
+          organizerId: sheet.organizerId ?? undefined,
+        },
       );
     } catch (error) {
       if (error instanceof ExportValidationError) return error.message;

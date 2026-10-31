@@ -313,7 +313,7 @@ const parseCombinedRangeBoundary = (
 const parseCombinedLookupRange = (
   reference: string,
 ): CombinedLookupRange | undefined => {
-  const match = /^('(?:[^']|'')+'|[A-Z_][\w.]*)!\s*([^:]+):([^:]+)$/i.exec(
+  const match = /^('(?:[^']|'')+'|[A-Z_][\w.]*)!([^:]+):([^:]+)$/i.exec(
     reference.trim(),
   );
   if (!match) return undefined;
@@ -361,15 +361,34 @@ const parseCombinedXlookup = (
   };
 };
 
+const unwrapCombinedLookup = (
+  expression: string,
+): { expression: string; wrapped: boolean } | undefined => {
+  const prefix = "IFERROR(";
+  if (!expression.toUpperCase().startsWith(prefix))
+    return { expression, wrapped: false };
+  if (!expression.endsWith(")")) return undefined;
+  const separator = expression.lastIndexOf(",");
+  if (
+    separator < prefix.length ||
+    expression.slice(separator + 1, -1).trim() !== "0"
+  )
+    return undefined;
+  return {
+    expression: expression.slice(prefix.length, separator).trim(),
+    wrapped: true,
+  };
+};
+
 const parseCombinedLookup = (
   formula: string,
   formulaRow: number,
   worksheet?: string,
 ): CombinedLookup | undefined => {
   if (!formula.startsWith("=")) return undefined;
-  const expression = formula.slice(1).trim();
-  const wrapper = /^IFERROR\(\s*([\s\S]*),\s*0\s*\)$/i.exec(expression);
-  const unwrapped = (wrapper?.[1] ?? expression).trim();
+  const wrapper = unwrapCombinedLookup(formula.slice(1).trim());
+  if (!wrapper) return undefined;
+  const unwrapped = wrapper.expression;
   const xlookup = parseCombinedXlookup(unwrapped, formulaRow);
   if (xlookup) {
     return worksheet == null ||
@@ -399,7 +418,7 @@ const parseCombinedLookup = (
     kind: "vlookup",
     index,
     tagReference: `${match[1]}${match[2]}`,
-    wrapped: wrapper != null,
+    wrapped: wrapper.wrapped,
   };
 };
 
@@ -408,17 +427,53 @@ const unquoteWorksheet = (reference: string): string =>
     ? reference.slice(1, -1).replaceAll("''", "'")
     : reference;
 
+const closingFormulaQuote = (formula: string, start: number): number => {
+  const quote = formula[start]!;
+  let end = formula.indexOf(quote, start + 1);
+  while (end !== -1 && formula[end + 1] === quote) {
+    end = formula.indexOf(quote, end + 2);
+  }
+  return end;
+};
+
+const formulaReferenceToken = (
+  formula: string,
+  start: number,
+): { end: number; worksheet?: string } => {
+  const character = formula[start];
+  if (character === "'" || character === '"') {
+    const end = closingFormulaQuote(formula, start);
+    return {
+      end,
+      worksheet:
+        character === "'"
+          ? unquoteWorksheet(formula.slice(start, end + 1))
+          : undefined,
+    };
+  }
+  const identifier = /[A-Z_][\w.]*/iy;
+  identifier.lastIndex = start;
+  const match = identifier.exec(formula);
+  return {
+    end: match ? identifier.lastIndex - 1 : start,
+    worksheet: match?.[0],
+  };
+};
+
 const formulaReferencesWorksheet = (
   formula: string,
   worksheet: string,
 ): boolean => {
-  const references = /('(?:[^']|'')+'|[A-Z_][\w.]*)!/gi;
-  let reference: RegExpExecArray | null;
-  while ((reference = references.exec(formula)) !== null) {
+  let index = 0;
+  while (index < formula.length) {
+    const token = formulaReferenceToken(formula, index);
+    if (token.end < index) return false;
     if (
-      unquoteWorksheet(reference[1]!).toLowerCase() === worksheet.toLowerCase()
+      formula[token.end + 1] === "!" &&
+      token.worksheet?.toLowerCase() === worksheet.toLowerCase()
     )
       return true;
+    index = token.end + 1;
   }
   return false;
 };
@@ -657,6 +712,22 @@ const managedColumn = (
   return range.startIndex;
 };
 
+const hasTextBasedRange = (formula: string): boolean => {
+  const fragments = formula.split('"');
+  for (let index = 1; index < fragments.length; index += 2) {
+    const boundaries = fragments[index]!.split(":");
+    for (let boundary = 1; boundary < boundaries.length; boundary += 1) {
+      const reversed = [...boundaries[boundary - 1]!].reverse().join("");
+      if (
+        /^\d+\$?[A-Z]+/i.test(reversed) &&
+        /^\$?[A-Z]+\$?\d+/i.test(boundaries[boundary]!)
+      )
+        return true;
+    }
+  }
+  return false;
+};
+
 const aggregateAdjustments = (
   sheet: sheets_v4.Schema$Sheet,
   grid: Grid,
@@ -677,7 +748,7 @@ const aggregateAdjustments = (
     cells.forEach((cell, column) => {
       const formula = cell.userEnteredValue?.formulaValue;
       if (!formula || column <= boundary || row < 9) return;
-      if (/"[^"\n]*[A-Z]+\$?\d+:[A-Z]+\$?\d+[^"\n]*"/i.test(formula)) {
+      if (hasTextBasedRange(formula)) {
         throw new Error(
           "A summary formula uses a text-based range that cannot safely shift; update Google Sheets manually.",
         );

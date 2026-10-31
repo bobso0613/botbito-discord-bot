@@ -416,6 +416,29 @@ describe("payout sheet export planning", () => {
     ).toBe("=SUM(F10:I10)");
   });
 
+  it.each([
+    '=SUM(INDIRECT("F10:G10"))',
+    '=SUM(INDIRECT("$F$10:$G$10"))',
+    '=SUM(INDIRECT("prefix F10:G10 suffix"))',
+  ])("rejects text-based summary ranges: %s", (summary) => {
+    const spreadsheet = buildSpreadsheet();
+    spreadsheet.sheets![0]!.data![0]!.rowData![9]!.values![9] =
+      formula(summary);
+    expect(() =>
+      planPayoutSheetExport(spreadsheet, "FSN 2026", buildSnapshot()),
+    ).toThrow("text-based range");
+  });
+
+  it("handles long quoted summary text without treating it as a range", () => {
+    const spreadsheet = buildSpreadsheet();
+    spreadsheet.sheets![0]!.data![0]!.rowData![9]!.values![9] = formula(
+      `=LEN("${"A".repeat(20_000)}")`,
+    );
+    expect(() =>
+      planPayoutSheetExport(spreadsheet, "FSN 2026", buildSnapshot()),
+    ).not.toThrow();
+  });
+
   it("adds missing identities without copying past run shares or numeric balances", () => {
     const snapshot = buildSnapshot();
     snapshot.userIds.push("222");
@@ -634,6 +657,7 @@ describe("payout sheet export planning", () => {
     "=IFERROR(VLOOKUP($A3,DevTestSheet!$C$10:$Z$100,8,FALSE),0)",
     "=IFERROR(VLOOKUP($A3,DevTestSheet!$C$10:$Z$100,8,0),0)",
     "= IFERROR( VLOOKUP( $A3, DevTestSheet!$C$10:$Z$100, 8, FALSE ) , 0 ) ",
+    "=IFERROR(VLOOKUP($A3,DevTestSheet!   $C$10 : $Z$100,8,FALSE),0)",
   ])("adjusts valid Combined lookup syntax: %s", (lookup) => {
     const spreadsheet = buildSpreadsheet();
     spreadsheet.sheets![0]!.properties!.title = "DevTestSheet";
@@ -648,14 +672,36 @@ describe("payout sheet export planning", () => {
     );
   });
 
-  it("ignores Combined lookups referencing similarly named tabs", () => {
+  it.each([
+    "=INDEX('FSN 2026 Archive'!A:Z,1,1)",
+    '=IF(TRUE,"FSN 2026!A1",0)',
+    `=IF(TRUE,"${"A".repeat(20_000)}",0)`,
+  ])(
+    "ignores Combined formulas without an exact worksheet reference: %#",
+    (lookup) => {
+      const spreadsheet = buildSpreadsheet();
+      spreadsheet.sheets![1]!.data![0]!.rowData![2]!.values![2] =
+        formula(lookup);
+      expect(() =>
+        planPayoutSheetExport(spreadsheet, "FSN 2026", buildSnapshot()),
+      ).not.toThrow();
+    },
+  );
+
+  it("preserves escaped apostrophes in worksheet references", () => {
     const spreadsheet = buildSpreadsheet();
-    spreadsheet.sheets![1]!.data![0]!.rowData![2]!.values![2] = formula(
-      "=INDEX('FSN 2026 Archive'!A:Z,1,1)",
+    spreadsheet.sheets![0]!.properties!.title = "Guild's 2026";
+    spreadsheet.sheets![1]!.data![0]!.rowData![2]!.values![1] = formula(
+      "=IFERROR(VLOOKUP($A3,'Guild''s 2026'!$C$10:$Z$100,8,FALSE),0)",
     );
-    expect(() =>
-      planPayoutSheetExport(spreadsheet, "FSN 2026", buildSnapshot()),
-    ).not.toThrow();
+    const requests = planPayoutSheetExport(
+      spreadsheet,
+      "Guild's 2026",
+      buildSnapshot(),
+    );
+    expect(JSON.stringify(requests)).toContain(
+      "'Guild''s 2026'!$C$10:$AB$100,10,FALSE",
+    );
   });
 
   it("accepts live Combined XLOOKUPs against mirrored Discord columns without rewriting them", () => {

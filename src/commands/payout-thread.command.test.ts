@@ -196,7 +196,9 @@ describe("payout thread commands", () => {
     expect(reply).toHaveBeenCalledWith(
       expect.stringContaining("Roster part received"),
     );
-    await handleShareParticipantsMessage(makeMessage("02: Clown - <@!333>") as never);
+    await handleShareParticipantsMessage(
+      makeMessage("02: Clown - <@!333>") as never,
+    );
     await handleShareParticipantsMessage(makeMessage("done") as never);
 
     expect(thread.members.add).toHaveBeenCalledWith("222");
@@ -262,35 +264,50 @@ describe("payout thread commands", () => {
     );
   });
 
-  it("rolls membership back when a later membership change fails", async () => {
-    const { interaction, memberList, thread } = createHarness();
-    await changeShareParticipantsCommand.execute(interaction as never);
-    thread.members.remove.mockRejectedValueOnce(new Error("remove failed"));
+  it.each([false, true])(
+    "rolls membership back in reverse order even when rollback fails: %s",
+    async (rollbackFails) => {
+      const { interaction, memberList, thread } = createHarness();
+      await changeShareParticipantsCommand.execute(interaction as never);
+      thread.members.remove.mockRejectedValueOnce(new Error("remove failed"));
+      if (rollbackFails) {
+        thread.members.remove
+          .mockRejectedValueOnce(new Error("first rollback failed"))
+          .mockRejectedValueOnce(new Error("second rollback failed"));
+      }
 
-    const reply = jest.fn(async (_content: string) => undefined);
-    const message = {
-      guildId: "guild",
-      guild: interaction.guild,
-      channelId: thread.id,
-      channel: thread,
-      client: interaction.client,
-      author: { id: "editor", bot: false },
-      member: { permissions: { has: jest.fn(() => true) } },
-      content: "**Party 1:**\n01: Champ - <@222>",
-      reply,
-    };
-    await handleShareParticipantsMessage(message as never);
-    await handleShareParticipantsMessage({ ...message, content: "done" } as never);
+      const reply = jest.fn(async (_content: string) => undefined);
+      const message = {
+        guildId: "guild",
+        guild: interaction.guild,
+        channelId: thread.id,
+        channel: thread,
+        client: interaction.client,
+        author: { id: "editor", bot: false },
+        member: { permissions: { has: jest.fn(() => true) } },
+        content: "**Party 1:**\n01: Champ - <@222>\n02: Clown - <@444>",
+        reply,
+      };
+      await handleShareParticipantsMessage(message as never);
+      await handleShareParticipantsMessage({
+        ...message,
+        content: "done",
+      } as never);
 
-    expect(thread.members.add).toHaveBeenCalledWith("222");
-    expect(thread.members.remove).toHaveBeenNthCalledWith(1, "111");
-    expect(thread.members.remove).toHaveBeenNthCalledWith(2, "222");
-    expect(memberList.has("111")).toBe(true);
-    expect(reply).toHaveBeenLastCalledWith(
-      "Could not update roster: remove failed",
-    );
-    expect(syncPayoutExport).not.toHaveBeenCalled();
-  });
+      expect(thread.members.add).toHaveBeenNthCalledWith(1, "222");
+      expect(thread.members.add).toHaveBeenNthCalledWith(2, "444");
+      expect(thread.members.remove).toHaveBeenNthCalledWith(1, "111");
+      expect(thread.members.remove).toHaveBeenNthCalledWith(2, "444");
+      expect(thread.members.remove).toHaveBeenNthCalledWith(3, "222");
+      expect(memberList.has("111")).toBe(true);
+      expect(reply).toHaveBeenLastCalledWith(
+        rollbackFails
+          ? expect.stringContaining("2 rollback operation(s) failed")
+          : "Could not update roster: remove failed",
+      );
+      expect(syncPayoutExport).not.toHaveBeenCalled();
+    },
+  );
 
   it("restores the original roster and membership when a later message send fails", async () => {
     const { interaction, starter, thread } = createHarness();
@@ -352,9 +369,7 @@ describe("payout thread commands", () => {
     expect(followups[0]?.content).toMatch(/^\*\*Payout roster continued:\*\*/);
 
     await changeShareParticipantsCommand.execute(interaction as never);
-    await handleShareParticipantsMessage(
-      makeMessage("- <@333>") as never,
-    );
+    await handleShareParticipantsMessage(makeMessage("- <@333>") as never);
     await handleShareParticipantsMessage(makeMessage("done") as never);
     expect(followups[0]?.delete).toHaveBeenCalled();
     expect(starter.content).toContain("- <@333>");

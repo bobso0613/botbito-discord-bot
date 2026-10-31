@@ -51,8 +51,7 @@ const {
   exportSignupRun,
   getCurrentlyVendingThreads,
   getSignupExportOrganizerId,
-} =
-  await import("./signup-export.service.js");
+} = await import("./signup-export.service.js");
 const { sendExport } = await import("./signup-export-forum.service.js");
 const { buildExportIdentifier, getExportRunKey } =
   await import("../utils/signup-export.js");
@@ -610,8 +609,7 @@ describe("signup export history", () => {
       undefined,
       ["<@member>"],
       [],
-      sheetsSync,
-      "organizer",
+      { sheetsSync, organizerId: "organizer" },
     );
     expect(create).toHaveBeenCalledTimes(1);
     expect(JSON.parse(files.get(path)!)).toEqual({
@@ -656,16 +654,10 @@ describe("signup export history", () => {
     }));
 
     await expect(
-      exportSignupRun(
-        "guild",
-        "run",
-        create,
-        findExisting,
-        ["<@member>"],
-        [],
+      exportSignupRun("guild", "run", create, findExisting, ["<@member>"], [], {
         sheetsSync,
-        "organizer",
-      ),
+        organizerId: "organizer",
+      }),
     ).resolves.toEqual({ created: false, threadId: "recovered" });
     expect(JSON.parse(files.get(path)!)).toEqual({
       run: {
@@ -713,8 +705,7 @@ describe("signup export history", () => {
       async () => ({ threadId: "recovered", contents: ["<@member>"] }),
       ["<@member>", "<@followup>"],
       [],
-      sheetsSync,
-      "organizer",
+      { sheetsSync, organizerId: "organizer" },
     );
     expect(JSON.parse(files.get(path)!).run.sheetsSync).toEqual({
       ...sheetsSync,
