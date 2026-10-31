@@ -21,6 +21,7 @@ import {
   syncPayoutExport,
 } from "../services/payout-sheet-export.service.js";
 import { getSignupExportOrganizerId } from "../services/signup-export.service.js";
+import { isExportRosterContinuation } from "../utils/signup-export-roster.js";
 
 const exportIdentifierPattern =
   /^-# Export ID: botbito-export:v1:[a-f0-9]{64}$/;
@@ -113,10 +114,6 @@ const normalizeUserMentions = (content: string): string =>
 const getMentionedUserIds = (content: string): Set<string> =>
   new Set(Array.from(content.matchAll(/<@!?(\d+)>/g), (match) => match[1]!));
 
-const isRosterContinuation = (content: string): boolean =>
-  content.startsWith(continuationPrefix) ||
-  /^(?:\*\*Party \d+:\*\*|\d{2}: .+ - <@!?\d+>)/.test(content);
-
 const getRosterContinuationContents = (content: string): string =>
   content.startsWith(continuationPrefix)
     ? content.slice(continuationPrefix.length)
@@ -143,7 +140,7 @@ const fetchRosterMessages = async (
     .filter(
       (message) =>
         message.author.id === botId &&
-        (message.id === starter.id || isRosterContinuation(message.content)),
+        (message.id === starter.id || isExportRosterContinuation(message.content)),
     )
     .sort((first, second) => first.createdTimestamp - second.createdTimestamp);
   if (!rosterMessages.some((message) => message.id === starter.id)) {

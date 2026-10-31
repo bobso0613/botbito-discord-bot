@@ -130,4 +130,13 @@ describe("google sheets service", () => {
       "Google service account credentials are missing required fields",
     );
   });
+
+  it("includes every worksheet when migrating retained tags across payout histories", async () => {
+    await readPayoutSpreadsheet("FSN 2026", true);
+    expect(getSpreadsheet).toHaveBeenCalledWith(
+      expect.objectContaining({ spreadsheetId: "spreadsheet-id", includeGridData: true }),
+      { timeout: 60_000, retry: false },
+    );
+    expect(getSpreadsheet.mock.calls[0]![0]).not.toHaveProperty("ranges");
+  });
 });

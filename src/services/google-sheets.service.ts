@@ -78,20 +78,24 @@ export const readCombinedPayoutSheetRows = async (): Promise<SheetRow[]> =>
   readSheetValues(COMBINED_PAYOUT_SHEET_RANGE);
 
 /**
- * Reads the configured guild tab and Combined using the existing service account.
+ * Reads the configured guild tab and Combined, or all tabs for a retained identity migration.
  * Includes formulas, effective colors, notes, and developer metadata for preflight validation.
  * @param worksheet Guild worksheet selected by payoutWorksheets in Discord settings.
+ * @param includeAllWorksheets Include other guild identities to preserve cross-guild balances on rename.
  * @returns Grid data and properties required to build one atomic batch.
  * @throws On configuration/authentication failure or an API request exceeding 60 seconds.
  */
 export const readPayoutSpreadsheet = async (
   worksheet: string,
+  includeAllWorksheets = false,
 ): Promise<sheets_v4.Schema$Spreadsheet> => {
   const { sheets, spreadsheetId } = await getSheetsClient();
   const response = await sheets.spreadsheets.get(
     {
       spreadsheetId,
-      ranges: [`'${worksheet.replaceAll("'", "''")}'`, "'Combined'"],
+      ...(includeAllWorksheets
+        ? {}
+        : { ranges: [`'${worksheet.replaceAll("'", "''")}'`, "'Combined'"] }),
       includeGridData: true,
       fields:
         "sheets(properties,developerMetadata,data(startRow,startColumn,rowData(values(userEnteredValue,effectiveValue,userEnteredFormat(backgroundColor,backgroundColorStyle),effectiveFormat(backgroundColor,backgroundColorStyle),note))))",

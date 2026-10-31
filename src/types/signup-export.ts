@@ -5,6 +5,7 @@ export interface SignupExportHistoryEntry {
   threadId: string | null;
   organizerId?: string;
   contents?: readonly string[];
+  participantUserIds?: string[];
   sheetsSync?: PayoutSheetSnapshot;
 }
 

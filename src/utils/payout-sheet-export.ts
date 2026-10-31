@@ -254,14 +254,57 @@ const mirroredIdentityColumns = (
   if (tagColumn !== 2) return columns;
   headers.forEach((cell, column) => {
     const header = payoutCellText(cell).trim().toLowerCase();
-    if (
-      column > boundary &&
-      (header === "name" || header === "discord")
-    ) {
+    if (column > boundary && (header === "name" || header === "discord")) {
       columns.set(column, header);
     }
   });
   return columns;
+};
+
+const isGuildSummaryFormula = (
+  formula: string,
+  row: number,
+  boundary?: number,
+): boolean => {
+  const normalized = formula.replace(/\s+/g, "");
+  const sum =
+    /^=SUM\((\$?[DEF]\d+):(\$?[A-Z]+\d+)\)(?:-(\$?[A-Z]+\d+))?$/i.exec(
+      normalized,
+    );
+  const colored =
+    /^=sumByColor\(ADDRESS\(ROW\(([A-Z$]+\d+)\),COLUMN\(([A-Z$]+\d+)\)\)&":"&ADDRESS\(ROW\(([A-Z$]+\d+)\),COLUMN\(([A-Z$]+\d+)\)\),"#(?:8e7cc3|ffd966|00ff00)"\)(?:-([A-Z$]+\d+))?$/i.exec(
+      normalized,
+    );
+  if (!sum && !colored) return false;
+  if (colored && (colored[1] !== colored[2] || colored[3] !== colored[4]))
+    return false;
+  const start = sum?.[1] ?? colored![1]!;
+  const end = sum?.[2] ?? colored![3]!;
+  const deduction = sum ? sum[3] : colored![5];
+  if (!/^\$?[DEF]\d+$/i.test(start)) return false;
+  const references = [start, end, ...(deduction ? [deduction] : [])];
+  if (
+    !references.every(
+      (reference) => Number(/^\$?[A-Z]+(\d+)$/i.exec(reference)?.[1]) === row,
+    )
+  )
+    return false;
+  const endColumn = end.replace(/[$\d]/g, "").toUpperCase();
+  if (boundary != null) {
+    const endIndex =
+      [...endColumn].reduce(
+        (index, character) => index * 26 + character.codePointAt(0)! - 64,
+        0,
+      ) - 1;
+    if (endIndex < 5 || endIndex > boundary + 1) return false;
+    if (
+      deduction &&
+      deduction.replace(/[$\d]/g, "").toUpperCase() !==
+        payoutColumnLabel(boundary)
+    )
+      return false;
+  }
+  return true;
 };
 
 const validateGuildFormulaTemplate = (
@@ -272,17 +315,9 @@ const validateGuildFormulaTemplate = (
 ): void => {
   for (const { column, formula } of formulas) {
     if (column <= boundary || mirroredColumns.has(column)) continue;
-    const sum =
-      /^=SUM\(\$?F(\$?)(\d+):\$?[A-Z]+(\$?)(\d+)\)$/i.exec(formula);
-    if (
-      !sum ||
-      sum[1] === "$" ||
-      sum[3] === "$" ||
-      Number(sum[2]) !== template + 1 ||
-      Number(sum[4]) !== template + 1
-    ) {
+    if (!isGuildSummaryFormula(formula, template + 1, boundary)) {
       throw new Error(
-        "Guild template formulas after Unclaimed must be row-relative SUM formulas or mirrored identities; update Google Sheets manually.",
+        `Guild template ${payoutColumnLabel(column)}${template + 1} must use row-relative SUM formulas, supported sumByColor formulas, or mirrored identities; update Google Sheets manually.`,
       );
     }
   }
@@ -639,6 +674,26 @@ const createAppendRowGuard = (
   };
 };
 
+const validateExistingCombinedMembers = (
+  grid: Grid,
+  rows: Map<string, number>,
+  members: PayoutSheetMember[],
+  worksheet: string,
+  requiredGuildRow?: number,
+): void => {
+  for (const member of members) {
+    const row = rows.get(normalizeTag(member.discordTag));
+    if (row == null) continue;
+    const formulas = (grid[row] ?? []).flatMap((cell, column) => {
+      const formula = cell.userEnteredValue?.formulaValue;
+      return formula && formulaReferencesWorksheet(formula, worksheet)
+        ? [{ column, formula }]
+        : [];
+    });
+    validateFormulaTemplate(formulas, 0, row, worksheet, requiredGuildRow);
+  }
+};
+
 const addMembers = (
   sheet: sheets_v4.Schema$Sheet,
   grid: Grid,
@@ -652,6 +707,15 @@ const addMembers = (
   }: { boundary?: number; worksheet?: string; requiredGuildRow?: number } = {},
 ): { requests: Request[]; rows: Map<string, number> } => {
   const rows = identityRows(grid, tagColumn, start);
+  if (tagColumn === 0 && worksheet) {
+    validateExistingCombinedMembers(
+      grid,
+      rows,
+      members,
+      worksheet,
+      requiredGuildRow,
+    );
+  }
   const missing = members.filter(
     (member) => !rows.has(normalizeTag(member.discordTag)),
   );
@@ -680,6 +744,14 @@ const addMembers = (
         )
       : -1;
   if (tagColumn === 2) {
+    if (
+      shareTotalColumn !== -1 &&
+      !formulas.some(({ column }) => column === shareTotalColumn)
+    ) {
+      throw new Error(
+        "The Share Total formula template is missing; update Google Sheets manually.",
+      );
+    }
     validateGuildFormulaTemplate(formulas, template, boundary, mirroredColumns);
   }
   validateFormulaTemplate(
@@ -727,8 +799,7 @@ const addMembers = (
       tagColumn === 0
         ? formulas
         : formulas.filter(
-            ({ column }) =>
-              column > boundary && !mirroredColumns.has(column),
+            ({ column }) => column > boundary && !mirroredColumns.has(column),
           );
     for (const { column } of copiedFormulas) {
       requests.push(
@@ -866,6 +937,18 @@ const rebaseSimpleSum = (
   row: number,
 ): sheets_v4.Schema$CellData => {
   const formula = cell?.userEnteredValue?.formulaValue ?? "";
+  const sourceRow = Number(/\d+/.exec(formula)?.[0]);
+  if (isGuildSummaryFormula(formula, sourceRow)) {
+    return {
+      userEnteredValue: {
+        formulaValue: formula.replace(
+          /"[^"]*"|(\$?[A-Z]+)\d+/gi,
+          (reference, column: string | undefined) =>
+            column ? `${column}${row + 1}` : reference,
+        ),
+      },
+    };
+  }
   const sum = /^=SUM\((\$?F)(\$?)(\d+):(\$?[A-Z]+)(\$?)(\d+)\)$/i.exec(formula);
   if (!sum) return {};
   const firstRow = sum[2] ? sum[3] : String(row + 1);
@@ -973,6 +1056,26 @@ const exportLayout = (
   return { sheet, combined, sheetId, grid, boundary, existing, column };
 };
 
+const validatePopulatedShareRows = (
+  rows: Map<string, number>,
+  populatedRows: Set<number>,
+  state: { participantCount: number; members?: PayoutSheetMember[] },
+): void => {
+  const expectedRows = new Set(
+    state.members?.map((member) => rows.get(normalizeTag(member.discordTag))),
+  );
+  if (
+    !state.members ||
+    expectedRows.size !== state.participantCount ||
+    populatedRows.size !== expectedRows.size ||
+    [...populatedRows].some((row) => !expectedRows.has(row))
+  ) {
+    throw new Error(
+      "This run has processed or manually changed shares; update Google Sheets manually.",
+    );
+  }
+};
+
 const validatePendingColumn = (
   grid: Grid,
   column: number,
@@ -990,9 +1093,19 @@ const validatePendingColumn = (
     }
   }
   const rows = identityRows(grid, 2, 9);
+  const populatedRows = new Set(
+    grid.flatMap((cells, row) =>
+      row >= 9 &&
+      cells[column]?.userEnteredValue &&
+      Object.keys(cells[column]!.userEnteredValue!).length
+        ? [row]
+        : [],
+    ),
+  );
   let lastError: unknown;
   for (const state of rosterStates) {
     try {
+      validatePopulatedShareRows(rows, populatedRows, state);
       for (const row of grid.slice(9)) {
         validatePendingShareCell(
           row[column] ?? {},
@@ -1208,15 +1321,289 @@ const validateSnapshotPendingColumn = (
     ...(snapshot.previousPendingRoster
       ? [
           {
-            participantCount: new Set(
-              snapshot.previousPendingRoster.userIds,
-            ).size,
+            participantCount: new Set(snapshot.previousPendingRoster.userIds)
+              .size,
             members: snapshot.previousPendingRoster.members,
           },
         ]
       : []),
+    ...(snapshot.pendingRosters ?? []).map((roster) => ({
+      participantCount: new Set(roster.userIds).size,
+      members: roster.members,
+    })),
   ];
   validatePendingColumn(grid, column, rosterStates);
+};
+
+const retainedTagChanges = (
+  snapshot: PayoutSheetSnapshot,
+  members: PayoutSheetMember[],
+): Map<string, Set<string>> => {
+  const desired = new Map(
+    members.map((member) => [member.userId, normalizeTag(member.discordTag)]),
+  );
+  const aliases = new Map<string, Set<string>>();
+  const recorded = [
+    ...(snapshot.syncedMembers ?? []),
+    ...(snapshot.previousPendingRoster?.members ?? []),
+    ...(snapshot.pendingRosters ?? []).flatMap(
+      (roster) => roster.members ?? [],
+    ),
+  ];
+  for (const member of recorded) {
+    const tag = desired.get(member.userId);
+    if (!tag) continue;
+    const oldTag = normalizeTag(member.discordTag);
+    if (oldTag === tag) continue;
+    const changes = aliases.get(tag) ?? new Set<string>();
+    changes.add(oldTag);
+    aliases.set(tag, changes);
+  }
+  validateTagAliases(aliases, new Set(desired.values()));
+  return aliases;
+};
+
+const validateTagAliases = (
+  aliases: Map<string, Set<string>>,
+  currentTags: Set<string>,
+): void => {
+  const owners = new Map<string, string>();
+  for (const [tag, oldTags] of aliases) {
+    for (const oldTag of oldTags) {
+      if (
+        currentTags.has(oldTag) ||
+        (owners.has(oldTag) && owners.get(oldTag) !== tag)
+      ) {
+        throw new Error(
+          "Discord tag migration is ambiguous; update Google Sheets manually.",
+        );
+      }
+      owners.set(oldTag, tag);
+    }
+  }
+};
+
+/** Detects retained Discord IDs whose tags need migration across all payout worksheets. */
+export const requiresPayoutIdentityMigration = (
+  snapshot: PayoutSheetSnapshot,
+): boolean => retainedTagChanges(snapshot, snapshot.members ?? []).size > 0;
+
+const validateMigrationLookupSources = (
+  spreadsheet: sheets_v4.Schema$Spreadsheet,
+  grids: Map<number, Grid>,
+  aliases: Map<string, Set<string>>,
+): void => {
+  const combined = spreadsheet.sheets?.find(
+    (sheet) => sheet.properties?.title === "Combined",
+  );
+  const grid = grids.get(combined!.properties!.sheetId!)!;
+  const tags = new Set(
+    [...aliases].flatMap(([tag, oldTags]) => [tag, ...oldTags]),
+  );
+  for (const [row, cells] of grid.entries()) {
+    if (row < 2 || !tags.has(normalizeTag(payoutCellText(cells[0])))) continue;
+    for (const cell of cells) {
+      const formula = cell.userEnteredValue?.formulaValue;
+      if (!formula) continue;
+      validateMigrationLookup(spreadsheet, grids, formula, row + 1);
+    }
+  }
+};
+
+const validateMigrationLookup = (
+  spreadsheet: sheets_v4.Schema$Spreadsheet,
+  grids: Map<number, Grid>,
+  formula: string,
+  row: number,
+): void => {
+  const lookup = parseCombinedLookup(formula, row);
+  const source = spreadsheet.sheets?.find(
+    (sheet) =>
+      sheet.properties?.title?.toLowerCase() ===
+      lookup?.worksheet.toLowerCase(),
+  );
+  const sourceGrid = source && grids.get(source.properties!.sheetId!);
+  if (
+    !lookup ||
+    !sourceGrid ||
+    !/name/i.test(payoutCellText(sourceGrid[8]?.[0])) ||
+    !/discord/i.test(payoutCellText(sourceGrid[8]?.[2])) ||
+    (lookup.kind === "xlookup" &&
+      payoutCellText(sourceGrid[8]?.[lookup.lookupRange.startColumn])
+        .trim()
+        .toLowerCase() !== "discord")
+  ) {
+    throw new Error(
+      "Combined lookup sources cannot be safely migrated; update Google Sheets manually.",
+    );
+  }
+};
+
+const migrateMirrorTags = (
+  sheetId: number,
+  grid: Grid,
+  row: number,
+  tag: string,
+  oldTags: Set<string>,
+): Request[] => {
+  const columns = mirroredIdentityColumns(
+    grid[8] ?? [],
+    2,
+    findUnclaimedColumn(grid[4] ?? []),
+  );
+  const requests: Request[] = [];
+  for (const [column, identity] of columns) {
+    if (identity !== "discord") continue;
+    const cell = grid[row]?.[column] ?? {};
+    const formula = cell.userEnteredValue?.formulaValue;
+    if (formula && new RegExp(String.raw`^=\$?C${row + 1}$`, "i").test(formula))
+      continue;
+    const existing = normalizeTag(payoutCellText(cell));
+    if (formula || (existing && existing !== tag && !oldTags.has(existing))) {
+      throw new Error(
+        "A mirrored Discord identity cannot be safely migrated; update Google Sheets manually.",
+      );
+    }
+    const updated = textCell(`@${tag}`);
+    grid[row]![column] = updated;
+    requests.push(cellUpdate(sheetId, row, column, updated));
+  }
+  return requests;
+};
+
+const findMigrationRow = (
+  rows: Map<string, number>,
+  tag: string,
+  oldTags: Set<string>,
+  required: boolean,
+  alreadyMigratedTags: Set<string>,
+): number | undefined => {
+  const candidates = [
+    ...new Set(
+      [tag, ...oldTags].flatMap((alias) => {
+        const row = rows.get(alias);
+        return row == null ? [] : [row];
+      }),
+    ),
+  ];
+  if (candidates.length > 1 || (required && candidates.length !== 1)) {
+    throw new Error(
+      "Retained Discord identity is missing or split across rows; update Google Sheets manually.",
+    );
+  }
+  if (
+    !required &&
+    rows.has(tag) &&
+    ![...oldTags].some((oldTag) => rows.has(oldTag)) &&
+    !alreadyMigratedTags.has(tag)
+  ) {
+    throw new Error(
+      "A destination Discord tag already has another worksheet identity; update Google Sheets manually.",
+    );
+  }
+  return candidates[0];
+};
+
+const migrateSheetTags = (
+  sheet: sheets_v4.Schema$Sheet,
+  grid: Grid,
+  aliases: Map<string, Set<string>>,
+  required: boolean,
+  alreadyMigratedTags: Set<string>,
+): Request[] => {
+  const combined = sheet.properties?.title === "Combined";
+  const tagColumn = combined ? 0 : 2;
+  const rows = identityRows(grid, tagColumn, combined ? 2 : 9);
+  const sheetId = sheet.properties!.sheetId!;
+  const requests: Request[] = [];
+  for (const [tag, oldTags] of aliases) {
+    const row = findMigrationRow(
+      rows,
+      tag,
+      oldTags,
+      required,
+      alreadyMigratedTags,
+    );
+    if (row == null) continue;
+    if (!grid[row]?.[tagColumn]?.userEnteredValue?.stringValue) {
+      throw new Error(
+        "A retained Discord tag is not a literal identity; update Google Sheets manually.",
+      );
+    }
+    const updated = textCell(`@${tag}`);
+    grid[row]![tagColumn] = updated;
+    requests.push(cellUpdate(sheetId, row, tagColumn, updated));
+    if (!combined)
+      requests.push(...migrateMirrorTags(sheetId, grid, row, tag, oldTags));
+  }
+  return requests;
+};
+
+const confirmedMigrationTags = (
+  spreadsheet: sheets_v4.Schema$Spreadsheet,
+  grids: Map<number, Grid>,
+  worksheet: string,
+  aliases: Map<string, Set<string>>,
+): Set<string> => {
+  const requiredRows = [worksheet, "Combined"].map((title) => {
+    const sheet = spreadsheet.sheets!.find(
+      (candidate) => candidate.properties?.title === title,
+    )!;
+    return identityRows(
+      grids.get(sheet.properties!.sheetId!)!,
+      title === "Combined" ? 0 : 2,
+      title === "Combined" ? 2 : 9,
+    );
+  });
+  return new Set(
+    [...aliases]
+      .filter(([tag, oldTags]) =>
+        requiredRows.every(
+          (rows) =>
+            rows.has(tag) && ![...oldTags].some((oldTag) => rows.has(oldTag)),
+        ),
+      )
+      .map(([tag]) => tag),
+  );
+};
+
+const migrateRetainedIdentities = (
+  spreadsheet: sheets_v4.Schema$Spreadsheet,
+  worksheet: string,
+  snapshot: PayoutSheetSnapshot,
+  members: PayoutSheetMember[],
+): { grids: Map<number, Grid>; requests: Request[] } => {
+  const aliases = retainedTagChanges(snapshot, members);
+  const grids = new Map<number, Grid>();
+  const requests: Request[] = [];
+  for (const sheet of spreadsheet.sheets ?? []) {
+    const grid = sheetGrid(sheet).map((row) => [...row]);
+    const sheetId = sheet.properties?.sheetId;
+    if (sheetId == null) continue;
+    grids.set(sheetId, grid);
+  }
+  if (aliases.size) validateMigrationLookupSources(spreadsheet, grids, aliases);
+  const alreadyMigratedTags = confirmedMigrationTags(
+    spreadsheet,
+    grids,
+    worksheet,
+    aliases,
+  );
+  for (const sheet of spreadsheet.sheets ?? []) {
+    const grid = grids.get(sheet.properties?.sheetId ?? -1);
+    if (!grid) continue;
+    if (!aliases.size) continue;
+    const title = sheet.properties?.title;
+    const required = title === worksheet || title === "Combined";
+    const guildLayout =
+      /discord/i.test(payoutCellText(grid[8]?.[2])) &&
+      /name/i.test(payoutCellText(grid[8]?.[0]));
+    if (!required && !guildLayout) continue;
+    requests.push(
+      ...migrateSheetTags(sheet, grid, aliases, required, alreadyMigratedTags),
+    );
+  }
+  return { grids, requests };
 };
 
 /**
@@ -1234,8 +1621,15 @@ export const planPayoutSheetExport = (
   worksheet: string,
   snapshot: PayoutSheetSnapshot,
 ): Request[] => {
-  const { sheet, combined, sheetId, grid, boundary, existing, column } =
-    exportLayout(spreadsheet, worksheet, snapshot);
+  const {
+    sheet,
+    combined,
+    sheetId,
+    grid: originalGrid,
+    boundary,
+    existing,
+    column,
+  } = exportLayout(spreadsheet, worksheet, snapshot);
   if (existing != null && snapshot.mode === "create") return [];
   if (snapshot.mode === "vendor" && existing != null) {
     return [cellUpdate(sheetId, 6, column, textCell(snapshot.vendor))];
@@ -1243,16 +1637,27 @@ export const planPayoutSheetExport = (
   const members = snapshotMembers(snapshot);
   const uniqueIds = new Set(snapshot.userIds);
   if (existing != null) {
-    validateSnapshotPendingColumn(grid, column, snapshot, members);
+    validateSnapshotPendingColumn(originalGrid, column, snapshot, members);
   }
+  const migration = migrateRetainedIdentities(
+    spreadsheet,
+    worksheet,
+    snapshot,
+    members,
+  );
+  const grid = migration.grids.get(sheetId)!;
   const guildRows = addMembers(sheet, grid, 2, 9, members, { boundary });
-  const combinedGrid = sheetGrid(combined);
+  const combinedGrid = migration.grids.get(combined.properties!.sheetId!)!;
   const requiredGuildRow = Math.max(...guildRows.rows.values()) + 1;
   const combinedRows = addMembers(combined, combinedGrid, 0, 2, members, {
     worksheet,
     requiredGuildRow,
   });
-  const requests = [...guildRows.requests, ...combinedRows.requests];
+  const requests = [
+    ...migration.requests,
+    ...guildRows.requests,
+    ...combinedRows.requests,
+  ];
   const rowCount = Math.max(
     grid.length,
     ...Array.from(guildRows.rows.values(), (row) => row + 1),

@@ -121,6 +121,31 @@ describe("payout thread commands", () => {
     getSignupExportOrganizerId.mockReset().mockResolvedValue(null);
   });
 
+  it("includes three-digit export slots when copying and replacing a roster", async () => {
+    const { interaction, thread, memberList, editReply } = createHarness();
+    const continuation = await thread.send({ content: "100: Champ - <@444>" });
+    memberList.set("444", {});
+    await changeShareParticipantsCommand.execute(interaction as never);
+    expect(editReply).toHaveBeenCalledWith(
+      expect.stringContaining("100: Champ - <@444>"),
+    );
+    const message = {
+      guildId: "guild",
+      guild: interaction.guild,
+      channelId: thread.id,
+      channel: thread,
+      client: interaction.client,
+      author: { id: "editor", bot: false },
+      member: { permissions: { has: jest.fn(() => true) } },
+      content: "01: Champ - <@111>\n02: Clown - <@333>",
+      reply: jest.fn(async (_content: string) => undefined),
+    };
+    await handleShareParticipantsMessage(message as never);
+    await handleShareParticipantsMessage({ ...message, content: "done" } as never);
+    expect(thread.members.remove).toHaveBeenCalledWith("444");
+    expect(continuation.delete).toHaveBeenCalled();
+  });
+
   it("keeps a successful vendor edit when Sheets reports a failure", async () => {
     const { interaction, starter } = createHarness();
     syncPayoutExport.mockResolvedValueOnce(

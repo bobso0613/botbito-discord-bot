@@ -18,7 +18,10 @@ jest.unstable_mockModule("../config/discord-settings.js", () => ({
 }));
 
 const readPayoutSpreadsheet =
-  jest.fn<(worksheet: string) => Promise<sheets_v4.Schema$Spreadsheet>>();
+  jest.fn<(
+    worksheet: string,
+    includeAllWorksheets?: boolean,
+  ) => Promise<sheets_v4.Schema$Spreadsheet>>();
 const writePayoutSpreadsheet =
   jest.fn<(requests: sheets_v4.Schema$Request[]) => Promise<void>>();
 jest.unstable_mockModule("./google-sheets.service.js", () => ({
@@ -103,7 +106,12 @@ const grid = (linked = false): sheets_v4.Schema$Spreadsheet => {
                 values: [{ userEnteredValue: { stringValue: "Discord Tag" } }],
               },
               {
-                values: [{ userEnteredValue: { stringValue: "@alice" } }],
+                values: [
+                  { userEnteredValue: { stringValue: "@alice" } },
+                  { userEnteredValue: {
+                    formulaValue: "=IFERROR(VLOOKUP($A3,'FSN 2026'!$C$10:$Z$100,8,FALSE),0)",
+                  } },
+                ],
               },
             ],
           },
@@ -166,6 +174,69 @@ describe("payout Sheets synchronization", () => {
     save.mockResolvedValue();
   });
 
+  it("reconciles every potentially committed roster after consecutive timeouts", async () => {
+    const spreadsheet = grid(true);
+    const rows = spreadsheet.sheets![0]!.data![0]!.rowData!;
+    rows[10]!.values![2] = { userEnteredValue: { stringValue: "@bob" } };
+    rows[11] = { values: [] };
+    rows[11]!.values![2] = { userEnteredValue: { stringValue: "@cara" } };
+    const combinedRows = spreadsheet.sheets![1]!.data![0]!.rowData!;
+    for (const [offset, tag] of ["bob", "cara"].entries()) {
+      const row = offset + 3;
+      combinedRows[row] = { values: [
+        { userEnteredValue: { stringValue: `@${tag}` } },
+        { userEnteredValue: {
+          formulaValue: `=IFERROR(VLOOKUP($A${row + 1},'FSN 2026'!$C$10:$Z$100,8,FALSE),0)`,
+        } },
+      ] };
+    }
+    const currentGuild = guild();
+    currentGuild.members.fetch.mockImplementation(async (options: unknown) => {
+      const userId = (options as { user: string }).user;
+      const tag = userId === "111" ? "alice" : userId === "222" ? "bob" : "cara";
+      return { displayName: tag, user: { username: tag, tag } };
+    });
+    entry.sheetsSync!.status = "synced";
+    readPayoutSpreadsheet.mockResolvedValue(spreadsheet);
+    let attempts = 0;
+    writePayoutSpreadsheet.mockImplementation(async (requests) => {
+      for (const request of requests) {
+        const update = request.updateCells;
+        if (update?.start?.sheetId !== 1) continue;
+        rows[update.start.rowIndex!]!.values![update.start.columnIndex!] =
+          update.rows![0]!.values![0]!;
+      }
+      if (++attempts <= 2) throw new Error("timeout after commit");
+    });
+    await syncPayoutExport(currentGuild as never, "thread", { userIds: ["111", "222"] });
+    entry = JSON.parse(JSON.stringify(entry)) as SignupExportHistoryEntry;
+    await syncPayoutExport(currentGuild as never, "thread", { userIds: ["111", "222", "333"] });
+    entry = JSON.parse(JSON.stringify(entry)) as SignupExportHistoryEntry;
+    expect(entry.sheetsSync?.pendingRosters?.map((roster) => roster.userIds))
+      .toEqual([["111", "222"]]);
+
+    const notice = await syncPayoutExport(currentGuild as never, "thread", { userIds: ["111"] });
+    expect(notice).toContain("Google Sheets updated");
+    expect(writePayoutSpreadsheet).toHaveBeenCalledTimes(3);
+    expect(entry.sheetsSync?.pendingRosters).toBeUndefined();
+    expect(rows[9]!.values![6]!.userEnteredValue?.formulaValue).toBe("=(G$6-G$8)/1");
+    expect(rows[10]!.values![6]!.userEnteredValue).toBeUndefined();
+    expect(rows[11]!.values![6]!.userEnteredValue).toBeUndefined();
+  });
+
+  it("resolves changed usernames and migrates retained user IDs instead of appending", async () => {
+    entry.sheetsSync!.status = "synced";
+    const currentGuild = guild(true);
+    readPayoutSpreadsheet.mockResolvedValue(grid(true));
+    const notice = await syncPayoutExport(currentGuild as never, "thread", { userIds: ["111"] });
+    expect(notice).toContain("Google Sheets updated");
+    expect(readPayoutSpreadsheet).toHaveBeenCalledWith("FSN 2026", true);
+    const requests = writePayoutSpreadsheet.mock.calls[0]![0];
+    expect(JSON.stringify(requests)).toContain("@alice#1234");
+    expect(requests.some((request) => request.copyPaste)).toBe(false);
+    expect(entry.sheetsSync?.syncedMembers?.[0]?.discordTag).toBe("alice#1234");
+  });
+
   it("skips all Sheets work for an unmapped guild", async () => {
     expect(
       await syncPayoutExport({ id: "unmapped-guild" } as never, "thread"),
@@ -181,12 +252,24 @@ describe("payout Sheets synchronization", () => {
       }),
     ).toBe("");
     expect(entry.contents).toEqual(["new roster"]);
+    expect(entry.participantUserIds).toEqual(["222"]);
     expect(entry.sheetsSync?.userIds).toEqual(["222"]);
     expect(entry.sheetsSync?.mode).toBe("roster");
     expect(entry.sheetsSync?.status).toBe("pending");
     expect(save).toHaveBeenCalledTimes(1);
     expect(readPayoutSpreadsheet).not.toHaveBeenCalled();
     expect(writePayoutSpreadsheet).not.toHaveBeenCalled();
+  });
+
+  it("preserves roster IDs independently of a vendor containing a removed member mention", async () => {
+    entry.participantUserIds = ["222"];
+    entry.sheetsSync = undefined;
+    entry.contents = ["01: Champ - <@222>\n\nParticipants: **1**\nVendor: **none**"];
+    await syncPayoutExport({ id: "unmapped-guild" } as never, "thread", {
+      starterContent: "01: Champ - <@222>\n\nParticipants: **1**\nVendor: **<@111>**",
+      vendor: "<@111>",
+    });
+    expect(entry.participantUserIds).toEqual(["222"]);
   });
 
   it("reports history persistence failures for unmapped roster edits", async () => {
@@ -205,6 +288,9 @@ describe("payout Sheets synchronization", () => {
   it("synchronizes the configured development worksheet in the same spreadsheet", async () => {
     const spreadsheet = grid();
     spreadsheet.sheets![0]!.properties!.title = "DevTestSheet";
+    spreadsheet.sheets![1]!.data![0]!.rowData![2]!.values![1]!.userEnteredValue = {
+      formulaValue: "=IFERROR(VLOOKUP($A3,'DevTestSheet'!$C$10:$Z$100,8,FALSE),0)",
+    };
     readPayoutSpreadsheet.mockResolvedValueOnce(spreadsheet);
     const developmentGuild = { ...guild(), id: "1115484031455346718" };
     expect(
@@ -228,6 +314,8 @@ describe("payout Sheets synchronization", () => {
     );
     expect(notice).toContain("Currently Vending list may be stale");
     expect(notice).toContain("contact an administrator");
+    expect(notice).toContain("Google Sheets was not confirmed updated");
+    expect(notice).toContain("Please update Google Sheets manually");
     expect(readPayoutSpreadsheet).not.toHaveBeenCalled();
     expect(writePayoutSpreadsheet).not.toHaveBeenCalled();
   });

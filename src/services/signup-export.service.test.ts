@@ -98,7 +98,7 @@ describe("signup export history", () => {
         members: {
           fetch: jest.fn(async () => ({
             displayName: "Alice",
-            user: { username: "alice" },
+            user: { username: "alice", tag: "alice" },
           })),
         },
       },
@@ -322,7 +322,10 @@ describe("signup export history", () => {
       exportSignupRun("guild", combined, create, find, ["<@changed-member>"]),
     ).resolves.toEqual({ created: false, threadId: "original" });
     expect(find).toHaveBeenCalledWith(split, undefined);
-    expect(JSON.parse(files.get(path)!)[split]).toEqual(recovered);
+    expect(JSON.parse(files.get(path)!)[split]).toEqual({
+      ...recovered,
+      participantUserIds: [],
+    });
     expect(create).not.toHaveBeenCalled();
   });
 
@@ -401,6 +404,38 @@ describe("signup export history", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it("ignores vendor mentions in explicit and legacy vending histories", async () => {
+    files.set(
+      resolve(process.cwd(), "private", "signup-exports", "guild.json"),
+      JSON.stringify({
+        explicit: {
+          threadId: "explicit",
+          participantUserIds: ["111"],
+          contents: ["01: Champ - <@111>\n\nParticipants: **1**\nVendor: **<@123>**"],
+        },
+        legacy: {
+          threadId: "legacy",
+          contents: [
+            "01: Champ - <@111>\n\nParticipants: **1**\nVendor: **<@123>**",
+            "100: Clown - <@222>",
+            "Vendor updated to **<@123>**.",
+          ],
+        },
+      }),
+    );
+    const fetch = jest.fn(async (id: string) => ({
+      id, guildId: "guild", name: "\u23f3 Run", isThread: () => true,
+    }));
+    const client = { channels: { fetch } };
+    await expect(getCurrentlyVendingThreads(client as never, "guild", "123"))
+      .resolves.toEqual([]);
+    expect(fetch).not.toHaveBeenCalled();
+    await expect(getCurrentlyVendingThreads(client as never, "guild", "222"))
+      .resolves.toEqual(["<#legacy>"]);
+    await expect(getCurrentlyVendingThreads(client as never, "guild", "111"))
+      .resolves.toEqual(["<#explicit>", "<#legacy>"]);
+  });
+
   it("degrades malformed history to no vending links but keeps exports fail-closed", async () => {
     files.set(
       resolve(process.cwd(), "private", "signup-exports", "guild.json"),
@@ -443,7 +478,7 @@ describe("signup export history", () => {
       ),
     ).resolves.toEqual({ created: true, threadId: "thread" });
     expect(JSON.parse(files.get(path)!)).toEqual({
-      first: { threadId: "thread", contents: ["<@member>"] },
+      first: { threadId: "thread", contents: ["<@member>"], participantUserIds: [] },
     });
     expect(find).toHaveBeenCalledWith("first");
     expect(find).toHaveBeenCalledWith("combined");
@@ -558,7 +593,10 @@ describe("signup export history", () => {
         async () => recovered,
         ["<@new-signup>"],
       );
-      expect(JSON.parse(files.get(path)!)["run-date"]).toEqual(recovered);
+      expect(JSON.parse(files.get(path)!)["run-date"]).toEqual({
+        ...recovered,
+        participantUserIds: [],
+      });
       expect(create).not.toHaveBeenCalled();
     },
   );
@@ -597,6 +635,7 @@ describe("signup export history", () => {
           threadId: null,
           organizerId: "organizer",
           contents: ["<@member>"],
+          participantUserIds: [],
           sheetsSync,
         },
       });
@@ -617,6 +656,7 @@ describe("signup export history", () => {
         threadId: "thread",
         organizerId: "organizer",
         contents: ["<@member>"],
+        participantUserIds: [],
         sheetsSync,
       },
     });
@@ -664,6 +704,7 @@ describe("signup export history", () => {
         threadId: "recovered",
         organizerId: "organizer",
         contents: ["<@member>"],
+        participantUserIds: [],
         sheetsSync,
       },
     });

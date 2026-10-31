@@ -1,5 +1,10 @@
 import { describe, expect, it, jest } from "@jest/globals";
-import { Collection, DiscordAPIError, RESTJSONErrorCodes } from "discord.js";
+import {
+  Collection,
+  DiscordAPIError,
+  RESTJSONErrorCodes,
+  type FetchArchivedThreadOptions,
+} from "discord.js";
 import {
   findExistingExport,
   recoverExportThread,
@@ -26,7 +31,7 @@ const createForum = () => ({
   client: { user: { id: "bot" } },
   threads: {
     fetchActive: jest.fn(async () => ({ threads: threads() })),
-    fetchArchived: jest.fn(async () => ({
+    fetchArchived: jest.fn(async (_options: FetchArchivedThreadOptions) => ({
       threads: threads(),
       hasMore: false,
     })),

@@ -8,6 +8,7 @@ import type {
   SignupExportResult,
   SignupExportHistoryEntry,
 } from "../types/signup-export.js";
+import { getExportRosterUserIds } from "../utils/signup-export-roster.js";
 export type {
   RecoveredSignupExport,
   SignupExportResult,
@@ -58,7 +59,7 @@ const readHistory = async (path: string): Promise<ExportHistory> => {
 
 /**
  * Lists unique thread mentions from this guild's saved signup exports for a member.
- * Participation requires the exact `<@userId>` mention in stored contents.
+ * Participation uses stored roster IDs, falling back to roster-only mentions for legacy history.
  * Discord titles must contain the hourglass (U+23F3) and omit NO SHARE (case-insensitive).
  * Skips missing contents or IDs, unreadable channels, non-threads, and other guilds.
  * @param client Discord client used to resolve thread titles, using cached channels when available.
@@ -81,11 +82,12 @@ export const getCurrentlyVendingThreads = async (
     if (error instanceof SyntaxError) return [];
     throw error;
   }
-  const mention = `<@${userId}>`;
   const threadIds = new Set(
     Object.values(history)
       .filter((entry) =>
-        entry.contents?.some((content) => content.includes(mention)),
+        (entry.participantUserIds ??
+          entry.sheetsSync?.userIds ??
+          getExportRosterUserIds(entry.contents ?? [])).includes(userId),
       )
       .flatMap((entry) => (entry.threadId ? [entry.threadId] : [])),
   );
@@ -140,6 +142,9 @@ const repairHistoryEntry = async (
     typeof recovered === "string"
       ? { ...saved, threadId: recovered }
       : { ...saved, ...recovered };
+  if (recoveredContents) {
+    history[key]!.participantUserIds = getExportRosterUserIds(recoveredContents);
+  }
   if (deliveryIncomplete && history[key]!.sheetsSync) {
     history[key]!.sheetsSync = {
       ...history[key]!.sheetsSync,
@@ -192,6 +197,14 @@ export const exportSignupRun = async (
   metadata: Pick<SignupExportHistoryEntry, "sheetsSync" | "organizerId"> = {},
 ): Promise<SignupExportResult> => {
   const { sheetsSync, organizerId } = metadata;
+  const entryMetadata = {
+    ...(organizerId && { organizerId }),
+    ...(contents && {
+      contents,
+      participantUserIds: getExportRosterUserIds(contents),
+    }),
+    ...(sheetsSync && { sheetsSync }),
+  };
   const path = resolve(
     process.cwd(),
     "private",
@@ -231,9 +244,7 @@ export const exportSignupRun = async (
     }
     history[runKey] = {
       threadId: null,
-      ...(organizerId && { organizerId }),
-      ...(contents && { contents }),
-      ...(sheetsSync && { sheetsSync }),
+      ...entryMetadata,
     };
     await writeHistory(path, history);
     let threadId: string;
@@ -246,9 +257,7 @@ export const exportSignupRun = async (
     }
     history[runKey] = {
       threadId,
-      ...(organizerId && { organizerId }),
-      ...(contents && { contents }),
-      ...(sheetsSync && { sheetsSync }),
+      ...entryMetadata,
     };
     await writeHistory(path, history);
     result = { created: true, threadId };

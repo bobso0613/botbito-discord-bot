@@ -112,6 +112,184 @@ const linkColumn = (
 };
 
 describe("payout sheet export planning", () => {
+  it.each([
+    undefined,
+    "=123",
+    "=IFERROR(VLOOKUP($A3,'Other'!$C$10:$Z$100,8,FALSE),0)",
+  ])(
+    "rejects an existing Combined member without a valid mapped lookup: %s",
+    (lookup) => {
+      const spreadsheet = buildSpreadsheet();
+      spreadsheet.sheets![1]!.data![0]!.rowData![2]!.values![1] = lookup
+        ? formula(lookup)
+        : {};
+      expect(() =>
+        planPayoutSheetExport(spreadsheet, "FSN 2026", buildSnapshot()),
+      ).toThrow("Combined template formulas");
+    },
+  );
+
+  it.each([{}, { userEnteredValue: { numberValue: 0 } }])(
+    "rejects an append with no Share Total formula template: %j",
+    (cell) => {
+      const spreadsheet = buildSpreadsheet();
+      const rows = spreadsheet.sheets![0]!.data![0]!.rowData!;
+      rows[8]!.values![9] = text("Share Total");
+      rows[9]!.values![9] = cell;
+      const snapshot = buildSnapshot();
+      snapshot.userIds.push("222");
+      snapshot.members.push({
+        userId: "222",
+        displayName: "Bob",
+        discordTag: "bob",
+      });
+      expect(() =>
+        planPayoutSheetExport(spreadsheet, "FSN 2026", snapshot),
+      ).toThrow("Share Total formula template is missing");
+    },
+  );
+
+  it("refuses to erase an extra purple share outside every known roster", () => {
+    const spreadsheet = buildSpreadsheet();
+    const rows = spreadsheet.sheets![0]!.data![0]!.rowData!;
+    rows[9]!.values![6] = buildPendingShareCell(6, 1);
+    rows[10]!.values![2] = text("@bob");
+    rows[10]!.values![6] = buildPendingShareCell(6, 1);
+    const snapshot = buildSnapshot();
+    snapshot.mode = "roster";
+    snapshot.syncedParticipantCount = 1;
+    snapshot.syncedMembers = [...snapshot.members];
+    linkColumn(spreadsheet, snapshot);
+    expect(() =>
+      planPayoutSheetExport(spreadsheet, "FSN 2026", snapshot),
+    ).toThrow("manually changed shares");
+  });
+
+  it("migrates retained tags in place across guild, mirror, and Combined identities", () => {
+    const spreadsheet = buildSpreadsheet();
+    const rows = spreadsheet.sheets![0]!.data![0]!.rowData!;
+    rows[9]!.values![6] = buildPendingShareCell(6, 1);
+    rows[8]!.values![10] = text("Discord");
+    rows[9]!.values![10] = text("@alice");
+    const otherSheet = structuredClone(spreadsheet.sheets![0]!);
+    otherSheet.properties!.sheetId = 3;
+    otherSheet.properties!.title = "Ghostz 2026";
+    spreadsheet.sheets!.push(otherSheet);
+    const snapshot = buildSnapshot();
+    snapshot.mode = "roster";
+    snapshot.syncedParticipantCount = 1;
+    snapshot.syncedMembers = [...snapshot.members];
+    snapshot.members = [
+      { userId: "111", displayName: "Alice", discordTag: "renamed" },
+    ];
+    linkColumn(spreadsheet, snapshot);
+
+    const requests = planPayoutSheetExport(spreadsheet, "FSN 2026", snapshot);
+    const renames = requests.filter(
+      (request) =>
+        request.updateCells?.rows?.[0]?.values?.[0]?.userEnteredValue
+          ?.stringValue === "@renamed",
+    );
+    expect(renames.map((request) => request.updateCells?.start)).toEqual([
+      { sheetId: 1, rowIndex: 9, columnIndex: 2 },
+      { sheetId: 1, rowIndex: 9, columnIndex: 10 },
+      { sheetId: 2, rowIndex: 2, columnIndex: 0 },
+      { sheetId: 3, rowIndex: 9, columnIndex: 2 },
+      { sheetId: 3, rowIndex: 9, columnIndex: 10 },
+    ]);
+    expect(requests.some((request) => request.copyPaste)).toBe(false);
+    expect(
+      requests.filter((request) => request.updateCells?.start?.sheetId === 3),
+    ).toHaveLength(2);
+    expect(rows[9]!.values![2]).toEqual(text("@alice"));
+    expect(rows[9]!.values![5]).toEqual(buildPendingShareCell(5, 3));
+  });
+
+  it("rejects a rename when the destination tag already has financial history", () => {
+    const spreadsheet = buildSpreadsheet();
+    const rows = spreadsheet.sheets![0]!.data![0]!.rowData!;
+    rows[9]!.values![6] = buildPendingShareCell(6, 1);
+    rows[10]!.values![2] = text("@renamed");
+    const snapshot = buildSnapshot();
+    snapshot.mode = "roster";
+    snapshot.syncedParticipantCount = 1;
+    snapshot.syncedMembers = [...snapshot.members];
+    snapshot.members = [
+      { userId: "111", displayName: "Alice", discordTag: "renamed" },
+    ];
+    linkColumn(spreadsheet, snapshot);
+    expect(() =>
+      planPayoutSheetExport(spreadsheet, "FSN 2026", snapshot),
+    ).toThrow("split across rows");
+  });
+
+  it("rejects a destination-only identity on another worksheet before migrating Combined", () => {
+    const spreadsheet = buildSpreadsheet();
+    const rows = spreadsheet.sheets![0]!.data![0]!.rowData!;
+    rows[9]!.values![6] = buildPendingShareCell(6, 1);
+    const other = structuredClone(spreadsheet.sheets![0]!);
+    other.properties!.sheetId = 3;
+    other.properties!.title = "Ghostz 2026";
+    other.data![0]!.rowData![9]!.values![2] = text("@renamed");
+    spreadsheet.sheets!.push(other);
+    const snapshot = buildSnapshot();
+    snapshot.mode = "roster";
+    snapshot.syncedParticipantCount = 1;
+    snapshot.syncedMembers = [...snapshot.members];
+    snapshot.members = [
+      { userId: "111", displayName: "Alice", discordTag: "renamed" },
+    ];
+    linkColumn(spreadsheet, snapshot);
+    expect(() =>
+      planPayoutSheetExport(spreadsheet, "FSN 2026", snapshot),
+    ).toThrow("another worksheet identity");
+  });
+
+  it("reconciles a committed tag migration without adding new lifetime rows", () => {
+    const spreadsheet = buildSpreadsheet();
+    const rows = spreadsheet.sheets![0]!.data![0]!.rowData!;
+    rows[9]!.values![2] = text("@renamed");
+    rows[9]!.values![6] = buildPendingShareCell(6, 1);
+    spreadsheet.sheets![1]!.data![0]!.rowData![2]!.values![0] =
+      text("@renamed");
+    const other = structuredClone(spreadsheet.sheets![0]!);
+    other.properties!.sheetId = 3;
+    other.properties!.title = "Ghostz 2026";
+    spreadsheet.sheets!.push(other);
+    const snapshot = buildSnapshot();
+    snapshot.mode = "roster";
+    snapshot.syncedParticipantCount = 1;
+    snapshot.syncedMembers = [...snapshot.members];
+    snapshot.members = [
+      { userId: "111", displayName: "Alice", discordTag: "renamed" },
+    ];
+    linkColumn(spreadsheet, snapshot);
+    const requests = planPayoutSheetExport(spreadsheet, "FSN 2026", snapshot);
+    expect(
+      requests.some((request) => request.copyPaste || request.insertDimension),
+    ).toBe(false);
+  });
+
+  it("refuses a migration when Combined references an unreadable historical worksheet", () => {
+    const spreadsheet = buildSpreadsheet();
+    spreadsheet.sheets![0]!.data![0]!.rowData![9]!.values![6] =
+      buildPendingShareCell(6, 1);
+    spreadsheet.sheets![1]!.data![0]!.rowData![2]!.values![2] = formula(
+      "=IFERROR(VLOOKUP($A3,'Missing'!$C$10:$Z$100,8,FALSE),0)",
+    );
+    const snapshot = buildSnapshot();
+    snapshot.mode = "roster";
+    snapshot.syncedParticipantCount = 1;
+    snapshot.syncedMembers = [...snapshot.members];
+    snapshot.members = [
+      { userId: "111", displayName: "Alice", discordTag: "renamed" },
+    ];
+    linkColumn(spreadsheet, snapshot);
+    expect(() =>
+      planPayoutSheetExport(spreadsheet, "FSN 2026", snapshot),
+    ).toThrow("lookup sources cannot be safely migrated");
+  });
+
   it("requires the Combined Discord header in A2 rather than A1", () => {
     const spreadsheet = buildSpreadsheet();
     expect(() =>
@@ -455,7 +633,8 @@ describe("payout sheet export planning", () => {
     );
     expect(
       requests.find(
-        (request) => request.updateCells?.start?.rowIndex === 9 &&
+        (request) =>
+          request.updateCells?.start?.rowIndex === 9 &&
           request.updateCells.start.columnIndex === 11,
       )?.updateCells?.rows?.[0]?.values?.[0]?.userEnteredValue?.formulaValue,
     ).toBe("=sum(f10:I10)");
@@ -595,11 +774,7 @@ describe("payout sheet export planning", () => {
         displayName: "Altbob",
         discordTag: "altbob",
       });
-      const requests = planPayoutSheetExport(
-        spreadsheet,
-        "FSN 2026",
-        snapshot,
-      );
+      const requests = planPayoutSheetExport(spreadsheet, "FSN 2026", snapshot);
       expect(requests).toContainEqual(
         expect.objectContaining({
           updateCells: expect.objectContaining({
@@ -683,21 +858,81 @@ describe("payout sheet export planning", () => {
     ).toThrow(expectedError);
   });
 
-  it("rejects non-row-relative guild formulas before copying them", () => {
+  it("copies live guild SUM and color summaries for appended members", () => {
     const spreadsheet = buildSpreadsheet();
-    const rows = spreadsheet.sheets![0]!.data![0]!.rowData!;
-    rows[9]!.values![10] = formula("=$J$10");
+    const sheet = spreadsheet.sheets![0]!;
+    sheet.properties!.gridProperties!.columnCount = 16;
+    const rows = sheet.data![0]!.rowData!;
+    rows[8]!.values![9] = text("Share Total");
+    rows[9]!.values![9] = formula("=sum(D10:I10) - H10");
+    for (const [offset, color] of ["#8e7cc3", "#ffd966", "#00ff00"].entries()) {
+      rows[9]!.values![10 + offset] = formula(
+        `=sumByColor(ADDRESS(ROW($E10),COLUMN($E10))&\":\"&ADDRESS(ROW($I10),COLUMN($I10)), \"${color}\")${offset === 2 ? " -H10" : ""}`,
+      );
+    }
+    rows[8]!.values![13] = text("Name");
+    rows[8]!.values![14] = text("Discord");
+    rows[9]!.values![13] = formula("=A10");
+    rows[9]!.values![14] = formula("=C10");
+    rows[10]!.values![9] = formula("=sum(D11:I11) - H11");
     const snapshot = buildSnapshot();
     snapshot.userIds.push("222");
-    snapshot.members!.push({
+    snapshot.members.push({
       userId: "222",
       displayName: "Bob",
       discordTag: "bob",
     });
-    expect(() =>
-      planPayoutSheetExport(spreadsheet, "FSN 2026", snapshot),
-    ).toThrow("row-relative SUM formulas");
+    const requests = planPayoutSheetExport(spreadsheet, "FSN 2026", snapshot);
+    for (const column of [9, 10, 11, 12]) {
+      expect(requests).toContainEqual({
+        copyPaste: {
+          source: {
+            sheetId: 1,
+            startRowIndex: 9,
+            endRowIndex: 10,
+            startColumnIndex: column,
+            endColumnIndex: column + 1,
+          },
+          destination: {
+            sheetId: 1,
+            startRowIndex: 10,
+            endRowIndex: 11,
+            startColumnIndex: column,
+            endColumnIndex: column + 1,
+          },
+          pasteType: "PASTE_FORMULA",
+        },
+      });
+    }
   });
+
+  it.each([
+    "=$J$10",
+    "=SUM(D$10:I$10)-H10",
+    "=SUM(D10:I10)-H$10",
+    "=SUM(D10:I10)-G10",
+    "=SUM(D10:Z10)-H10",
+    '=sumByColor(ADDRESS(ROW($E$10),COLUMN($E$10))&":"&ADDRESS(ROW($I10),COLUMN($I10)), "#8e7cc3")',
+    '=sumByColor(ADDRESS(ROW($E10),COLUMN($E11))&":"&ADDRESS(ROW($I10),COLUMN($I10)), "#8e7cc3")',
+    '=sumByColor(ADDRESS(ROW($E10),COLUMN($E10))&":"&ADDRESS(ROW($I10),COLUMN($I10)), "#ffffff")',
+  ])(
+    "rejects unsafe guild template formula %s before copying it",
+    (summary) => {
+      const spreadsheet = buildSpreadsheet();
+      const rows = spreadsheet.sheets![0]!.data![0]!.rowData!;
+      rows[9]!.values![10] = formula(summary);
+      const snapshot = buildSnapshot();
+      snapshot.userIds.push("222");
+      snapshot.members!.push({
+        userId: "222",
+        displayName: "Bob",
+        discordTag: "bob",
+      });
+      expect(() =>
+        planPayoutSheetExport(spreadsheet, "FSN 2026", snapshot),
+      ).toThrow("row-relative SUM formulas");
+    },
+  );
 
   it("updates Combined VLOOKUP indices and ranges when run and spacer columns are inserted", () => {
     const requests = planPayoutSheetExport(
@@ -845,7 +1080,7 @@ describe("payout sheet export planning", () => {
     );
     expect(() =>
       planPayoutSheetExport(spreadsheet, "FSN 2026", buildSnapshot()),
-    ).toThrow("Combined lookup formula is unsupported");
+    ).toThrow("Combined template formulas");
   });
 
   it("rejects absolute tag references and incorrect roster headers", () => {
@@ -938,11 +1173,7 @@ describe("payout sheet export planning", () => {
     snapshot.syncedParticipantCount = 1;
     snapshot.syncedMembers = [snapshot.members[0]!];
 
-    const requests = planPayoutSheetExport(
-      spreadsheet,
-      "FSN 2026",
-      snapshot,
-    );
+    const requests = planPayoutSheetExport(spreadsheet, "FSN 2026", snapshot);
 
     expect(JSON.stringify(requests)).toContain("=(G$6-G$8)/2");
   });

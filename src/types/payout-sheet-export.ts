@@ -19,6 +19,11 @@ export interface PayoutSheetMember {
   discordTag: string;
 }
 
+export interface PayoutSheetRosterState {
+  userIds: string[];
+  members?: PayoutSheetMember[];
+}
+
 /**
  * Durable input for one Discord post and its managed spreadsheet column.
  * Pending work is retained for retries; successful edits reuse the existing column.
@@ -31,10 +36,10 @@ export interface PayoutSheetSnapshot {
   members?: PayoutSheetMember[];
   syncedParticipantCount?: number;
   syncedMembers?: PayoutSheetMember[];
-  previousPendingRoster?: {
-    userIds: string[];
-    members?: PayoutSheetMember[];
-  };
+  /** Legacy single-state input, retained when reading older history. */
+  previousPendingRoster?: PayoutSheetRosterState;
+  /** Every roster whose atomic write might have committed before confirmation. */
+  pendingRosters?: PayoutSheetRosterState[];
   mode: "create" | "vendor" | "roster";
   status: "pending" | "synced";
   /** Only newly managed exports may create a missing column; legacy exports never guess. */

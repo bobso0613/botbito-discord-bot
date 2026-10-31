@@ -3,7 +3,8 @@ import { ApplicationIntegrationType, InteractionContextType } from "discord.js";
 import { COOLDOWN_INSTANCE_TYPES } from "../constants/cooldowns.js";
 import type { GuildSchedule } from "../types/guild-schedule.js";
 
-const getActiveGuildSchedules = jest.fn<() => Promise<GuildSchedule[]>>();
+const getActiveGuildSchedules =
+  jest.fn<typeof import("../services/guild-schedule.service.js").getActiveGuildSchedules>();
 const source = { categoryIds: ["category"], scheduleTextChannelIds: [] };
 const tower = COOLDOWN_INSTANCE_TYPES[0];
 const cellar = COOLDOWN_INSTANCE_TYPES[1];
@@ -147,7 +148,7 @@ describe("my cooldowns command", () => {
     for (const guild of interaction.client.guilds.cache.values()) {
       expect(guild.members.fetch).toHaveBeenCalledWith("user");
       expect(getActiveGuildSchedules).toHaveBeenCalledWith(
-        guild,
+        expect.objectContaining(guild),
         expect.objectContaining({
           id: "user",
           displayName: `${guild.id} nickname`,

@@ -7,7 +7,10 @@ import type {
   PayoutSheetSnapshot,
   PayoutSheetEdit,
 } from "../types/payout-sheet-export.js";
-import { planPayoutSheetExport } from "../utils/payout-sheet-export.js";
+import {
+  planPayoutSheetExport,
+  requiresPayoutIdentityMigration,
+} from "../utils/payout-sheet-export.js";
 import { DISCORD_SETTINGS } from "../config/discord-settings.js";
 import {
   buildPayoutSheetFailureNotice,
@@ -18,6 +21,7 @@ import {
   getExportDate,
   getExportInstanceTypes,
 } from "../utils/signup-export.js";
+import { getExportRosterUserIds } from "../utils/signup-export-roster.js";
 import {
   readPayoutSpreadsheet,
   writePayoutSpreadsheet,
@@ -115,6 +119,11 @@ const applyExportEdit = (
   entry: SignupExportHistoryEntry,
   edit: PayoutSheetEdit,
 ): void => {
+  entry.participantUserIds = edit.userIds
+    ? [...new Set(edit.userIds)]
+    : entry.participantUserIds ??
+      entry.sheetsSync?.userIds ??
+      getExportRosterUserIds(entry.contents ?? []);
   if (edit.contents) entry.contents = edit.contents;
   if (edit.starterContent)
     entry.contents = [edit.starterContent, ...(entry.contents?.slice(1) ?? [])];
@@ -126,10 +135,11 @@ const applyExportEdit = (
       snapshot.syncedParticipantCount ??= snapshot.userIds.length;
       snapshot.syncedMembers ??= snapshot.members;
     } else {
-      snapshot.previousPendingRoster ??= {
+      snapshot.pendingRosters ??= [];
+      snapshot.pendingRosters.push({
         userIds: [...snapshot.userIds],
         ...(snapshot.members && { members: [...snapshot.members] }),
-      };
+      });
     }
     snapshot.userIds = [...new Set(edit.userIds)];
     snapshot.members = undefined;
@@ -224,7 +234,9 @@ const synchronizeEntry = async (
     );
     await persist();
   }
-  const spreadsheet = await readPayoutSpreadsheet(worksheet);
+  const spreadsheet = requiresPayoutIdentityMigration(snapshot)
+    ? await readPayoutSpreadsheet(worksheet, true)
+    : await readPayoutSpreadsheet(worksheet);
   const requests = planPayoutSheetExport(spreadsheet, worksheet, snapshot);
   if (requests.length) await writePayoutSpreadsheet(requests);
   snapshot.status = "synced";
@@ -232,6 +244,7 @@ const synchronizeEntry = async (
   snapshot.syncedParticipantCount = snapshot.userIds.length;
   if (snapshot.members) snapshot.syncedMembers = [...snapshot.members];
   snapshot.previousPendingRoster = undefined;
+  snapshot.pendingRosters = undefined;
   await persist();
   return updatePayoutSheetStarter(
     guild,
@@ -282,7 +295,7 @@ export const syncPayoutExport = async (
     );
   } catch (error) {
     if (error instanceof HistoryPersistenceError) {
-      return historyFailureNotice(error.originalError);
+      return `${historyFailureNotice(error.originalError)}\n${failureNotice(error.originalError)}`;
     }
     return failureNotice(error);
   }

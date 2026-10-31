@@ -13,7 +13,8 @@ const updateGuildScheduleSource =
     ) => Promise<void>
   >();
 const publishGuildScheduleAnnouncement = jest.fn();
-const updateGuildPayoutChannel = jest.fn();
+const updateGuildPayoutChannel =
+  jest.fn<typeof import("../services/guild-settings.service.js").updateGuildPayoutChannel>();
 const updateGuildCooldownSettings =
   jest.fn<
     (
@@ -101,7 +102,12 @@ const guild = {
         },
       ],
     ]),
-    fetch: jest.fn(),
+    fetch: jest.fn<
+      (id?: string) => Promise<
+        Map<string, { id: string; name: string; type: ChannelType }> |
+        { id: string; type: ChannelType }
+      >
+    >(),
   },
   roles: {
     cache: new Map([
@@ -140,7 +146,7 @@ const createInteraction = (
         ? (optionValues[name] ?? null)
         : (optionValues[name] ?? value),
     ),
-    getChannel: jest.fn(() => ({ id: value })),
+    getChannel: jest.fn((_name: string, _required?: boolean) => ({ id: value })),
   },
   reply: jest.fn(),
 });

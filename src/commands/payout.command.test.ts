@@ -4,7 +4,8 @@ import type { PayoutDetails, PayoutLookup } from "../types/payout.js";
 
 const getPayoutDetails =
   jest.fn<(lookup: PayoutLookup) => Promise<PayoutDetails>>();
-const getCurrentlyVendingThreads = jest.fn<() => Promise<string[]>>();
+const getCurrentlyVendingThreads =
+  jest.fn<typeof import("../services/signup-export.service.js").getCurrentlyVendingThreads>();
 const buildPayoutEmbed = jest.fn().mockReturnValue([{ kind: "payout" }]);
 const buildPayoutEmbedNotJoined = jest
   .fn()
@@ -65,7 +66,7 @@ describe("payout command", () => {
       discordTag: "alice",
     });
     expect(getCurrentlyVendingThreads).toHaveBeenCalledWith(
-      interaction.client,
+      expect.objectContaining(interaction.client),
       guildId,
       "11111",
     );
