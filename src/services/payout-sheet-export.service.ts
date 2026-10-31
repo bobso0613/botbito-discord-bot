@@ -88,12 +88,15 @@ const failureNotice = (error: unknown): string => {
   return buildPayoutSheetFailureNotice(detail);
 };
 
-const historyFailureNotice = (error: unknown): string => {
+const historyFailureNotice = (
+  error: unknown,
+  operation: "saved" | "resolved" = "saved",
+): string => {
   const detail =
     error instanceof Error
       ? error.message.slice(0, 250)
       : "Unknown history error";
-  return `Payout export history could not be saved: ${detail}. The Currently Vending list may be stale; contact an administrator.`;
+  return `Payout export history could not be ${operation}: ${detail}. The Currently Vending list may be stale; contact an administrator.`;
 };
 
 class HistoryPersistenceError extends Error {
@@ -121,9 +124,9 @@ const applyExportEdit = (
 ): void => {
   entry.participantUserIds = edit.userIds
     ? [...new Set(edit.userIds)]
-    : entry.participantUserIds ??
+    : (entry.participantUserIds ??
       entry.sheetsSync?.userIds ??
-      getExportRosterUserIds(entry.contents ?? []);
+      getExportRosterUserIds(entry.contents ?? []));
   if (edit.contents) entry.contents = edit.contents;
   if (edit.starterContent)
     entry.contents = [edit.starterContent, ...(entry.contents?.slice(1) ?? [])];
@@ -287,13 +290,20 @@ export const syncPayoutExport = async (
       return historyFailureNotice(error);
     }
   }
+  let historyResolved = false;
   try {
     return await historyService.withSignupExportHistory(
       guild.id,
       threadId,
-      (entry, save) => synchronizeEntry(guild, worksheet, entry, save, edit),
+      (entry, save) => {
+        historyResolved = true;
+        return synchronizeEntry(guild, worksheet, entry, save, edit);
+      },
     );
   } catch (error) {
+    if (!historyResolved) {
+      return `${historyFailureNotice(error, "resolved")}\n${failureNotice(error)}`;
+    }
     if (error instanceof HistoryPersistenceError) {
       return `${historyFailureNotice(error.originalError)}\n${failureNotice(error.originalError)}`;
     }

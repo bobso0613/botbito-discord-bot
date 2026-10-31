@@ -18,10 +18,12 @@ jest.unstable_mockModule("../config/discord-settings.js", () => ({
 }));
 
 const readPayoutSpreadsheet =
-  jest.fn<(
-    worksheet: string,
-    includeAllWorksheets?: boolean,
-  ) => Promise<sheets_v4.Schema$Spreadsheet>>();
+  jest.fn<
+    (
+      worksheet: string,
+      includeAllWorksheets?: boolean,
+    ) => Promise<sheets_v4.Schema$Spreadsheet>
+  >();
 const writePayoutSpreadsheet =
   jest.fn<(requests: sheets_v4.Schema$Request[]) => Promise<void>>();
 jest.unstable_mockModule("./google-sheets.service.js", () => ({
@@ -29,6 +31,7 @@ jest.unstable_mockModule("./google-sheets.service.js", () => ({
   writePayoutSpreadsheet,
 }));
 let entry: SignupExportHistoryEntry;
+let historyResolutionError: Error | undefined;
 const save = jest.fn<() => Promise<void>>();
 jest.unstable_mockModule("./signup-export.service.js", () => ({
   withSignupExportHistory: async (
@@ -38,7 +41,10 @@ jest.unstable_mockModule("./signup-export.service.js", () => ({
       current: SignupExportHistoryEntry,
       persist: () => Promise<void>,
     ) => Promise<string>,
-  ) => action(entry, save),
+  ) => {
+    if (historyResolutionError) throw historyResolutionError;
+    return action(entry, save);
+  },
 }));
 const { queuePayoutSheetOperation, syncPayoutExport } =
   await import("./payout-sheet-export.service.js");
@@ -108,9 +114,12 @@ const grid = (linked = false): sheets_v4.Schema$Spreadsheet => {
               {
                 values: [
                   { userEnteredValue: { stringValue: "@alice" } },
-                  { userEnteredValue: {
-                    formulaValue: "=IFERROR(VLOOKUP($A3,'FSN 2026'!$C$10:$Z$100,8,FALSE),0)",
-                  } },
+                  {
+                    userEnteredValue: {
+                      formulaValue:
+                        "=IFERROR(VLOOKUP($A3,'FSN 2026'!$C$10:$Z$100,8,FALSE),0)",
+                    },
+                  },
                 ],
               },
             ],
@@ -159,6 +168,7 @@ const guild = (legacyTags = false) => ({
 describe("payout Sheets synchronization", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    historyResolutionError = undefined;
     editStarter.mockReset().mockResolvedValue();
     fetchStarterMessage.mockReset().mockImplementation(async () => ({
       content: originalStarter,
@@ -183,17 +193,22 @@ describe("payout Sheets synchronization", () => {
     const combinedRows = spreadsheet.sheets![1]!.data![0]!.rowData!;
     for (const [offset, tag] of ["bob", "cara"].entries()) {
       const row = offset + 3;
-      combinedRows[row] = { values: [
-        { userEnteredValue: { stringValue: `@${tag}` } },
-        { userEnteredValue: {
-          formulaValue: `=IFERROR(VLOOKUP($A${row + 1},'FSN 2026'!$C$10:$Z$100,8,FALSE),0)`,
-        } },
-      ] };
+      combinedRows[row] = {
+        values: [
+          { userEnteredValue: { stringValue: `@${tag}` } },
+          {
+            userEnteredValue: {
+              formulaValue: `=IFERROR(VLOOKUP($A${row + 1},'FSN 2026'!$C$10:$Z$100,8,FALSE),0)`,
+            },
+          },
+        ],
+      };
     }
     const currentGuild = guild();
     currentGuild.members.fetch.mockImplementation(async (options: unknown) => {
       const userId = (options as { user: string }).user;
-      const tag = userId === "111" ? "alice" : userId === "222" ? "bob" : "cara";
+      const tag =
+        userId === "111" ? "alice" : userId === "222" ? "bob" : "cara";
       return { displayName: tag, user: { username: tag, tag } };
     });
     entry.sheetsSync!.status = "synced";
@@ -208,18 +223,27 @@ describe("payout Sheets synchronization", () => {
       }
       if (++attempts <= 2) throw new Error("timeout after commit");
     });
-    await syncPayoutExport(currentGuild as never, "thread", { userIds: ["111", "222"] });
+    await syncPayoutExport(currentGuild as never, "thread", {
+      userIds: ["111", "222"],
+    });
     entry = JSON.parse(JSON.stringify(entry)) as SignupExportHistoryEntry;
-    await syncPayoutExport(currentGuild as never, "thread", { userIds: ["111", "222", "333"] });
+    await syncPayoutExport(currentGuild as never, "thread", {
+      userIds: ["111", "222", "333"],
+    });
     entry = JSON.parse(JSON.stringify(entry)) as SignupExportHistoryEntry;
-    expect(entry.sheetsSync?.pendingRosters?.map((roster) => roster.userIds))
-      .toEqual([["111", "222"]]);
+    expect(
+      entry.sheetsSync?.pendingRosters?.map((roster) => roster.userIds),
+    ).toEqual([["111", "222"]]);
 
-    const notice = await syncPayoutExport(currentGuild as never, "thread", { userIds: ["111"] });
+    const notice = await syncPayoutExport(currentGuild as never, "thread", {
+      userIds: ["111"],
+    });
     expect(notice).toContain("Google Sheets updated");
     expect(writePayoutSpreadsheet).toHaveBeenCalledTimes(3);
     expect(entry.sheetsSync?.pendingRosters).toBeUndefined();
-    expect(rows[9]!.values![6]!.userEnteredValue?.formulaValue).toBe("=(G$6-G$8)/1");
+    expect(rows[9]!.values![6]!.userEnteredValue?.formulaValue).toBe(
+      "=(G$6-G$8)/1",
+    );
     expect(rows[10]!.values![6]!.userEnteredValue).toBeUndefined();
     expect(rows[11]!.values![6]!.userEnteredValue).toBeUndefined();
   });
@@ -228,7 +252,9 @@ describe("payout Sheets synchronization", () => {
     entry.sheetsSync!.status = "synced";
     const currentGuild = guild(true);
     readPayoutSpreadsheet.mockResolvedValue(grid(true));
-    const notice = await syncPayoutExport(currentGuild as never, "thread", { userIds: ["111"] });
+    const notice = await syncPayoutExport(currentGuild as never, "thread", {
+      userIds: ["111"],
+    });
     expect(notice).toContain("Google Sheets updated");
     expect(readPayoutSpreadsheet).toHaveBeenCalledWith("FSN 2026", true);
     const requests = writePayoutSpreadsheet.mock.calls[0]![0];
@@ -264,9 +290,12 @@ describe("payout Sheets synchronization", () => {
   it("preserves roster IDs independently of a vendor containing a removed member mention", async () => {
     entry.participantUserIds = ["222"];
     entry.sheetsSync = undefined;
-    entry.contents = ["01: Champ - <@222>\n\nParticipants: **1**\nVendor: **none**"];
+    entry.contents = [
+      "01: Champ - <@222>\n\nParticipants: **1**\nVendor: **none**",
+    ];
     await syncPayoutExport({ id: "unmapped-guild" } as never, "thread", {
-      starterContent: "01: Champ - <@222>\n\nParticipants: **1**\nVendor: **<@111>**",
+      starterContent:
+        "01: Champ - <@222>\n\nParticipants: **1**\nVendor: **<@111>**",
       vendor: "<@111>",
     });
     expect(entry.participantUserIds).toEqual(["222"]);
@@ -288,9 +317,11 @@ describe("payout Sheets synchronization", () => {
   it("synchronizes the configured development worksheet in the same spreadsheet", async () => {
     const spreadsheet = grid();
     spreadsheet.sheets![0]!.properties!.title = "DevTestSheet";
-    spreadsheet.sheets![1]!.data![0]!.rowData![2]!.values![1]!.userEnteredValue = {
-      formulaValue: "=IFERROR(VLOOKUP($A3,'DevTestSheet'!$C$10:$Z$100,8,FALSE),0)",
-    };
+    spreadsheet.sheets![1]!.data![0]!.rowData![2]!.values![1]!.userEnteredValue =
+      {
+        formulaValue:
+          "=IFERROR(VLOOKUP($A3,'DevTestSheet'!$C$10:$Z$100,8,FALSE),0)",
+      };
     readPayoutSpreadsheet.mockResolvedValueOnce(spreadsheet);
     const developmentGuild = { ...guild(), id: "1115484031455346718" };
     expect(
@@ -298,6 +329,50 @@ describe("payout Sheets synchronization", () => {
     ).toContain("Google Sheets updated: DevTestSheet");
     expect(readPayoutSpreadsheet).toHaveBeenCalledWith("DevTestSheet");
     expect(writePayoutSpreadsheet).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    "History file could not be read",
+    "Invalid history JSON",
+    "The export history is missing",
+    "The export history is ambiguous",
+  ])("warns about stale history when resolution fails: %s", async (message) => {
+    historyResolutionError = new Error(message);
+
+    const notice = await syncPayoutExport(guild() as never, "thread", {
+      contents: ["edited roster"],
+      userIds: ["222"],
+    });
+
+    expect(notice).toContain(
+      `Payout export history could not be resolved: ${message}`,
+    );
+    expect(notice).toContain("Currently Vending list may be stale");
+    expect(notice).toContain("contact an administrator");
+    expect(notice).toContain("Google Sheets was not confirmed updated");
+    expect(notice).toContain("Please update Google Sheets manually");
+    expect(entry.contents).toEqual(["old"]);
+    expect(save).not.toHaveBeenCalled();
+    expect(readPayoutSpreadsheet).not.toHaveBeenCalled();
+    expect(writePayoutSpreadsheet).not.toHaveBeenCalled();
+  });
+
+  it("does not report stale history for a Sheets failure after persisting the roster", async () => {
+    readPayoutSpreadsheet.mockRejectedValueOnce(
+      new Error("Sheets unavailable"),
+    );
+
+    const notice = await syncPayoutExport(guild() as never, "thread", {
+      contents: ["edited roster"],
+      userIds: ["111"],
+    });
+
+    expect(notice).toContain("Google Sheets was not confirmed updated");
+    expect(notice).not.toContain("Currently Vending list may be stale");
+    expect(notice).not.toContain("Payout export history could not be");
+    expect(entry.contents).toEqual(["edited roster"]);
+    expect(save).toHaveBeenCalled();
+    expect(writePayoutSpreadsheet).not.toHaveBeenCalled();
   });
 
   it("reports mapped history save failures with the stale-history warning", async () => {
@@ -407,9 +482,7 @@ describe("payout Sheets synchronization", () => {
       ],
       previousPendingRoster: {
         userIds: ["111"],
-        members: [
-          { userId: "111", displayName: "Alice", discordTag: "alice" },
-        ],
+        members: [{ userId: "111", displayName: "Alice", discordTag: "alice" }],
       },
     };
     readPayoutSpreadsheet.mockResolvedValueOnce(spreadsheet);
