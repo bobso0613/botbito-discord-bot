@@ -20,8 +20,14 @@ import {
   getExportInstanceTypes,
   getExportRunKey,
 } from "../utils/signup-export.js";
+import { isExportRosterContinuation } from "../utils/signup-export-roster.js";
 import { getSignupSheet } from "./signup-sheet.service.js";
 import { exportSignupRun } from "./signup-export.service.js";
+import {
+  buildPayoutSheetSnapshot,
+  queuePayoutSheetOperation,
+  syncPayoutExport,
+} from "./payout-sheet-export.service.js";
 
 /**
  * Reads every page of an existing export's bot-authored messages in chronological order.
@@ -45,6 +51,7 @@ export const recoverExportThread = async (
       throw error;
     });
   if (!thread) return null;
+  const starter = await thread.fetchStarterMessage();
   const messages = [];
   let before: string | undefined;
   while (true) {
@@ -59,7 +66,12 @@ export const recoverExportThread = async (
   return {
     threadId,
     contents: messages
-      .filter((message) => message.author.id === channel.client.user.id)
+      .filter(
+        (message) =>
+          message.author.id === channel.client.user.id &&
+          (message.id === starter?.id ||
+            isExportRosterContinuation(message.content)),
+      )
       .sort((first, second) => first.createdTimestamp - second.createdTimestamp)
       .map((message) => message.content),
   };
@@ -109,7 +121,10 @@ const findArchivedExport = async (
   runDate?: string,
   before?: Date,
 ): Promise<string | null> => {
-  const archived = await channel.threads.fetchArchived({ limit: 100, before });
+  const archived = await channel.threads.fetchArchived({
+    limit: 100,
+    before,
+  });
   const found = await findIdentifierInThreads(
     archived.threads.values(),
     identifier,
@@ -170,6 +185,7 @@ const validateCurrentExport = async (
 /**
  * Creates or recovers one payout post through the guild's serialized export history.
  * Revalidates ownership before creation and limits mentions to the exported roster.
+ * Attempts managed Sheets sync after confirmation; failures append a manual-update notice without undoing Discord.
  * @param userId Invoking organizer's Discord ID.
  * @param channel Configured payout forum.
  * @param sheet Original signup used for run identity and overlapping coverage checks.
@@ -182,72 +198,96 @@ export const sendExport = async (
   channel: ForumChannel,
   sheet: SignupSheet,
   part: SignupExportPart,
-): Promise<string> => {
-  const { slots, runKey } = part;
-  const contents = part.contents!;
-  const recipientIds = [...new Set(slots.map((slot) => slot.signupUserId!))];
-  const messageOptions = (content: string) => ({
-    content,
-    allowedMentions: {
-      parse: [] as [],
-      users: recipientIds.filter((id) => content.includes(`<@${id}>`)),
-    },
+): Promise<string> =>
+  queuePayoutSheetOperation(async () => {
+    const { slots, runKey } = part;
+    const sheetsSnapshot = buildPayoutSheetSnapshot(part);
+    const contents = part.contents!;
+    const recipientIds = [...new Set(slots.map((slot) => slot.signupUserId!))];
+    const messageOptions = (content: string) => ({
+      content,
+      allowedMentions: {
+        parse: [] as [],
+        users: recipientIds.filter((id) => content.includes(`<@${id}>`)),
+      },
+    });
+    let remainingFailed = false;
+    let createdThreadId: string | null = null;
+    let result;
+    const combinedKey = getExportRunKey(sheet);
+    const overlappingRunKeys =
+      runKey === combinedKey
+        ? getExportInstanceTypes(sheet).map((type) =>
+            getExportRunKey(sheet, type.name),
+          )
+        : [combinedKey];
+    try {
+      result = await exportSignupRun(
+        sheet.guildId,
+        runKey,
+        async () => {
+          await validateCurrentExport(sheet, userId);
+          const thread = await channel.threads.create({
+            name: buildExportTitle(part.sheet, part.initials),
+            message: messageOptions(contents[0]!),
+          });
+          createdThreadId = thread.id;
+          try {
+            await contents.slice(1).reduce(async (previous, content) => {
+              await previous;
+              await thread.send(messageOptions(content));
+            }, Promise.resolve());
+          } catch {
+            remainingFailed = true;
+            if (sheetsSnapshot) sheetsSnapshot.deliveryIncomplete = true;
+          }
+          return thread.id;
+        },
+        async (key, savedThreadId) => {
+          const threadId =
+            savedThreadId ??
+            (await findExistingExport(
+              channel,
+              buildExportIdentifierFromRunKey(sheet.guildId, key),
+              getExportDate(sheet).toISOString().slice(0, 10),
+            ));
+          return threadId ? recoverExportThread(channel, threadId) : null;
+        },
+        contents,
+        overlappingRunKeys,
+        {
+          sheetsSync: sheetsSnapshot,
+          organizerId: sheet.organizerId ?? undefined,
+        },
+      );
+    } catch (error) {
+      if (error instanceof ExportValidationError) return error.message;
+      if (!createdThreadId) throw error;
+      return `Created <#${createdThreadId}>, but could not save the export confirmation. Export is blocked to prevent a duplicate; ask an administrator to check the export history.`;
+    }
+    if (!result.created) {
+      const syncNotice =
+        result.threadId && sheetsSnapshot
+          ? await syncPayoutExport(channel.guild, result.threadId)
+          : "";
+      return result.threadId
+        ? [
+            `This run has already been exported for this date: <#${result.threadId}>.`,
+            syncNotice,
+          ]
+            .filter(Boolean)
+            .join("\n")
+        : "An export for this run and date is already pending. Ask an administrator to check the export history if it remains blocked.";
+    }
+    if (remainingFailed)
+      return `Created <#${result.threadId}>, but could not send the remaining roster. Check the bot's permissions and complete the roster in that post; exporting again is blocked to prevent duplicates. Please update Google Sheets manually.`;
+    const syncNotice = sheetsSnapshot
+      ? await syncPayoutExport(channel.guild, result.threadId!)
+      : "";
+    return [
+      `Exported the signup roster to <#${result.threadId}>. Vendor - **${escapeMarkdown(part.vendor.replace(/[\r\n]/g, " "))}**`,
+      syncNotice,
+    ]
+      .filter(Boolean)
+      .join("\n");
   });
-  let remainingFailed = false;
-  let createdThreadId: string | null = null;
-  let result;
-  const combinedKey = getExportRunKey(sheet);
-  const overlappingRunKeys =
-    runKey === combinedKey
-      ? getExportInstanceTypes(sheet).map((type) =>
-          getExportRunKey(sheet, type.name),
-        )
-      : [combinedKey];
-  try {
-    result = await exportSignupRun(
-      sheet.guildId,
-      runKey,
-      async () => {
-        await validateCurrentExport(sheet, userId);
-        const thread = await channel.threads.create({
-          name: buildExportTitle(part.sheet, part.initials),
-          message: messageOptions(contents[0]!),
-        });
-        createdThreadId = thread.id;
-        try {
-          await contents.slice(1).reduce(async (previous, content) => {
-            await previous;
-            await thread.send(messageOptions(content));
-          }, Promise.resolve());
-        } catch {
-          remainingFailed = true;
-        }
-        return thread.id;
-      },
-      async (key, savedThreadId) => {
-        const threadId =
-          savedThreadId ??
-          (await findExistingExport(
-            channel,
-            buildExportIdentifierFromRunKey(sheet.guildId, key),
-            getExportDate(sheet).toISOString().slice(0, 10),
-          ));
-        return threadId ? recoverExportThread(channel, threadId) : null;
-      },
-      contents,
-      overlappingRunKeys,
-    );
-  } catch (error) {
-    if (error instanceof ExportValidationError) return error.message;
-    if (!createdThreadId) throw error;
-    return `Created <#${createdThreadId}>, but could not save the export confirmation. Export is blocked to prevent a duplicate; ask an administrator to check the export history.`;
-  }
-  if (!result.created) {
-    return result.threadId
-      ? `This run has already been exported for this date: <#${result.threadId}>.`
-      : "An export for this run and date is already pending. Ask an administrator to check the export history if it remains blocked.";
-  }
-  return remainingFailed
-    ? `Created <#${result.threadId}>, but could not send the remaining roster. Check the bot's permissions and complete the roster in that post; exporting again is blocked to prevent duplicates.`
-    : `Exported the signup roster to <#${result.threadId}>. Vendor - **${escapeMarkdown(part.vendor.replace(/[\r\n]/g, " "))}**`;
-};

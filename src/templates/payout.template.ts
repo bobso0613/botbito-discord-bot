@@ -7,8 +7,11 @@ import { DISCORD_SETTINGS } from "../config/discord-settings.js";
 
 const pepeMoneyRainEmojiId = process.env.PEPEMONEYRAIN_EMOJI_ID;
 
-const getClaimMessage = (context: InteractionContext): string =>
-  DISCORD_SETTINGS.payoutToPingId === context.userId
+const getClaimMessage = (
+  context: InteractionContext,
+  includeForPayoutContact = false,
+): string =>
+  !includeForPayoutContact && DISCORD_SETTINGS.payoutToPingId === context.userId
     ? ""
     : `Please ping <@${DISCORD_SETTINGS.payoutToPingId}> (@${DISCORD_SETTINGS.payoutToPingTag}) if you want to claim.`;
 
@@ -135,7 +138,7 @@ export const buildPayoutSummaryEmbed = (
   context: InteractionContext,
 ): EmbedBuilder => {
   const footer = getEmbedFooter(context);
-  const claimMessage = getClaimMessage(context);
+  const claimMessage = getClaimMessage(context, true);
   const nameColumnWidth = 16;
   const amountColumnWidth = 16;
   const amountLabel =

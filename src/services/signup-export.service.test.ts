@@ -25,12 +25,33 @@ jest.unstable_mockModule("node:fs/promises", () => ({
   writeFile,
   rename,
 }));
+const settings = {
+  payoutWorksheets: {} as Record<string, string>,
+  cooldownInstanceTypesByGuild: {},
+};
+jest.unstable_mockModule("../config/discord-settings.js", () => ({
+  DISCORD_SETTINGS: settings,
+}));
 const getSignupSheet = jest.fn<() => Promise<SignupSheet | null>>();
+const readPayoutSpreadsheet = jest.fn(
+  async (_worksheet: string): Promise<never> => {
+    throw Object.assign(new Error("Missing spreadsheet access"), {
+      code: 403,
+    });
+  },
+);
+jest.unstable_mockModule("./google-sheets.service.js", () => ({
+  readPayoutSpreadsheet,
+  writePayoutSpreadsheet: jest.fn(),
+}));
 jest.unstable_mockModule("./signup-sheet.service.js", () => ({
   getSignupSheet,
 }));
-const { exportSignupRun, getCurrentlyVendingThreads } =
-  await import("./signup-export.service.js");
+const {
+  exportSignupRun,
+  getCurrentlyVendingThreads,
+  getSignupExportOrganizerId,
+} = await import("./signup-export.service.js");
 const { sendExport } = await import("./signup-export-forum.service.js");
 const { buildExportIdentifier, getExportRunKey } =
   await import("../utils/signup-export.js");
@@ -38,12 +59,92 @@ const { buildExportIdentifier, getExportRunKey } =
 describe("signup export history", () => {
   beforeEach(() => {
     files.clear();
+    settings.payoutWorksheets = {};
     jest.clearAllMocks();
+  });
+
+  it("keeps the confirmed Discord export and reports a manual-update warning when Sheets fails", async () => {
+    const sheet: SignupSheet = {
+      guildId: "499171225046876170",
+      channelId: "signup",
+      title: "Endless Tower",
+      organizerId: "organizer",
+      organizerName: "Organizer",
+      organizerAvatarUrl: "",
+      partySizes: [1],
+      slots: [
+        {
+          number: 1,
+          role: "DPS",
+          signupUserId: "111",
+          signupDisplayName: "Alice",
+          charNote: null,
+        },
+      ],
+      reserves: [],
+      notes: null,
+      thumbnailUrl: null,
+      color: null,
+      instanceType: "Endless Tower",
+      timestamp: Date.UTC(2026, 9, 29) / 1000,
+      serverTimezone: "GMT",
+      scheduleTimezone: null,
+    };
+    settings.payoutWorksheets[sheet.guildId] = "Payout";
+    getSignupSheet.mockResolvedValue(sheet);
+    const forum = {
+      guild: {
+        id: sheet.guildId,
+        members: {
+          fetch: jest.fn(async () => ({
+            displayName: "Alice",
+            user: { username: "alice", tag: "alice" },
+          })),
+        },
+      },
+      client: { user: { id: "bot" } },
+      threads: {
+        create: jest.fn(async () => ({ id: "post", send: jest.fn() })),
+        fetchActive: jest.fn(async () => ({ threads: new Collection() })),
+        fetchArchived: jest.fn(async () => ({
+          threads: new Collection(),
+          hasMore: false,
+        })),
+      },
+    };
+    const part: SignupExportPart = {
+      runKey: getExportRunKey(sheet),
+      identifier: buildExportIdentifier(sheet),
+      sheet,
+      slots: sheet.slots,
+      contents: ["<@111>"],
+      vendor: "Vendor",
+    };
+    const result = await sendExport("organizer", forum as never, sheet, part);
+    expect(result).toContain("Exported the signup roster to <#post>");
+    expect(result).toContain("Sheets API error 403");
+    expect(result).toContain("Please update Google Sheets manually");
+    expect(forum.threads.create).toHaveBeenCalledTimes(1);
+    const saved = JSON.parse(
+      files.get(
+        resolve(
+          process.cwd(),
+          "private",
+          "signup-exports",
+          `${sheet.guildId}.json`,
+        ),
+      )!,
+    );
+    expect(saved[part.runKey].threadId).toBe("post");
+    expect(saved[part.runKey].sheetsSync.status).toBe("pending");
   });
 
   it.each([
     { selection: "cleared", instanceType: null },
-    { selection: "replaced", instanceType: ["Different One", "Different Two"] },
+    {
+      selection: "replaced",
+      instanceType: ["Different One", "Different Two"],
+    },
   ])(
     "does not post again after ET/EC split selections are $selection",
     async ({ instanceType }) => {
@@ -74,12 +175,17 @@ describe("signup export history", () => {
         scheduleTimezone: null,
       };
       getSignupSheet.mockImplementation(async () => sheet);
-      const create = jest.fn(async () => ({ id: "post", send: jest.fn() }));
+      const create = jest.fn(async () => ({
+        id: "post",
+        send: jest.fn(),
+      }));
       const forum = {
         client: { user: { id: "bot" } },
         threads: {
           create,
-          fetchActive: jest.fn(async () => ({ threads: new Collection() })),
+          fetchActive: jest.fn(async () => ({
+            threads: new Collection(),
+          })),
           fetchArchived: jest.fn(async () => ({
             threads: new Collection(),
             hasMore: false,
@@ -216,7 +322,10 @@ describe("signup export history", () => {
       exportSignupRun("guild", combined, create, find, ["<@changed-member>"]),
     ).resolves.toEqual({ created: false, threadId: "original" });
     expect(find).toHaveBeenCalledWith(split, undefined);
-    expect(JSON.parse(files.get(path)!)[split]).toEqual(recovered);
+    expect(JSON.parse(files.get(path)!)[split]).toEqual({
+      ...recovered,
+      participantUserIds: [],
+    });
     expect(create).not.toHaveBeenCalled();
   });
 
@@ -241,16 +350,40 @@ describe("signup export history", () => {
     files.set(
       resolve(process.cwd(), "private", "signup-exports", "guild.json"),
       JSON.stringify({
-        eligible: { threadId: "vending", contents: ["roster", "<@11111>"] },
-        duplicate: { threadId: "vending", contents: ["<@11111>"] },
-        completed: { threadId: "completed", contents: ["<@11111>"] },
-        noShare: { threadId: "no-share", contents: ["<@11111>"] },
-        otherMember: { threadId: "other", contents: ["<@111111>"] },
+        eligible: {
+          threadId: "vending",
+          contents: ["01: Champ - <@11111>"],
+        },
+        duplicate: {
+          threadId: "vending",
+          contents: ["01: Champ - <@11111>"],
+        },
+        completed: {
+          threadId: "completed",
+          contents: ["01: Champ - <@11111>"],
+        },
+        noShare: {
+          threadId: "no-share",
+          contents: ["01: Champ - <@11111>"],
+        },
+        otherMember: {
+          threadId: "other",
+          contents: ["01: Champ - <@111111>"],
+        },
         legacy: { threadId: "legacy" },
-        reserved: { threadId: null, contents: ["<@11111>"] },
-        deleted: { threadId: "deleted", contents: ["<@11111>"] },
-        otherGuild: { threadId: "other-guild", contents: ["<@11111>"] },
-        notThread: { threadId: "channel", contents: ["<@11111>"] },
+        reserved: { threadId: null, contents: ["01: Champ - <@11111>"] },
+        deleted: {
+          threadId: "deleted",
+          contents: ["01: Champ - <@11111>"],
+        },
+        otherGuild: {
+          threadId: "other-guild",
+          contents: ["01: Champ - <@11111>"],
+        },
+        notThread: {
+          threadId: "channel",
+          contents: ["01: Champ - <@11111>"],
+        },
       }),
     );
     const names: Record<string, string> = {
@@ -290,6 +423,40 @@ describe("signup export history", () => {
       ),
     ).resolves.toEqual([]);
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("ignores vendor mentions in explicit and legacy vending histories", async () => {
+    files.set(
+      resolve(process.cwd(), "private", "signup-exports", "guild.json"),
+      JSON.stringify({
+        explicit: {
+          threadId: "explicit",
+          participantUserIds: ["111"],
+          contents: ["01: Champ - <@111>\n\nParticipants: **1**\nVendor: **<@123>**"],
+        },
+        legacy: {
+          threadId: "legacy",
+          contents: [
+            "01: Champ - <@111> (alt for <@333>)\n\nParticipants: **1**\nVendor: **<@123>**",
+            "100: Clown - <@222>",
+            "Vendor updated to **<@123>**.",
+          ],
+        },
+      }),
+    );
+    const fetch = jest.fn(async (id: string) => ({
+      id, guildId: "guild", name: "\u23f3 Run", isThread: () => true,
+    }));
+    const client = { channels: { fetch } };
+    await expect(getCurrentlyVendingThreads(client as never, "guild", "123"))
+      .resolves.toEqual([]);
+    expect(fetch).not.toHaveBeenCalled();
+    await expect(getCurrentlyVendingThreads(client as never, "guild", "222"))
+      .resolves.toEqual(["<#legacy>"]);
+    await expect(getCurrentlyVendingThreads(client as never, "guild", "111"))
+      .resolves.toEqual(["<#explicit>", "<#legacy>"]);
+    await expect(getCurrentlyVendingThreads(client as never, "guild", "333"))
+      .resolves.toEqual([]);
   });
 
   it("degrades malformed history to no vending links but keeps exports fail-closed", async () => {
@@ -334,7 +501,7 @@ describe("signup export history", () => {
       ),
     ).resolves.toEqual({ created: true, threadId: "thread" });
     expect(JSON.parse(files.get(path)!)).toEqual({
-      first: { threadId: "thread", contents: ["<@member>"] },
+      first: { threadId: "thread", contents: ["<@member>"], participantUserIds: [] },
     });
     expect(find).toHaveBeenCalledWith("first");
     expect(find).toHaveBeenCalledWith("combined");
@@ -449,7 +616,10 @@ describe("signup export history", () => {
         async () => recovered,
         ["<@new-signup>"],
       );
-      expect(JSON.parse(files.get(path)!)["run-date"]).toEqual(recovered);
+      expect(JSON.parse(files.get(path)!)["run-date"]).toEqual({
+        ...recovered,
+        participantUserIds: [],
+      });
       expect(create).not.toHaveBeenCalled();
     },
   );
@@ -473,14 +643,138 @@ describe("signup export history", () => {
       "signup-exports",
       "guild.json",
     );
+    const sheetsSync = {
+      identifier: "identifier",
+      title: "ET 01/10",
+      vendor: "Vendor",
+      userIds: ["member"],
+      mode: "create" as const,
+      status: "pending" as const,
+      createIfMissing: true,
+    };
     const create = jest.fn(async () => {
       expect(JSON.parse(files.get(path)!)).toEqual({
-        "run-date": { threadId: null },
+        "run-date": {
+          threadId: null,
+          organizerId: "organizer",
+          contents: ["<@member>"],
+          participantUserIds: ["member"],
+          sheetsSync,
+        },
       });
       return "thread";
     });
-    await exportSignupRun("guild", "run-date", create);
+    await exportSignupRun(
+      "guild",
+      "run-date",
+      create,
+      undefined,
+      ["<@member>"],
+      [],
+      { sheetsSync, organizerId: "organizer" },
+    );
     expect(create).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(files.get(path)!)).toEqual({
+      "run-date": {
+        threadId: "thread",
+        organizerId: "organizer",
+        contents: ["<@member>"],
+        participantUserIds: ["member"],
+        sheetsSync,
+      },
+    });
+    await expect(getSignupExportOrganizerId("guild", "thread")).resolves.toBe(
+      "organizer",
+    );
+  });
+
+  it("preserves reservation ownership and Sheets retry input when recovering a created post", async () => {
+    const path = resolve(
+      process.cwd(),
+      "private",
+      "signup-exports",
+      "guild.json",
+    );
+    const sheetsSync = {
+      identifier: "identifier",
+      title: "ET 01/10",
+      vendor: "Vendor",
+      userIds: ["member"],
+      mode: "create" as const,
+      status: "pending" as const,
+      createIfMissing: true,
+    };
+    files.set(
+      path,
+      JSON.stringify({
+        run: { threadId: null, organizerId: "organizer", sheetsSync },
+      }),
+    );
+    const create = jest.fn(async () => "duplicate");
+    const findExisting = jest.fn(async () => ({
+      threadId: "recovered",
+      contents: ["<@member>"],
+    }));
+
+    await expect(
+      exportSignupRun("guild", "run", create, findExisting, ["<@member>"], [], {
+        sheetsSync,
+        organizerId: "organizer",
+      }),
+    ).resolves.toEqual({ created: false, threadId: "recovered" });
+    expect(JSON.parse(files.get(path)!)).toEqual({
+      run: {
+        threadId: "recovered",
+        organizerId: "organizer",
+        contents: ["<@member>"],
+        participantUserIds: ["member"],
+        sheetsSync,
+      },
+    });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("blocks Sheets synchronization when recovery finds an incomplete roster", async () => {
+    const path = resolve(
+      process.cwd(),
+      "private",
+      "signup-exports",
+      "guild.json",
+    );
+    const sheetsSync = {
+      identifier: "identifier",
+      title: "ET 01/10",
+      vendor: "Vendor",
+      userIds: ["member"],
+      mode: "create" as const,
+      status: "pending" as const,
+      createIfMissing: true,
+    };
+    files.set(
+      path,
+      JSON.stringify({
+        run: {
+          threadId: null,
+          organizerId: "organizer",
+          contents: ["<@member>", "<@followup>"],
+          sheetsSync,
+        },
+      }),
+    );
+
+    await exportSignupRun(
+      "guild",
+      "run",
+      jest.fn(async () => "duplicate"),
+      async () => ({ threadId: "recovered", contents: ["<@member>"] }),
+      ["<@member>", "<@followup>"],
+      [],
+      { sheetsSync, organizerId: "organizer" },
+    );
+    expect(JSON.parse(files.get(path)!).run.sheetsSync).toEqual({
+      ...sheetsSync,
+      deliveryIncomplete: true,
+    });
   });
 
   it("does not create a post when its reservation cannot be persisted", async () => {

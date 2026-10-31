@@ -9,8 +9,20 @@ const getValues = jest.fn(
   }),
 );
 const GoogleAuth = jest.fn();
+const getSpreadsheet = jest.fn(
+  async (_options: unknown, _requestOptions: unknown) => ({
+    data: { sheets: [] },
+  }),
+);
+const batchUpdate = jest.fn(
+  async (_options: unknown, _requestOptions: unknown) => ({ data: {} }),
+);
 const createSheets = jest.fn(() => ({
-  spreadsheets: { values: { get: getValues } },
+  spreadsheets: {
+    values: { get: getValues },
+    get: getSpreadsheet,
+    batchUpdate,
+  },
 }));
 
 jest.unstable_mockModule("node:fs/promises", () => ({ readFile }));
@@ -21,8 +33,12 @@ jest.unstable_mockModule("googleapis", () => ({
   },
 }));
 
-const { readSheetValues, readCombinedPayoutSheetRows } =
-  await import("./google-sheets.service.js");
+const {
+  readSheetValues,
+  readCombinedPayoutSheetRows,
+  readPayoutSpreadsheet,
+  writePayoutSpreadsheet,
+} = await import("./google-sheets.service.js");
 
 describe("google sheets service", () => {
   const originalCredentialsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
@@ -76,6 +92,26 @@ describe("google sheets service", () => {
     });
   });
 
+  it("reads only required grid fields with a longer timeout and never retries write batches", async () => {
+    await readPayoutSpreadsheet("FSN 2026");
+    expect(getSpreadsheet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        spreadsheetId: "spreadsheet-id",
+        includeGridData: true,
+        ranges: ["'FSN 2026'", "'Combined'"],
+        fields:
+          "sheets(properties,developerMetadata,data(startRow,startColumn,rowData(values(userEnteredValue,effectiveValue,userEnteredFormat(backgroundColor,backgroundColorStyle),effectiveFormat(backgroundColor,backgroundColorStyle),note))))",
+      }),
+      { timeout: 60_000, retry: false },
+    );
+    const requests = [{ updateCells: { fields: "userEnteredValue" } }];
+    await writePayoutSpreadsheet(requests);
+    expect(batchUpdate).toHaveBeenCalledWith(
+      { spreadsheetId: "spreadsheet-id", requestBody: { requests } },
+      { timeout: 15_000, retry: false },
+    );
+  });
+
   it("rejects missing configuration and incomplete service account credentials", async () => {
     await expect(readSheetValues("Sheet1!A:A", "")).rejects.toThrow(
       "GOOGLE_SHEETS_ID must be set",
@@ -93,5 +129,14 @@ describe("google sheets service", () => {
     await expect(readSheetValues("Sheet1!A:A")).rejects.toThrow(
       "Google service account credentials are missing required fields",
     );
+  });
+
+  it("includes every worksheet when migrating retained tags across payout histories", async () => {
+    await readPayoutSpreadsheet("FSN 2026", true);
+    expect(getSpreadsheet).toHaveBeenCalledWith(
+      expect.objectContaining({ spreadsheetId: "spreadsheet-id", includeGridData: true }),
+      { timeout: 60_000, retry: false },
+    );
+    expect(getSpreadsheet.mock.calls[0]![0]).not.toHaveProperty("ranges");
   });
 });

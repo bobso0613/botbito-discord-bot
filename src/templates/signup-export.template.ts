@@ -8,6 +8,46 @@ import {
 } from "../utils/signup-export.js";
 
 /**
+ * Formats a confirmed Sheets update and the required default-formula reminder.
+ * @param worksheet Configured destination tab in GOOGLE_SHEETS_ID.
+ * @param title Managed run title, including the localized calendar date.
+ * @returns Public notice appended after the successful Discord export or edit.
+ */
+export const buildPayoutSheetSuccessNotice = (
+  worksheet: string,
+  title: string,
+): string =>
+  `Google Sheets updated: ${escapeMarkdown(worksheet)} (**${escapeMarkdown(title)}**).\nNote: Cell formulas are defaults. Please review and adjust them if needed.`;
+
+export const buildPayoutSheetStarterContent = (
+  content: string,
+  worksheet: string,
+  title: string,
+): string => {
+  const lines = content.trimEnd().split("\n");
+  const identifier = lines.pop();
+  if (!identifier?.startsWith("-# Export ID: ")) {
+    throw new Error("The payout starter post is missing its Export ID");
+  }
+  if (lines.at(-1)?.startsWith("Google Sheets: ")) lines.pop();
+  lines.push(
+    `Google Sheets: ${escapeMarkdown(worksheet)} (**${escapeMarkdown(title)}**)`,
+    identifier,
+  );
+  const updated = lines.join("\n");
+  if (updated.length > MAX_DISCORD_MESSAGE_LENGTH) {
+    throw new Error(
+      "The payout starter post has no room for the Sheets destination",
+    );
+  }
+  return updated;
+};
+
+/** Formats a nonfatal Sheets error without implying that the Discord operation failed. */
+export const buildPayoutSheetFailureNotice = (detail: string): string =>
+  `Google Sheets was not confirmed updated: ${detail}. Please update Google Sheets manually.`;
+
+/**
  * Builds a forum title of at most 100 characters, preserving DD/MM and Unicode instance emojis.
  * Custom Discord emoji markup is omitted because forum titles do not render it.
  * @param sheet Signup with a non-null timestamp and optional instance selections.

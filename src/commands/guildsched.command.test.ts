@@ -58,7 +58,7 @@ describe("guild schedule command", () => {
         id: guildId,
         name: "Test Guild",
         iconURL: jest.fn().mockReturnValue(null),
-        members: { fetch: jest.fn().mockResolvedValue(member) },
+        members: { fetch: jest.fn(async (_userId: string) => member) },
         channels: { cache: new Map() },
       };
       const interaction = {

@@ -6,7 +6,9 @@ import type {
   ExportHistory,
   FindExistingThread,
   SignupExportResult,
+  SignupExportHistoryEntry,
 } from "../types/signup-export.js";
+import { getExportRosterUserIds } from "../utils/signup-export-roster.js";
 export type {
   RecoveredSignupExport,
   SignupExportResult,
@@ -57,7 +59,7 @@ const readHistory = async (path: string): Promise<ExportHistory> => {
 
 /**
  * Lists unique thread mentions from this guild's saved signup exports for a member.
- * Participation requires the exact `<@userId>` mention in stored contents.
+ * Participation uses stored roster IDs, falling back to roster-only mentions for legacy history.
  * Discord titles must contain the hourglass (U+23F3) and omit NO SHARE (case-insensitive).
  * Skips missing contents or IDs, unreadable channels, non-threads, and other guilds.
  * @param client Discord client used to resolve thread titles, using cached channels when available.
@@ -80,11 +82,12 @@ export const getCurrentlyVendingThreads = async (
     if (error instanceof SyntaxError) return [];
     throw error;
   }
-  const mention = `<@${userId}>`;
   const threadIds = new Set(
     Object.values(history)
       .filter((entry) =>
-        entry.contents?.some((content) => content.includes(mention)),
+        (entry.participantUserIds ??
+          entry.sheetsSync?.userIds ??
+          getExportRosterUserIds(entry.contents ?? [])).includes(userId),
       )
       .flatMap((entry) => (entry.threadId ? [entry.threadId] : [])),
   );
@@ -121,14 +124,35 @@ const repairHistoryEntry = async (
   findExistingThread: FindExistingThread,
 ): Promise<void> => {
   const saved = history[key]!;
-  if (saved.contents) return;
+  if (saved.threadId && saved.contents) return;
   const recovered = await findExistingThread(key, saved.threadId ?? undefined);
   if (!recovered) {
     if (saved.threadId) history[key] = { threadId: null };
     return;
   }
+  const recoveredContents =
+    typeof recovered === "string" ? null : recovered.contents;
+  const deliveryIncomplete =
+    Boolean(saved.sheetsSync && saved.contents) &&
+    (saved.contents!.length !== recoveredContents?.length ||
+      saved.contents!.some(
+        (content, index) => content !== recoveredContents?.[index],
+      ));
   history[key] =
-    typeof recovered === "string" ? { threadId: recovered } : recovered;
+    typeof recovered === "string"
+      ? { ...saved, threadId: recovered }
+      : { ...saved, ...recovered };
+  if (recoveredContents) {
+    history[key]!.participantUserIds =
+      history[key]!.sheetsSync?.userIds ??
+      getExportRosterUserIds(recoveredContents);
+  }
+  if (deliveryIncomplete && history[key]!.sheetsSync) {
+    history[key]!.sheetsSync = {
+      ...history[key]!.sheetsSync,
+      deliveryIncomplete: true,
+    };
+  }
   await writeHistory(path, history);
 };
 
@@ -161,6 +185,7 @@ const findSavedExport = async (
  * @param findExistingThread Looks up coverage or recovers contents for a known thread ID. Without it, pending history stays blocked.
  * @param contents Exported roster messages saved with a newly created thread for participant lookup.
  * @param overlappingRunKeys Combined or per-instance keys whose coverage would duplicate this post.
+ * @param metadata Optional exact Sheets retry snapshot and original organizer ID.
  * @returns Whether a new post was created and its ID, or null while an earlier export is pending.
  * @throws For unreadable history, unsuccessful forum checks, creation failures, or persistence failures.
  */
@@ -171,7 +196,18 @@ export const exportSignupRun = async (
   findExistingThread?: FindExistingThread,
   contents?: readonly string[],
   overlappingRunKeys: readonly string[] = [],
+  metadata: Pick<SignupExportHistoryEntry, "sheetsSync" | "organizerId"> = {},
 ): Promise<SignupExportResult> => {
+  const { sheetsSync, organizerId } = metadata;
+  const entryMetadata = {
+    ...(organizerId && { organizerId }),
+    ...(contents && {
+      contents,
+      participantUserIds:
+        sheetsSync?.userIds ?? getExportRosterUserIds(contents),
+    }),
+    ...(sheetsSync && { sheetsSync }),
+  };
   const path = resolve(
     process.cwd(),
     "private",
@@ -209,7 +245,10 @@ export const exportSignupRun = async (
         return;
       }
     }
-    history[runKey] = { threadId: null };
+    history[runKey] = {
+      threadId: null,
+      ...entryMetadata,
+    };
     await writeHistory(path, history);
     let threadId: string;
     try {
@@ -219,7 +258,10 @@ export const exportSignupRun = async (
       await writeHistory(path, history);
       throw error;
     }
-    history[runKey] = { threadId, ...(contents && { contents }) };
+    history[runKey] = {
+      threadId,
+      ...entryMetadata,
+    };
     await writeHistory(path, history);
     result = { created: true, threadId };
   });
@@ -229,4 +271,68 @@ export const exportSignupRun = async (
   );
   await operation;
   return result;
+};
+
+/** Serializes thread history edits with exports, preserving sync input across failed attempts. */
+export const withSignupExportHistory = async <Result>(
+  guildId: string,
+  threadId: string,
+  action: (
+    entry: SignupExportHistoryEntry,
+    save: () => Promise<void>,
+    history: ExportHistory,
+  ) => Promise<Result>,
+): Promise<Result> => {
+  const previous = exportQueues.get(guildId) ?? Promise.resolve();
+  const operation = previous.then(async () => {
+    const path = resolve(
+      process.cwd(),
+      "private",
+      "signup-exports",
+      `${guildId}.json`,
+    );
+    const history = await readHistory(path);
+    const matches = Object.values(history).filter(
+      (entry) => entry.threadId === threadId,
+    );
+    if (matches.length !== 1) {
+      throw new Error(
+        "The export history is missing or ambiguous; update Google Sheets manually.",
+      );
+    }
+    return action(matches[0]!, () => writeHistory(path, history), history);
+  });
+  exportQueues.set(
+    guildId,
+    operation.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return operation;
+};
+
+/** Returns the original organizer for a uniquely matched export thread. */
+export const getSignupExportOrganizerId = async (
+  guildId: string,
+  threadId: string,
+): Promise<string | null> => {
+  const previous = exportQueues.get(guildId) ?? Promise.resolve();
+  const operation = previous.then(async () => {
+    const history = await readHistory(
+      resolve(process.cwd(), "private", "signup-exports", `${guildId}.json`),
+    );
+    const matches = Object.values(history).filter(
+      (entry) => entry.threadId === threadId,
+    );
+    return matches.length === 1 ? (matches[0]!.organizerId ?? null) : null;
+  });
+  exportQueues.set(
+    guildId,
+    operation.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return operation;
 };

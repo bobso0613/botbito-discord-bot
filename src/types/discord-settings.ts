@@ -6,6 +6,8 @@ export interface DiscordSettings {
   payoutSheetChannelIdByGuild?: Readonly<Record<string, string>>;
   /** Guild IDs where payout commands are registered. */
   payoutGuildIds: readonly string[];
+  /** Maps payout guild IDs to worksheet names in the configured Google spreadsheet. */
+  payoutWorksheets?: Readonly<Record<string, string>>;
   /** Discord user ID mentioned as the payout contact. */
   payoutToPingId: string;
   /** Display tag for the payout contact. */

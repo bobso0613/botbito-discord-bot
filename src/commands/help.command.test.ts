@@ -96,6 +96,15 @@ describe("help command", () => {
         "retain links to completed posts",
         "custom emoji markup",
         "Interrupted exports recheck the forum",
+        "before Unclaimed",
+        "zero totals/reimbursements",
+        "update Google Sheets manually",
+        "without duplicate columns",
+        "payoutWorksheets",
+        "one blank column per entry",
+        "two for a two-part split",
+        "only row 9 formatting",
+        "Default cell formulas must be reviewed",
         "**vendor** (required)",
         "**split** (optional)",
         "**second-vendor-name** (optional)",
@@ -104,6 +113,36 @@ describe("help command", () => {
         "**second-run-absent-slots** (optional)",
         "original signup slot numbers",
         "Combined: exclude all specified absences",
+      ],
+    },
+    {
+      command: "/changesharevendor",
+      expected: [
+        "Repeat the same value to retry",
+        "spacer columns stay unchanged",
+        "preserve the Discord edit",
+        "bot-generated thread",
+        "configured payout forum",
+        "vendor name",
+        "`n/a`",
+        "`none`",
+        "**vendor** (required)",
+      ],
+    },
+    {
+      command: "/changeshareparticipants",
+      expected: [
+        "bot-generated thread",
+        "configured payout forum",
+        "copy the roster",
+        "next message in that thread",
+        "unique mentions",
+        "adds or removes thread members",
+        "Ready/distributed shares require manual",
+        "preserving totals and reimbursements",
+        "saved vending membership",
+        "edits add no spacer columns",
+        "adjust default cell formulas",
       ],
     },
     {
@@ -218,9 +257,14 @@ describe("help command", () => {
     const administration = embeds[0]?.data.fields.find(
       (field) => field.name === "Administration",
     );
+    const payout = embeds[0]?.data.fields.find(
+      (field) => field.name === "Payout",
+    );
     expect(administration?.value).toContain(
       "/guildsetting set tracked-category",
     );
+    expect(payout?.value).toContain("/changesharevendor");
+    expect(payout?.value).toContain("/changeshareparticipants");
     for (const field of embeds[0]?.data.fields ?? []) {
       expect(field.value.length).toBeLessThanOrEqual(1024);
     }

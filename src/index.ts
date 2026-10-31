@@ -20,6 +20,7 @@ import { sendHelp, handleHelpAutocomplete } from "./commands/help.command.js";
 import { sendMyCooldowns } from "./commands/mycooldowns.command.js";
 import { sendMySchedule } from "./commands/mysched.command.js";
 import { sendPayout } from "./commands/payout.command.js";
+import { handleShareParticipantsMessage } from "./commands/payout-thread.command.js";
 import {
   handleSetInstanceTypeAutocomplete,
   handleSignupModal,
@@ -189,6 +190,7 @@ client.on(Events.GuildCreate, async (guild) => {
 client.on(Events.MessageCreate, async (message) => {
   try {
     await handleSignupRosterMessage(message);
+    await handleShareParticipantsMessage(message);
   } catch (error) {
     logger.error("Signup roster message processing failed:", error);
   }

@@ -544,11 +544,33 @@ export const COMMAND_GUIDE: ReadonlyArray<{
     emoji: "⌛",
   },
   {
+    name: "/changesharevendor",
+    summary: "Set the vendor on a payout post, or enter n/a or none.",
+    description:
+      "In a bot-generated thread in the configured payout forum, set the vendor name, `n/a`, or `none`. Managed exports in a configured worksheet also update only the vendor cell; balances, formulas and spacer columns stay unchanged. Repeat the same value to retry a failed sync. Sheets failures preserve the Discord edit and ask you to update Google Sheets manually. Older exports are not linked by guessing.",
+    emoji: "🏷️",
+    parameters: [
+      {
+        name: "vendor",
+        description: "Vendor name, n/a, or none",
+        required: true,
+      },
+    ],
+  },
+  {
+    name: "/changeshareparticipants",
+    summary:
+      "Copy, edit, and paste a payout roster; count and access update automatically.",
+    description:
+      "In a bot-generated thread in the configured payout forum, copy the roster from the prompt, edit its party and Discord mention lines, then send it as your next message in that thread. The bot counts unique mentions and adds or removes thread members to match. Managed exports update pending purple shares and saved vending membership, preserving totals and reimbursements. Ready/distributed shares require manual sheet updates. Existing lifetime entries are kept; edits add no spacer columns. Review and adjust default cell formulas if needed. Sheets failures preserve the Discord edit and ask you to update Google Sheets manually.",
+    emoji: "👥",
+  },
+  {
     name: "/export",
     summary:
       "Export confirmed slots to the payout forum with vendor and optional split posts (organizer only).",
     description:
-      "Export confirmed main slots to the configured payout forum (organizer only; payout-enabled servers). Set the run date with /sdt first. No reserves/TBC. Once per run title and full date across combined and split exports; IDs check active/archived posts. DD/MM title with Unicode instance emojis; custom emoji markup stays in the roster only. Keeps party headings, consecutive numbering, member mentions, Participants, vendors, instance names, and localized/relative timestamps. Preserve the - DD/MM title suffix when renaming posts for recovery. Interrupted exports recheck the forum before retrying. Missing split parts can be retried without duplicating completed parts. Success and failure replies are public and retain links to completed posts. Use this command, not an Export button; /show refreshes old sheet controls.",
+      "Export confirmed slots to the payout forum (organizer only). Set /sdt first. No reserves/TBC. Once per title and full date across combined and split exports; IDs check active/archived posts. DD/MM with instance emojis; custom emoji markup stays in the roster. Keeps party headings, consecutive numbering, Participants and timestamps. Interrupted exports recheck the forum. Missing split parts can be retried; replies are public and retain links to completed posts. Worksheets use payoutWorksheets. Reuse an empty run column; insert before Unclaimed when full. Add one blank column per entry (two for a two-part split), copying only row 9 formatting. Purple shares start with zero totals/reimbursements. Default cell formulas must be reviewed and adjusted if needed. Sheets failures keep Discord successful: update Google Sheets manually. Retries reuse saved input without duplicate columns; older exports require manual linking.",
     emoji: "📤",
     parameters: [
       {
