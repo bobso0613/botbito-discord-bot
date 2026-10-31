@@ -981,32 +981,50 @@ const addedSummaryRows = (
   return result;
 };
 
+const columnHasMetadata = (
+  sheet: sheets_v4.Schema$Sheet,
+  column: number,
+): boolean =>
+  (sheet.developerMetadata ?? []).some((entry) => {
+    const range = entry.location?.dimensionRange;
+    return (
+      range?.dimension === "COLUMNS" &&
+      (range.startIndex ?? 0) <= column &&
+      (range.endIndex ?? column + 1) > column
+    );
+  });
+
+const cellHasContent = (cell?: sheets_v4.Schema$CellData): boolean =>
+  Boolean(
+    cell?.note ||
+    [cell?.userEnteredValue, cell?.effectiveValue].some(
+      (value) => value && Object.keys(value).length > 0,
+    ),
+  );
+
+const columnHasContent = (
+  sheet: sheets_v4.Schema$Sheet,
+  grid: Grid,
+  column: number,
+): boolean =>
+  columnHasMetadata(sheet, column) ||
+  grid.some((row) => cellHasContent(row[column]));
+
 const nextRunColumn = (
   sheet: sheets_v4.Schema$Sheet,
   grid: Grid,
   boundary: number,
 ): number => {
+  let lastRunColumn = 4;
   for (let column = 5; column < boundary; column += 1) {
-    const reserved = (sheet.developerMetadata ?? []).some((entry) => {
-      const range = entry.location?.dimensionRange;
-      return (
-        range?.dimension === "COLUMNS" &&
-        (range.startIndex ?? 0) <= column &&
-        (range.endIndex ?? boundary) > column
-      );
-    });
-    const occupied = grid.slice(4).some((row) => {
-      const cell = row[column];
-      return (
-        cell?.note ||
-        [cell?.userEnteredValue, cell?.effectiveValue].some(
-          (value) => value && Object.keys(value).length > 0,
-        )
-      );
-    });
-    if (!reserved && !occupied) return column;
+    if (
+      payoutCellText(grid[4]?.[column]).trim() ||
+      columnHasMetadata(sheet, column)
+    ) {
+      lastRunColumn = column;
+    }
   }
-  return boundary;
+  return lastRunColumn + 1;
 };
 
 const exportLayout = (
@@ -1051,12 +1069,24 @@ const exportLayout = (
     );
   }
   const column = existing ?? nextRunColumn(sheet, grid, boundary);
+  const insertColumn =
+    existing == null &&
+    (column >= boundary || columnHasContent(sheet, grid, column));
   if (column < 5 || (column >= boundary && existing != null)) {
     throw new Error(
       "The linked run column is outside the expected shares area.",
     );
   }
-  return { sheet, combined, sheetId, grid, boundary, existing, column };
+  return {
+    sheet,
+    combined,
+    sheetId,
+    grid,
+    boundary,
+    existing,
+    column,
+    insertColumn,
+  };
 };
 
 const validatePopulatedShareRows = (
@@ -1666,6 +1696,7 @@ export const planPayoutSheetExport = (
     boundary,
     existing,
     column,
+    insertColumn,
   } = exportLayout(spreadsheet, worksheet, snapshot);
   if (existing != null && snapshot.mode === "create") return [];
   if (snapshot.mode === "vendor" && existing != null) {
@@ -1706,7 +1737,7 @@ export const planPayoutSheetExport = (
         column,
         rowCount,
         snapshot,
-        column === boundary,
+        insertColumn,
       ),
     );
   }
@@ -1735,7 +1766,7 @@ export const planPayoutSheetExport = (
     );
   }
   if (existing == null) {
-    const insertions = [...(column === boundary ? [column] : []), column + 1];
+    const insertions = [...(insertColumn ? [column] : []), column + 1];
     const combinedFormulaRequests = combinedLookupAdjustments(
       combined,
       combinedGrid,
@@ -1750,7 +1781,7 @@ export const planPayoutSheetExport = (
         sheet,
         addedSummaryRows(grid, guildRows.rows, boundary),
         boundary,
-        column === boundary ? 2 : 1,
+        insertColumn ? 2 : 1,
       ),
       ...combinedFormulaRequests,
     );
