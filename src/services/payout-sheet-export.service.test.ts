@@ -18,7 +18,7 @@ jest.unstable_mockModule("../config/discord-settings.js", () => ({
 }));
 
 const readPayoutSpreadsheet =
-  jest.fn<() => Promise<sheets_v4.Schema$Spreadsheet>>();
+  jest.fn<(worksheet: string) => Promise<sheets_v4.Schema$Spreadsheet>>();
 const writePayoutSpreadsheet =
   jest.fn<(requests: sheets_v4.Schema$Request[]) => Promise<void>>();
 jest.unstable_mockModule("./google-sheets.service.js", () => ({
@@ -112,8 +112,20 @@ const grid = (linked = false): sheets_v4.Schema$Spreadsheet => {
     ],
   };
 };
+const originalStarter = "Roster\n*Your Time: <t:123:F>*\n-# Export ID: one";
+const editStarter = jest.fn<(options: unknown) => Promise<void>>();
+const fetchStarterMessage = jest.fn(async () => ({
+  content: originalStarter,
+  edit: editStarter,
+}));
 const guild = () => ({
   id: "499171225046876170",
+  channels: {
+    fetch: jest.fn(async (_id: string) => ({
+      isThread: () => true,
+      fetchStarterMessage,
+    })),
+  },
   members: {
     fetch: jest.fn(async (_options: unknown) => ({
       displayName: "Alice",
@@ -125,6 +137,11 @@ const guild = () => ({
 describe("payout Sheets synchronization", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    editStarter.mockReset().mockResolvedValue();
+    fetchStarterMessage.mockReset().mockImplementation(async () => ({
+      content: originalStarter,
+      edit: editStarter,
+    }));
     entry = {
       threadId: "thread",
       contents: ["old"],
@@ -139,6 +156,35 @@ describe("payout Sheets synchronization", () => {
     expect(
       await syncPayoutExport({ id: "unmapped-guild" } as never, "thread"),
     ).toBe("");
+    expect(readPayoutSpreadsheet).not.toHaveBeenCalled();
+  });
+
+  it("persists roster history edits for an unmapped guild without Sheets work", async () => {
+    expect(
+      await syncPayoutExport({ id: "unmapped-guild" } as never, "thread", {
+        contents: ["new roster"],
+        userIds: ["222"],
+      }),
+    ).toBe("");
+    expect(entry.contents).toEqual(["new roster"]);
+    expect(entry.sheetsSync?.userIds).toEqual(["222"]);
+    expect(entry.sheetsSync?.mode).toBe("roster");
+    expect(entry.sheetsSync?.status).toBe("pending");
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(readPayoutSpreadsheet).not.toHaveBeenCalled();
+    expect(writePayoutSpreadsheet).not.toHaveBeenCalled();
+  });
+
+  it("reports history persistence failures for unmapped roster edits", async () => {
+    save.mockRejectedValueOnce(new Error("disk failure"));
+    await expect(
+      syncPayoutExport({ id: "unmapped-guild" } as never, "thread", {
+        contents: ["new roster"],
+        userIds: ["222"],
+      }),
+    ).resolves.toContain(
+      "Payout export history could not be saved: disk failure",
+    );
     expect(readPayoutSpreadsheet).not.toHaveBeenCalled();
   });
 
@@ -159,13 +205,48 @@ describe("payout Sheets synchronization", () => {
       syncPayoutExport(guild() as never, "thread"),
     );
     expect(first).toBe(
-      "Google Sheets updated: FSN 2026 (ET 29/10).\nNote: Cell formulas are defaults. Please review and adjust them if needed.",
+      "Google Sheets updated: FSN 2026 (**ET 29/10**).\nNote: Cell formulas are defaults. Please review and adjust them if needed.",
     );
     expect(entry.sheetsSync?.status).toBe("synced");
     expect(await syncPayoutExport(guild() as never, "thread")).toContain(
       "already synchronized",
     );
     expect(writePayoutSpreadsheet).toHaveBeenCalledTimes(1);
+  });
+
+  it("edits the starter after Sheets succeeds and persists it without changing continuations", async () => {
+    entry.contents = [originalStarter, "continuation"];
+    await syncPayoutExport(guild() as never, "thread");
+    const content =
+      "Roster\n*Your Time: <t:123:F>*\nGoogle Sheets: FSN 2026 (**ET 29/10**)\n-# Export ID: one";
+    expect(editStarter).toHaveBeenCalledWith({
+      content,
+      allowedMentions: { parse: [] },
+    });
+    expect(entry.contents).toEqual([content, "continuation"]);
+    expect(writePayoutSpreadsheet.mock.invocationCallOrder[0]).toBeLessThan(
+      editStarter.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("retries a failed starter edit without rewriting already synchronized Sheets", async () => {
+    editStarter.mockRejectedValueOnce(new Error("Missing Permissions"));
+    const result = await syncPayoutExport(guild() as never, "thread");
+    expect(result).toContain("Google Sheets updated");
+    expect(result).toContain("first post could not be updated");
+    expect(result).not.toContain("Please update Google Sheets manually");
+    expect(entry.sheetsSync?.status).toBe("synced");
+    await syncPayoutExport(guild() as never, "thread");
+    expect(editStarter).toHaveBeenCalledTimes(2);
+    expect(writePayoutSpreadsheet).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not edit a starter that already contains the destination", async () => {
+    const content =
+      "Roster\n*Your Time: <t:123:F>*\nGoogle Sheets: FSN 2026 (**ET 29/10**)\n-# Export ID: one";
+    fetchStarterMessage.mockResolvedValueOnce({ content, edit: editStarter });
+    await syncPayoutExport(guild() as never, "thread");
+    expect(editStarter).not.toHaveBeenCalled();
   });
 
   it("reports write failures without rejecting or discarding retry input", async () => {
@@ -177,6 +258,7 @@ describe("payout Sheets synchronization", () => {
     );
     expect(entry.sheetsSync?.status).toBe("pending");
     expect(entry.sheetsSync?.title).toBe("ET 29/10");
+    expect(editStarter).not.toHaveBeenCalled();
   });
 
   it("looks up the marker after an uncertain write instead of inserting twice", async () => {
@@ -244,7 +326,9 @@ describe("payout Sheets synchronization", () => {
         (request) => request.updateCells?.start?.rowIndex === 6,
       )?.updateCells?.rows?.[0]?.values?.[0]?.userEnteredValue?.stringValue,
     ).toBe("none");
-    expect(entry.contents).toEqual(["new vendor"]);
+    expect(entry.contents?.[0]).toContain(
+      "Google Sheets: FSN 2026 (**ET 29/10**)",
+    );
   });
 
   it("does not sync an incompletely delivered Discord roster on a duplicate export", async () => {

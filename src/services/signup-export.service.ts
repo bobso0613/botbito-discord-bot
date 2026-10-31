@@ -123,16 +123,31 @@ const repairHistoryEntry = async (
   findExistingThread: FindExistingThread,
 ): Promise<void> => {
   const saved = history[key]!;
-  if (saved.contents) return;
+  if (saved.threadId && saved.contents) return;
   const recovered = await findExistingThread(key, saved.threadId ?? undefined);
   if (!recovered) {
     if (saved.threadId) history[key] = { threadId: null };
     return;
   }
+  const recoveredContents =
+    typeof recovered === "string" ? null : recovered.contents;
+  const deliveryIncomplete =
+    Boolean(saved.sheetsSync && saved.contents) &&
+    (!recoveredContents ||
+      saved.contents!.length !== recoveredContents.length ||
+      saved.contents!.some(
+        (content, index) => content !== recoveredContents[index],
+      ));
   history[key] =
     typeof recovered === "string"
       ? { ...saved, threadId: recovered }
       : { ...saved, ...recovered };
+  if (deliveryIncomplete && history[key]!.sheetsSync) {
+    history[key]!.sheetsSync = {
+      ...history[key]!.sheetsSync,
+      deliveryIncomplete: true,
+    };
+  }
   await writeHistory(path, history);
 };
 
@@ -177,6 +192,7 @@ export const exportSignupRun = async (
   contents?: readonly string[],
   overlappingRunKeys: readonly string[] = [],
   sheetsSync?: PayoutSheetSnapshot,
+  organizerId?: string,
 ): Promise<SignupExportResult> => {
   const path = resolve(
     process.cwd(),
@@ -215,7 +231,12 @@ export const exportSignupRun = async (
         return;
       }
     }
-    history[runKey] = { threadId: null };
+    history[runKey] = {
+      threadId: null,
+      ...(organizerId && { organizerId }),
+      ...(contents && { contents }),
+      ...(sheetsSync && { sheetsSync }),
+    };
     await writeHistory(path, history);
     let threadId: string;
     try {
@@ -227,6 +248,7 @@ export const exportSignupRun = async (
     }
     history[runKey] = {
       threadId,
+      ...(organizerId && { organizerId }),
       ...(contents && { contents }),
       ...(sheetsSync && { sheetsSync }),
     };
@@ -268,6 +290,36 @@ export const withSignupExportHistory = async <Result>(
       );
     }
     return action(matches[0]!, () => writeHistory(path, history));
+  });
+  exportQueues.set(
+    guildId,
+    operation.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return operation;
+};
+
+/** Returns the original organizer for a uniquely matched export thread. */
+export const getSignupExportOrganizerId = async (
+  guildId: string,
+  threadId: string,
+): Promise<string | null> => {
+  const previous = exportQueues.get(guildId) ?? Promise.resolve();
+  const operation = previous.then(async () => {
+    const history = await readHistory(
+      resolve(
+        process.cwd(),
+        "private",
+        "signup-exports",
+        `${guildId}.json`,
+      ),
+    );
+    const matches = Object.values(history).filter(
+      (entry) => entry.threadId === threadId,
+    );
+    return matches.length === 1 ? (matches[0]!.organizerId ?? null) : null;
   });
   exportQueues.set(
     guildId,

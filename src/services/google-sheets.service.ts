@@ -82,7 +82,7 @@ export const readCombinedPayoutSheetRows = async (): Promise<SheetRow[]> =>
  * Includes formulas, effective colors, notes, and developer metadata for preflight validation.
  * @param worksheet Guild worksheet selected by payoutWorksheets in Discord settings.
  * @returns Grid data and properties required to build one atomic batch.
- * @throws On configuration/authentication failure or an API request exceeding 15 seconds.
+ * @throws On configuration/authentication failure or an API request exceeding 60 seconds.
  */
 export const readPayoutSpreadsheet = async (
   worksheet: string,
@@ -94,9 +94,9 @@ export const readPayoutSpreadsheet = async (
       ranges: [`'${worksheet.replaceAll("'", "''")}'`, "'Combined'"],
       includeGridData: true,
       fields:
-        "sheets(properties,developerMetadata,data(startRow,startColumn,rowData(values(userEnteredValue,effectiveValue,userEnteredFormat,effectiveFormat,note))))",
+        "sheets(properties,developerMetadata,data(startRow,startColumn,rowData(values(userEnteredValue,effectiveValue,userEnteredFormat(backgroundColor,backgroundColorStyle),effectiveFormat(backgroundColor,backgroundColorStyle),note))))",
     },
-    { timeout: 15_000, retry: false },
+    { timeout: 60_000, retry: false },
   );
   return response.data;
 };

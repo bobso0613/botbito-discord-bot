@@ -139,25 +139,39 @@ describe("payout sheet export planning", () => {
   it("builds a purple formula using unique participant count", () => {
     const cell = buildPendingShareCell(91, 9);
     expect(cell.userEnteredValue?.formulaValue).toBe("=(CN$6-CN$8)/9");
-    expect(() => validatePendingShareCell(cell)).not.toThrow();
+    expect(() => validatePendingShareCell(cell, 91, 9)).not.toThrow();
+    expect(() => validatePendingShareCell(cell, 90, 9)).toThrow(
+      "manually changed",
+    );
+    expect(() => validatePendingShareCell(cell, 91, 8)).toThrow(
+      "manually changed",
+    );
     expect(() => buildPendingShareCell(5, 0)).toThrow("participant");
   });
 
   it("refuses distributed colors and manual value overrides", () => {
     const pending = buildPendingShareCell(5, 9);
     expect(() =>
-      validatePendingShareCell({
-        ...pending,
-        effectiveFormat: {
-          backgroundColor: { red: 0, green: 1, blue: 0 },
+      validatePendingShareCell(
+        {
+          ...pending,
+          effectiveFormat: {
+            backgroundColor: { red: 0, green: 1, blue: 0 },
+          },
         },
-      }),
+        5,
+        9,
+      ),
     ).toThrow("processed");
     expect(() =>
-      validatePendingShareCell({
-        ...pending,
-        userEnteredValue: { numberValue: 123 },
-      }),
+      validatePendingShareCell(
+        {
+          ...pending,
+          userEnteredValue: { numberValue: 123 },
+        },
+        5,
+        9,
+      ),
     ).toThrow("manually changed");
   });
 
@@ -455,12 +469,15 @@ describe("payout sheet export planning", () => {
     ["FSN 2026", 100],
     ["DevTestSheet", 19],
   ] as const)(
-    "allows prefilled Share Total formulas at dynamic positions in %s",
+    "allows safely rebased Share Total formulas at dynamic positions in %s",
     (worksheet, column) => {
       const spreadsheet = buildSpreadsheet();
       const sheet = spreadsheet.sheets![0]!;
       sheet.properties!.title = worksheet;
       sheet.properties!.gridProperties!.columnCount = column + 1;
+      spreadsheet.sheets![1]!.data![0]!.rowData![2]!.values![1] = formula(
+        `=IFERROR(VLOOKUP($A3,'${worksheet}'!$C$10:$Z$100,8,FALSE),0)`,
+      );
       const rows = sheet.data![0]!.rowData!;
       rows[8]!.values![column] = text("Share Total");
       rows[9]!.values![column] = formula("=SUM(F10:G10)");
@@ -481,6 +498,27 @@ describe("payout sheet export planning", () => {
           }),
         }),
       );
+    },
+  );
+
+  it.each(["=SUM(F10:G11)", "=SUM(F11:G11)+5", "=SUM(F12:G12)"])(
+    "rejects organizer-adjusted Share Total formula %s",
+    (adjustment) => {
+      const spreadsheet = buildSpreadsheet();
+      const rows = spreadsheet.sheets![0]!.data![0]!.rowData!;
+      rows[8]!.values![9] = text("Share Total");
+      rows[9]!.values![9] = formula("=SUM(F10:G10)");
+      rows[10]!.values![9] = formula(adjustment);
+      const snapshot = buildSnapshot();
+      snapshot.userIds.push("222");
+      snapshot.members!.push({
+        userId: "222",
+        displayName: "Bob",
+        discordTag: "bob",
+      });
+      expect(() =>
+        planPayoutSheetExport(spreadsheet, "FSN 2026", snapshot),
+      ).toThrow("next participant row contains existing data");
     },
   );
 
@@ -538,10 +576,26 @@ describe("payout sheet export planning", () => {
     },
   );
 
-  it("rejects unsafe Combined templates before issuing a write", () => {
+  it.each([
+    ["unsafe templates", "=123+456", "template formulas"],
+    [
+      "textual A3 references instead of row-relative lookups",
+      '=IF("A3"="A3",VLOOKUP("alice",\'FSN 2026\'!$C$10:$Z$100,8,FALSE),0)',
+      "template formulas",
+    ],
+    [
+      "lookup ranges that miss the appended roster row",
+      "=IFERROR(VLOOKUP($A3,'FSN 2026'!$C$10:$Z$10,8,FALSE),0)",
+      "cover the participant rows",
+    ],
+    [
+      "relative row bounds that shift when copied",
+      "=IFERROR(VLOOKUP($A3,'FSN 2026'!C10:Z100,8,FALSE),0)",
+      "template formulas",
+    ],
+  ])("rejects Combined %s", (_description, lookup, expectedError) => {
     const spreadsheet = buildSpreadsheet();
-    spreadsheet.sheets![1]!.data![0]!.rowData![2]!.values![1] =
-      formula("=123+456");
+    spreadsheet.sheets![1]!.data![0]!.rowData![2]!.values![1] = formula(lookup);
     const snapshot = buildSnapshot();
     snapshot.userIds = ["222"];
     snapshot.members = [
@@ -549,7 +603,133 @@ describe("payout sheet export planning", () => {
     ];
     expect(() =>
       planPayoutSheetExport(spreadsheet, "FSN 2026", snapshot),
-    ).toThrow("template formulas");
+    ).toThrow(expectedError);
+  });
+
+  it("updates Combined VLOOKUP indices and ranges when run and spacer columns are inserted", () => {
+    const requests = planPayoutSheetExport(
+      buildSpreadsheet(),
+      "FSN 2026",
+      buildSnapshot(),
+    );
+    expect(requests).toContainEqual(
+      expect.objectContaining({
+        updateCells: expect.objectContaining({
+          start: { sheetId: 2, rowIndex: 2, columnIndex: 1 },
+          rows: [
+            {
+              values: [
+                formula(
+                  "=IFERROR(VLOOKUP($A3,'FSN 2026'!$C$10:$AB$100,10,FALSE),0)",
+                ),
+              ],
+            },
+          ],
+        }),
+      }),
+    );
+  });
+
+  it.each([
+    "=IFERROR(VLOOKUP($A3,DevTestSheet!$C$10:$Z$100,8,FALSE),0)",
+    "=IFERROR(VLOOKUP($A3,DevTestSheet!$C$10:$Z$100,8,0),0)",
+    "= IFERROR( VLOOKUP( $A3, DevTestSheet!$C$10:$Z$100, 8, FALSE ) , 0 ) ",
+  ])("adjusts valid Combined lookup syntax: %s", (lookup) => {
+    const spreadsheet = buildSpreadsheet();
+    spreadsheet.sheets![0]!.properties!.title = "DevTestSheet";
+    spreadsheet.sheets![1]!.data![0]!.rowData![2]!.values![1] = formula(lookup);
+    const requests = planPayoutSheetExport(
+      spreadsheet,
+      "DevTestSheet",
+      buildSnapshot(),
+    );
+    expect(JSON.stringify(requests)).toContain(
+      "DevTestSheet!$C$10:$AB$100,10,FALSE)",
+    );
+  });
+
+  it("ignores Combined lookups referencing similarly named tabs", () => {
+    const spreadsheet = buildSpreadsheet();
+    spreadsheet.sheets![1]!.data![0]!.rowData![2]!.values![2] = formula(
+      "=INDEX('FSN 2026 Archive'!A:Z,1,1)",
+    );
+    expect(() =>
+      planPayoutSheetExport(spreadsheet, "FSN 2026", buildSnapshot()),
+    ).not.toThrow();
+  });
+
+  it("accepts live Combined XLOOKUPs against mirrored Discord columns without rewriting them", () => {
+    const spreadsheet = buildSpreadsheet();
+    const sheet = spreadsheet.sheets![0]!;
+    sheet.properties!.title = "Ghostz 2026";
+    sheet.properties!.gridProperties!.columnCount = 126;
+    sheet.data![0]!.rowData![8]!.values![125] = text("Discord");
+    const combinedRow = spreadsheet.sheets![1]!.data![0]!.rowData![2]!;
+    combinedRow.values = [
+      text("@alice"),
+      ...["DR", "DS", "DT", "DQ"].map((column) =>
+        formula(
+          `=XLOOKUP(A3,'Ghostz 2026'!DV:DV, 'Ghostz 2026'!${column}:${column}, 0)`,
+        ),
+      ),
+    ];
+    const snapshot = buildSnapshot();
+    snapshot.userIds.push("222");
+    snapshot.members!.push({
+      userId: "222",
+      displayName: "Bob",
+      discordTag: "bob",
+    });
+    const requests = planPayoutSheetExport(
+      spreadsheet,
+      "Ghostz 2026",
+      snapshot,
+    );
+    expect(requests.some((request) => request.insertDimension)).toBe(true);
+    expect(
+      requests.filter(
+        (request) =>
+          request.copyPaste?.source?.sheetId === 2 &&
+          request.copyPaste.pasteType === "PASTE_FORMULA",
+      ),
+    ).toHaveLength(4);
+    expect(
+      requests.some(
+        (request) =>
+          request.updateCells?.start?.sheetId === 2 &&
+          request.updateCells.start.columnIndex !== 0,
+      ),
+    ).toBe(false);
+  });
+
+  it.each([
+    "=XLOOKUP(A3,'FSN 2026'!A:A,'FSN 2026'!J:J,0)",
+    "=XLOOKUP(A3,'FSN 2026'!C:C,'Other'!J:J,0)",
+    "=XLOOKUP($A$3,'FSN 2026'!C:C,'FSN 2026'!J:J,0)",
+    "=XLOOKUP(A3,'FSN 2026'!$C$10:$C$10,'FSN 2026'!$J$10:$J$10,0)",
+  ])("rejects unsafe Combined XLOOKUPs: %s", (lookup) => {
+    const spreadsheet = buildSpreadsheet();
+    spreadsheet.sheets![1]!.data![0]!.rowData![2]!.values![1] = formula(lookup);
+    const snapshot = buildSnapshot();
+    snapshot.userIds.push("222");
+    snapshot.members!.push({
+      userId: "222",
+      displayName: "Bob",
+      discordTag: "bob",
+    });
+    expect(() =>
+      planPayoutSheetExport(spreadsheet, "FSN 2026", snapshot),
+    ).toThrow();
+  });
+
+  it("rejects unsupported Combined lookups before inserting columns", () => {
+    const spreadsheet = buildSpreadsheet();
+    spreadsheet.sheets![1]!.data![0]!.rowData![2]!.values![1] = formula(
+      "=INDEX('FSN 2026'!$C$10:$Z$100,MATCH($A3,'FSN 2026'!$C$10:$C$100,0),8)",
+    );
+    expect(() =>
+      planPayoutSheetExport(spreadsheet, "FSN 2026", buildSnapshot()),
+    ).toThrow("Combined lookup formula is unsupported");
   });
 
   it("rejects absolute tag references and incorrect roster headers", () => {
@@ -612,6 +792,13 @@ describe("payout sheet export planning", () => {
         [5, 7].includes(request.updateCells?.start?.rowIndex ?? -1),
       ),
     ).toBe(false);
+    spreadsheet.sheets![0]!.data![0]!.rowData![9]!.values![6]!.userEnteredValue =
+      { formulaValue: "=(G$6-G$8)/2" };
+    expect(() =>
+      planPayoutSheetExport(spreadsheet, "FSN 2026", snapshot),
+    ).toThrow("manually changed");
+    spreadsheet.sheets![0]!.data![0]!.rowData![9]!.values![6] =
+      buildPendingShareCell(6, 1);
     spreadsheet.sheets![0]!.data![0]!.rowData![9]!.values![6]!.effectiveFormat =
       { backgroundColor: { green: 1 } };
     expect(() =>

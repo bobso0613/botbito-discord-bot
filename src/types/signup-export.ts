@@ -3,6 +3,7 @@ import type { PayoutSheetSnapshot } from "./payout-sheet-export.js";
 
 export interface SignupExportHistoryEntry {
   threadId: string | null;
+  organizerId?: string;
   contents?: readonly string[];
   sheetsSync?: PayoutSheetSnapshot;
 }

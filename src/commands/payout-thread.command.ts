@@ -1,5 +1,6 @@
 import {
   ChannelType,
+  PermissionFlagsBits,
   SlashCommandBuilder,
   escapeMarkdown,
   type ChatInputCommandInteraction,
@@ -19,10 +20,23 @@ import {
   queuePayoutSheetOperation,
   syncPayoutExport,
 } from "../services/payout-sheet-export.service.js";
+import { getSignupExportOrganizerId } from "../services/signup-export.service.js";
 
 const exportIdentifierPattern =
   /^-# Export ID: botbito-export:v1:[a-f0-9]{64}$/;
-const pendingShareParticipantUsers = new ExpiringMap<string, string>();
+const continuationPrefix = "**Payout roster continued:**\n";
+const maximumRosterEditLength = 100_000;
+
+interface PendingRosterEdit {
+  userId: string;
+  chunks: string[];
+  length: number;
+}
+
+const pendingShareParticipantUsers = new ExpiringMap<
+  string,
+  PendingRosterEdit
+>();
 
 interface SharePost {
   thread: ThreadChannel;
@@ -87,17 +101,27 @@ const getSharePost = async (
 };
 
 const parseStarter = (content: string): ParsedStarter | null => {
-  const match = /^([\s\S]*?)\n\nParticipants: \*\*\d+\*\*([\s\S]*)$/.exec(
-    content,
-  );
-  return match ? { roster: match[1]!, metadataSuffix: match[2]! } : null;
+  const match =
+    /^(?:([\s\S]*?)\n\n)?Participants: \*\*\d+\*\*([\s\S]*)$/.exec(content);
+  return match
+    ? { roster: match[1] ?? "", metadataSuffix: match[2]! }
+    : null;
 };
+
+const normalizeUserMentions = (content: string): string =>
+  content.replace(/<@!(\d+)>/g, "<@$1>");
 
 const getMentionedUserIds = (content: string): Set<string> =>
   new Set(Array.from(content.matchAll(/<@!?(\d+)>/g), (match) => match[1]!));
 
 const isRosterContinuation = (content: string): boolean =>
+  content.startsWith(continuationPrefix) ||
   /^(?:\*\*Party \d+:\*\*|\d{2}: .+ - <@!?\d+>)/.test(content);
+
+const getRosterContinuationContents = (content: string): string =>
+  content.startsWith(continuationPrefix)
+    ? content.slice(continuationPrefix.length)
+    : content;
 
 const fetchRosterMessages = async (
   thread: ThreadChannel,
@@ -134,23 +158,34 @@ const splitRosterLines = (
   firstChunkLimit: number,
 ): string[] => {
   const [firstLine, ...remainingLines] = roster.split("\n");
-  if (!firstLine || firstLine.length > firstChunkLimit) {
-    throw new Error(
-      "The first roster line does not fit beside the payout post metadata.",
-    );
-  }
-  const chunks = [firstLine];
-  for (const line of remainingLines) {
-    const lastIndex = chunks.length - 1;
-    const last = chunks[lastIndex]!;
-    const limit =
-      chunks.length === 1 ? firstChunkLimit : MAX_DISCORD_MESSAGE_LENGTH;
-    const candidate = `${last}\n${line}`;
-    if (candidate.length <= limit) {
-      chunks[lastIndex] = candidate;
+  const firstLineFits = firstLine!.length <= firstChunkLimit;
+  const chunks = firstLineFits ? [firstLine!] : [""];
+  const lines = firstLineFits ? remainingLines : [firstLine!, ...remainingLines];
+  const continuationLimit =
+    MAX_DISCORD_MESSAGE_LENGTH - continuationPrefix.length;
+  for (const line of lines) {
+    if (!firstLineFits && chunks.length === 1 && chunks[0] === "") {
+      if (line.length > continuationLimit) {
+        throw new Error(
+          "A roster line exceeds Discord's message limit. Shorten the line and try again.",
+        );
+      }
+      chunks.push(line);
       continue;
     }
-    if (line.length > MAX_DISCORD_MESSAGE_LENGTH) {
+    const lastIndex = chunks.length - 1;
+    const last = chunks[lastIndex];
+    const limit =
+      firstLineFits && chunks.length === 1
+        ? firstChunkLimit
+        : continuationLimit;
+    const candidate = last ? `${last}\n${line}` : line;
+    if (candidate.length <= limit) {
+      if (lastIndex < 0) chunks.push(candidate);
+      else chunks[lastIndex] = candidate;
+      continue;
+    }
+    if (line.length > continuationLimit) {
       throw new Error(
         "A roster line exceeds Discord's message limit. Shorten the line and try again.",
       );
@@ -167,11 +202,16 @@ const splitRoster = (
 ): string[] => {
   const metadata = `\n\nParticipants: **${participantCount}**${metadataSuffix}`;
   const firstChunkLimit = MAX_DISCORD_MESSAGE_LENGTH - metadata.length;
-  if (firstChunkLimit < 1) {
-    throw new Error("The payout post metadata leaves no room for a roster.");
+  if (firstChunkLimit < 0) {
+    throw new Error("The payout post metadata exceeds Discord's message limit.");
   }
-  return splitRosterLines(roster, firstChunkLimit).map((chunk, index) =>
-    index === 0 ? `${chunk}${metadata}` : chunk,
+  const chunks = splitRosterLines(roster, firstChunkLimit);
+  return chunks.map((chunk, index) =>
+    index === 0 && !chunk
+      ? metadata.slice(2)
+      : index === 0
+        ? `${chunk}${metadata}`
+      : `${continuationPrefix}${chunk}`,
   );
 };
 
@@ -185,15 +225,20 @@ const editRoster = async (
   if (!starterParts) {
     throw new Error("The payout post is missing its Participants metadata.");
   }
-  const roster = rosterInput.replace(/\r\n?/g, "\n").trim();
+  const roster = normalizeUserMentions(
+    rosterInput.replace(/\r\n?/g, "\n").trim(),
+  );
   if (!roster) throw new Error("Paste the updated roster after the command.");
+  if (roster.length > maximumRosterEditLength) {
+    throw new Error("The updated roster is too large to process.");
+  }
 
   const rosterMessages = await fetchRosterMessages(thread, starter, botId);
   const oldRoster = [
     starterParts.roster,
     ...rosterMessages
       .filter((message) => message.id !== starter.id)
-      .map((message) => message.content),
+      .map((message) => getRosterContinuationContents(message.content)),
   ]
     .filter(Boolean)
     .join("\n");
@@ -208,28 +253,97 @@ const editRoster = async (
     starterParts.metadataSuffix,
   );
   const memberList = await thread.members.fetch();
-  await Promise.all([
-    ...Array.from(newUserIds)
-      .filter((userId) => !memberList.has(userId))
-      .map((userId) => thread.members.add(userId)),
-    ...Array.from(oldUserIds)
-      .filter((userId) => !newUserIds.has(userId) && memberList.has(userId))
-      .map((userId) => thread.members.remove(userId)),
-  ]);
-
   const allowedMentions = { parse: [] as [] };
-  await Promise.all(
-    contents.map((content, index) => {
+  const completedAdds: string[] = [];
+  const completedRemoves: string[] = [];
+  const editedMessages: Array<{ message: Message; content: string }> = [];
+  const sentMessages: Message[] = [];
+  const deletedMessages: string[] = [];
+  try {
+    for (const userId of newUserIds) {
+      if (memberList.has(userId)) continue;
+      await thread.members.add(userId);
+      completedAdds.push(userId);
+    }
+    for (const userId of oldUserIds) {
+      if (newUserIds.has(userId) || !memberList.has(userId)) continue;
+      await thread.members.remove(userId);
+      completedRemoves.push(userId);
+    }
+    for (const [index, content] of contents.entries()) {
       const existing = rosterMessages[index];
-      return existing
-        ? existing.edit({ content, allowedMentions })
-        : thread.send({ content, allowedMentions });
-    }),
-  );
-  await Promise.all(
-    rosterMessages.slice(contents.length).map((message) => message.delete()),
-  );
+      if (existing) {
+        editedMessages.push({ message: existing, content: existing.content });
+        await existing.edit({ content, allowedMentions });
+      } else {
+        sentMessages.push(await thread.send({ content, allowedMentions }));
+      }
+    }
+    for (const message of rosterMessages.slice(contents.length)) {
+      await message.delete();
+      deletedMessages.push(message.content);
+    }
+  } catch (error) {
+    const rollbackErrors: unknown[] = [];
+    for (const content of deletedMessages.reverse()) {
+      try {
+        await thread.send({ content, allowedMentions });
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+    for (const { message, content } of editedMessages.reverse()) {
+      try {
+        await message.edit({ content, allowedMentions });
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+    for (const message of sentMessages.reverse()) {
+      try {
+        await message.delete();
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+    for (const userId of completedRemoves.reverse()) {
+      try {
+        await thread.members.add(userId);
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+    for (const userId of completedAdds.reverse()) {
+      try {
+        await thread.members.remove(userId);
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+    if (rollbackErrors.length) {
+      throw new Error(
+        `Could not apply the roster edit (${errorMessage(error)}), and ${rollbackErrors.length} rollback operation(s) failed. Repair the thread roster and membership manually before syncing Sheets.`,
+      );
+    }
+    throw error;
+  }
   return { count: newUserIds.size, contents, userIds: [...newUserIds] };
+};
+
+const requireShareEditor = async (
+  guildId: string,
+  threadId: string,
+  userId: string,
+  isPayoutManager: boolean,
+): Promise<void> => {
+  if (
+    !isPayoutManager &&
+    (await getSignupExportOrganizerId(guildId, threadId)) !== userId
+  ) {
+    throw new Error(
+      "Only the original organizer or a member with Manage Server permission can edit this payout.",
+    );
+  }
 };
 
 /**
@@ -256,6 +370,13 @@ export const changeShareVendorCommand: Command = {
           interaction.guild,
           interaction.channel,
           interaction.client.user?.id ?? null,
+        );
+        await requireShareEditor(
+          interaction.guildId!,
+          interaction.channelId,
+          interaction.user.id,
+          interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ??
+            false,
         );
         const vendor = interaction.options.getString("vendor", true).trim();
         if (!vendor) throw new Error("Enter a vendor name, `n/a`, or `none`.");
@@ -316,6 +437,13 @@ export const changeShareParticipantsCommand: Command = {
         interaction.channel,
         interaction.client.user?.id ?? null,
       );
+      await requireShareEditor(
+        interaction.guildId!,
+        interaction.channelId,
+        interaction.user.id,
+        interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ??
+          false,
+      );
       const starterRoster = parseStarter(starter.content)!.roster;
       const rosterMessages = await fetchRosterMessages(thread, starter, botId);
       const roster = [
@@ -326,13 +454,17 @@ export const changeShareParticipantsCommand: Command = {
       ]
         .filter(Boolean)
         .join("\n");
-      pendingShareParticipantUsers.set(thread.id, interaction.user.id);
+      pendingShareParticipantUsers.set(thread.id, {
+        userId: interaction.user.id,
+        chunks: [],
+        length: 0,
+      });
       const template =
         roster.length <= 1_700
           ? `Current roster:\n\`\`\`text\n${roster}\n\`\`\``
           : "Copy the current roster from this thread before editing it.";
       await interaction.editReply(
-        `${template}\nPaste the updated party and participant lines as your next message in this thread. The participant total will be recalculated from unique user mentions.`,
+        `${template}\nPaste the updated party and participant lines in one or more messages in this thread. Send \`done\` when the complete roster has been submitted. The participant total will be recalculated from unique user mentions.`,
       );
     } catch (error) {
       await interaction.editReply(
@@ -350,28 +482,57 @@ export const handleShareParticipantsMessage = async (
   message: Message,
 ): Promise<void> => {
   const channel = message.channel;
-  if (!message.guildId || message.author.bot || !channel.isThread()) {
+  const guildId = message.guildId;
+  if (!guildId || message.author.bot || !channel.isThread()) {
     return;
   }
   if (
-    pendingShareParticipantUsers.get(message.channelId) !== message.author.id
+    pendingShareParticipantUsers.get(message.channelId)?.userId !==
+    message.author.id
   ) {
     return;
   }
   try {
     await queuePayoutSheetOperation(async () => {
-      if (
-        pendingShareParticipantUsers.get(message.channelId) !==
-        message.author.id
-      )
+      const pendingEdit = pendingShareParticipantUsers.get(message.channelId);
+      if (!pendingEdit || pendingEdit.userId !== message.author.id) return;
+      if (message.content.trim().toLowerCase() !== "done") {
+        const separator = pendingEdit.chunks.length ? 1 : 0;
+        const nextLength = pendingEdit.length + separator + message.content.length;
+        if (nextLength > maximumRosterEditLength) {
+          throw new Error("The updated roster is too large to process.");
+        }
+        pendingEdit.chunks.push(message.content);
+        pendingEdit.length = nextLength;
+        pendingShareParticipantUsers.set(message.channelId, pendingEdit);
+        await message.reply(
+          `Roster part received (${pendingEdit.length} characters). Send \`done\` when the complete roster has been submitted.`,
+        );
         return;
+      }
+      if (pendingEdit.chunks.length === 0) {
+        await message.reply("Paste at least one roster message before `done`.");
+        return;
+      }
       const { thread, starter, botId } = await getSharePost(
-        message.guildId,
+        guildId,
         message.guild,
         channel,
         message.client.user?.id ?? null,
       );
-      const result = await editRoster(thread, starter, botId, message.content);
+      await requireShareEditor(
+        guildId,
+        thread.id,
+        message.author.id,
+        message.member?.permissions.has(PermissionFlagsBits.ManageGuild) ??
+          false,
+      );
+      const result = await editRoster(
+        thread,
+        starter,
+        botId,
+        pendingEdit.chunks.join("\n"),
+      );
       pendingShareParticipantUsers.delete(thread.id);
       const notice = await syncPayoutExport(message.guild!, thread.id, {
         contents: result.contents,

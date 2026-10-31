@@ -105,13 +105,15 @@ const hasPendingColor = (cell: sheets_v4.Schema$CellData): boolean => {
  */
 export const validatePendingShareCell = (
   cell: sheets_v4.Schema$CellData,
+  column: number,
+  participants: number,
 ): void => {
   const value = cell.userEnteredValue;
   if (!value || Object.keys(value).length === 0) return;
   if (
     !hasPendingColor(cell) ||
-    !value.formulaValue ||
-    !/^=\(\$?[A-Z]+\$6-\$?[A-Z]+\$8\)\/\d+$/.test(value.formulaValue)
+    value.formulaValue !==
+      buildPendingShareCell(column, participants).userEnteredValue?.formulaValue
   ) {
     throw new Error(
       "This run has processed or manually changed shares; update Google Sheets manually.",
@@ -219,34 +221,283 @@ const validateFormulaTemplate = (
   formulas: PayoutSheetFormula[],
   tagColumn: number,
   template: number,
+  worksheet?: string,
+  requiredGuildRow?: number,
 ): void => {
   if (tagColumn !== 0) return;
-  const identityColumn = payoutColumnLabel(tagColumn);
-  if (
-    !formulas.length ||
-    formulas.some(
-      ({ formula }) =>
-        !new RegExp(
-          String.raw`(?<![A-Z0-9_])\$?${identityColumn}${template + 1}(?!\d)`,
-          "i",
-        ).test(formula) ||
-        new RegExp(
-          String.raw`\$?${identityColumn}\$${template + 1}(?!\d)`,
-          "i",
-        ).test(formula) ||
-        /"[^"\n]*@[^"\n]*"/.test(formula),
-    )
-  ) {
+  if (!worksheet || !formulas.length) {
     throw new Error(
       "Combined template formulas must look up this row's Discord tag; update Google Sheets manually.",
     );
   }
+  let foundWorksheetLookup = false;
+  for (const { formula } of formulas) {
+    const lookup = parseCombinedLookup(formula, template + 1);
+    const targetsWorksheet =
+      lookup?.worksheet.toLowerCase() === worksheet.toLowerCase();
+    if (
+      !lookup ||
+      (targetsWorksheet && lookup.startRow != null && lookup.startRow > 10) ||
+      (targetsWorksheet &&
+        requiredGuildRow != null &&
+        lookup.endRow != null &&
+        lookup.endRow < requiredGuildRow)
+    ) {
+      throw new Error(
+        "Combined template formulas must look up this row's Discord tag and cover the participant rows; update Google Sheets manually.",
+      );
+    }
+    if (targetsWorksheet) foundWorksheetLookup = true;
+  }
+  if (!foundWorksheetLookup) {
+    throw new Error(
+      "Combined template formulas must include a lookup for this worksheet; update Google Sheets manually.",
+    );
+  }
+};
+
+type CombinedRangeBoundary = {
+  column: number;
+  absoluteColumn: string;
+  absoluteRow: string;
+  row?: number;
+};
+
+type CombinedLookupRange = {
+  startColumn: number;
+  endColumn: number;
+  worksheet: string;
+  startRow?: number;
+  endRow?: number;
+  start: CombinedRangeBoundary;
+  end: CombinedRangeBoundary;
+  sheetReference: string;
+};
+
+type CombinedVlookup = CombinedLookupRange & {
+  kind: "vlookup";
+  index: number;
+  tagReference: string;
+  wrapped: boolean;
+};
+
+type CombinedXlookup = {
+  kind: "xlookup";
+  worksheet: string;
+  startRow?: number;
+  endRow?: number;
+  lookupRange: CombinedLookupRange;
+};
+
+type CombinedLookup = CombinedVlookup | CombinedXlookup;
+
+const columnIndex = (label: string): number =>
+  [...label.toUpperCase()].reduce(
+    (value, character) => value * 26 + character.codePointAt(0)! - 64,
+    0,
+  ) - 1;
+
+const parseCombinedRangeBoundary = (
+  reference: string,
+): CombinedRangeBoundary | undefined => {
+  const match = /^(\$?)([A-Z]+)(\$?)(\d+)?$/i.exec(reference.trim());
+  if (!match || (match[4] != null && match[3] !== "$")) return undefined;
+  return {
+    column: columnIndex(match[2]!),
+    absoluteColumn: match[1]!,
+    absoluteRow: match[3]!,
+    ...(match[4] ? { row: Number(match[4]) } : {}),
+  };
+};
+
+const parseCombinedLookupRange = (
+  reference: string,
+): CombinedLookupRange | undefined => {
+  const match = /^('(?:[^']|'')+'|[A-Z_][\w.]*)!\s*([^:]+):([^:]+)$/i.exec(
+    reference.trim(),
+  );
+  if (!match) return undefined;
+  const start = parseCombinedRangeBoundary(match[2]!);
+  const end = parseCombinedRangeBoundary(match[3]!);
+  if (!start || !end || end.column < start.column) return undefined;
+  return {
+    startColumn: start.column,
+    endColumn: end.column,
+    worksheet: unquoteWorksheet(match[1]!),
+    startRow: start.row,
+    endRow: end.row,
+    start,
+    end,
+    sheetReference: match[1]!,
+  };
+};
+
+const parseCombinedXlookup = (
+  expression: string,
+  formulaRow: number,
+): CombinedXlookup | undefined => {
+  const match = /^XLOOKUP\(\s*\$?A(\d+)\s*,([^,]+),([^,]+),\s*0\s*\)$/i.exec(
+    expression,
+  );
+  if (!match || Number(match[1]) !== formulaRow) return undefined;
+  const lookup = parseCombinedLookupRange(match[2]!);
+  const result = parseCombinedLookupRange(match[3]!);
+  if (
+    !lookup ||
+    lookup.worksheet.toLowerCase() !== result?.worksheet.toLowerCase() ||
+    lookup.startColumn !== lookup.endColumn ||
+    result.startColumn !== result.endColumn ||
+    lookup.startRow !== result.startRow ||
+    lookup.endRow !== result.endRow
+  ) {
+    return undefined;
+  }
+  return {
+    kind: "xlookup",
+    worksheet: lookup.worksheet,
+    startRow: lookup.startRow,
+    endRow: lookup.endRow,
+    lookupRange: lookup,
+  };
+};
+
+const parseCombinedLookup = (
+  formula: string,
+  formulaRow: number,
+  worksheet?: string,
+): CombinedLookup | undefined => {
+  if (!formula.startsWith("=")) return undefined;
+  const expression = formula.slice(1).trim();
+  const wrapper = /^IFERROR\(\s*([\s\S]*),\s*0\s*\)$/i.exec(expression);
+  const unwrapped = (wrapper?.[1] ?? expression).trim();
+  const xlookup = parseCombinedXlookup(unwrapped, formulaRow);
+  if (xlookup) {
+    return worksheet == null ||
+      xlookup.worksheet.toLowerCase() === worksheet.toLowerCase()
+      ? xlookup
+      : undefined;
+  }
+  const match =
+    /^VLOOKUP\(\s*(\$?A)(\d+)\s*,([\s\S]*),\s*(\d+)\s*,\s*(?:FALSE|0)\s*\)$/i.exec(
+      unwrapped,
+    );
+  if (!match || Number(match[2]) !== formulaRow) return undefined;
+  const range = parseCombinedLookupRange(match[3]!);
+  const index = Number(match[4]);
+  if (
+    range?.startColumn !== 2 ||
+    (worksheet != null &&
+      range.worksheet.toLowerCase() !== worksheet.toLowerCase()) ||
+    !Number.isInteger(index) ||
+    index < 1 ||
+    index > range.endColumn - range.startColumn + 1
+  ) {
+    return undefined;
+  }
+  return {
+    ...range,
+    kind: "vlookup",
+    index,
+    tagReference: `${match[1]}${match[2]}`,
+    wrapped: wrapper != null,
+  };
+};
+
+const unquoteWorksheet = (reference: string): string =>
+  reference.startsWith("'")
+    ? reference.slice(1, -1).replaceAll("''", "'")
+    : reference;
+
+const formulaReferencesWorksheet = (
+  formula: string,
+  worksheet: string,
+): boolean => {
+  const references = /('(?:[^']|'')+'|[A-Z_][\w.]*)!/gi;
+  let reference: RegExpExecArray | null;
+  while ((reference = references.exec(formula)) !== null) {
+    if (
+      unquoteWorksheet(reference[1]!).toLowerCase() === worksheet.toLowerCase()
+    )
+      return true;
+  }
+  return false;
+};
+
+const rewriteCombinedLookup = (
+  lookup: CombinedVlookup,
+  insertions: number[],
+): string => {
+  let startColumn = lookup.startColumn;
+  let endColumn = lookup.endColumn;
+  let targetColumn = startColumn + lookup.index - 1;
+  for (const insertion of insertions) {
+    if (startColumn >= insertion) startColumn += 1;
+    if (endColumn >= insertion) endColumn += 1;
+    if (targetColumn >= insertion) targetColumn += 1;
+  }
+  const index = targetColumn - startColumn + 1;
+  const start = `${lookup.start.absoluteColumn}${payoutColumnLabel(startColumn)}${lookup.start.absoluteRow}${lookup.startRow ?? ""}`;
+  const end = `${lookup.end.absoluteColumn}${payoutColumnLabel(endColumn)}${lookup.end.absoluteRow}${lookup.endRow ?? ""}`;
+  const formula = `VLOOKUP(${lookup.tagReference},${lookup.sheetReference}!${start}:${end},${index},FALSE)`;
+  return lookup.wrapped ? `=IFERROR(${formula},0)` : `=${formula}`;
+};
+
+const combinedLookupAdjustments = (
+  sheet: sheets_v4.Schema$Sheet,
+  grid: Grid,
+  worksheet: string,
+  requiredGuildRow: number,
+  insertions: number[],
+  guildGrid: Grid,
+): Request[] => {
+  const requests: Request[] = [];
+  grid.forEach((cells, row) => {
+    cells.forEach((cell, column) => {
+      const formula = cell.userEnteredValue?.formulaValue;
+      if (!formula || !formulaReferencesWorksheet(formula, worksheet)) return;
+      const lookup = parseCombinedLookup(formula, row + 1, worksheet);
+      if (
+        !lookup ||
+        (lookup.startRow != null && lookup.startRow > 10) ||
+        (lookup.endRow != null && lookup.endRow < requiredGuildRow)
+      ) {
+        throw new Error(
+          "A Combined lookup formula is unsupported or does not cover the participant rows; update Google Sheets manually.",
+        );
+      }
+      if (lookup.kind === "xlookup") {
+        const header = payoutCellText(
+          guildGrid[8]?.[lookup.lookupRange.startColumn],
+        )
+          .trim()
+          .toLowerCase();
+        if (header !== "discord") {
+          throw new Error(
+            `Combined ${payoutColumnLabel(column)}${row + 1} must look up a Discord column in the payout worksheet.`,
+          );
+        }
+        return;
+      }
+      if (insertions.length) {
+        requests.push(
+          cellUpdate(sheet.properties!.sheetId!, row, column, {
+            userEnteredValue: {
+              formulaValue: rewriteCombinedLookup(lookup, insertions),
+            },
+          }),
+        );
+      }
+    });
+  });
+  return requests;
 };
 
 const createAppendRowGuard = (
   headers: sheets_v4.Schema$CellData[],
   tagColumn: number,
   boundary: number,
+  template: sheets_v4.Schema$CellData[],
+  row: number,
 ) => {
   const shareTotalColumn =
     tagColumn === 2
@@ -268,10 +519,19 @@ const createAppendRowGuard = (
         )
       : [],
   );
-  return (cell: sheets_v4.Schema$CellData, column: number) =>
-    cell.userEnteredValue &&
-    !mirroredIdentityColumns.has(column) &&
-    !(column === shareTotalColumn && cell.userEnteredValue.formulaValue);
+  return (cell: sheets_v4.Schema$CellData, column: number): boolean => {
+    if (!cell.userEnteredValue || mirroredIdentityColumns.has(column)) {
+      return false;
+    }
+    if (column === shareTotalColumn && cell.userEnteredValue.formulaValue) {
+      const expected = rebaseSimpleSum(template[column] ?? {}, row)
+        .userEnteredValue?.formulaValue;
+      if (expected && cell.userEnteredValue.formulaValue === expected) {
+        return false;
+      }
+    }
+    return true;
+  };
 };
 
 const addMembers = (
@@ -280,7 +540,11 @@ const addMembers = (
   tagColumn: number,
   start: number,
   members: PayoutSheetMember[],
-  boundary = 0,
+  {
+    boundary = 0,
+    worksheet,
+    requiredGuildRow,
+  }: { boundary?: number; worksheet?: string; requiredGuildRow?: number } = {},
 ): { requests: Request[]; rows: Map<string, number> } => {
   const rows = identityRows(grid, tagColumn, start);
   const missing = members.filter(
@@ -297,15 +561,23 @@ const addMembers = (
       ? [{ column: index, formula: cell.userEnteredValue.formulaValue }]
       : [],
   );
-  validateFormulaTemplate(formulas, tagColumn, template);
-  const containsExistingData = createAppendRowGuard(
-    grid[start - 1] ?? [],
+  validateFormulaTemplate(
+    formulas,
     tagColumn,
-    boundary,
+    template,
+    worksheet,
+    requiredGuildRow,
   );
   const requests = ensureCapacity(sheet, template + missing.length);
   missing.forEach((member, offset) => {
     const row = template + offset + 1;
+    const containsExistingData = createAppendRowGuard(
+      grid[start - 1] ?? [],
+      tagColumn,
+      boundary,
+      grid[template] ?? [],
+      row,
+    );
     if (grid[row]?.some((cell, column) => containsExistingData(cell, column))) {
       throw new Error(
         "The next participant row contains existing data; update Google Sheets manually.",
@@ -547,8 +819,14 @@ const exportLayout = (
   return { sheet, combined, sheetId, grid, boundary, existing, column };
 };
 
-const validatePendingColumn = (grid: Grid, column: number): void => {
-  for (const row of grid.slice(9)) validatePendingShareCell(row[column] ?? {});
+const validatePendingColumn = (
+  grid: Grid,
+  column: number,
+  participants: number,
+): void => {
+  for (const row of grid.slice(9)) {
+    validatePendingShareCell(row[column] ?? {}, column, participants);
+  }
   for (const index of [5, 7]) {
     const header = grid[index]?.[column];
     if (header?.userEnteredValue && !hasPendingColor(header)) {
@@ -742,11 +1020,16 @@ export const planPayoutSheetExport = (
   if (snapshot.mode === "vendor" && existing != null) {
     return [cellUpdate(sheetId, 6, column, textCell(snapshot.vendor))];
   }
-  if (existing != null) validatePendingColumn(grid, column);
   const members = snapshotMembers(snapshot);
   const uniqueIds = new Set(snapshot.userIds);
-  const guildRows = addMembers(sheet, grid, 2, 9, members, boundary);
-  const combinedRows = addMembers(combined, sheetGrid(combined), 0, 2, members);
+  if (existing != null) validatePendingColumn(grid, column, uniqueIds.size);
+  const guildRows = addMembers(sheet, grid, 2, 9, members, { boundary });
+  const combinedGrid = sheetGrid(combined);
+  const requiredGuildRow = Math.max(...guildRows.rows.values()) + 1;
+  const combinedRows = addMembers(combined, combinedGrid, 0, 2, members, {
+    worksheet,
+    requiredGuildRow,
+  });
   const requests = [...guildRows.requests, ...combinedRows.requests];
   const rowCount = Math.max(
     grid.length,
@@ -788,6 +1071,15 @@ export const planPayoutSheetExport = (
     );
   }
   if (existing == null) {
+    const insertions = [...(column === boundary ? [column] : []), column + 1];
+    const combinedFormulaRequests = combinedLookupAdjustments(
+      combined,
+      combinedGrid,
+      worksheet,
+      requiredGuildRow,
+      insertions,
+      grid,
+    );
     requests.push(
       ...emptyColumnRequests(sheetId, column, rowCount),
       ...aggregateAdjustments(
@@ -795,6 +1087,18 @@ export const planPayoutSheetExport = (
         addedSummaryRows(grid, guildRows.rows, boundary),
         boundary,
         column === boundary ? 2 : 1,
+      ),
+      ...combinedFormulaRequests,
+    );
+  } else {
+    requests.push(
+      ...combinedLookupAdjustments(
+        combined,
+        combinedGrid,
+        worksheet,
+        requiredGuildRow,
+        [],
+        grid,
       ),
     );
   }

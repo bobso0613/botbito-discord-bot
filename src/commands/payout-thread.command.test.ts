@@ -2,9 +2,15 @@ import { beforeEach, describe, expect, it, jest } from "@jest/globals";
 import { ChannelType } from "discord.js";
 
 const syncPayoutExport = jest.fn(async (..._args: unknown[]) => "");
+const getSignupExportOrganizerId = jest.fn(
+  async (_guildId: string, _threadId: string) => null as string | null,
+);
 jest.unstable_mockModule("../services/payout-sheet-export.service.js", () => ({
   syncPayoutExport,
   queuePayoutSheetOperation: async (action: () => Promise<unknown>) => action(),
+}));
+jest.unstable_mockModule("../services/signup-export.service.js", () => ({
+  getSignupExportOrganizerId,
 }));
 
 jest.unstable_mockModule("../config/discord-settings.js", () => ({
@@ -46,6 +52,15 @@ const createHarness = (parentId = "forum") => {
     ["111", {}],
     ["333", {}],
   ]);
+  const followups: Array<{
+    id: string;
+    content: string;
+    author: { id: string };
+    createdTimestamp: number;
+    edit: jest.Mock<(options: { content: string }) => Promise<unknown>>;
+    delete: jest.Mock<() => Promise<unknown>>;
+  }> = [];
+  let nextMessageId = 0;
   const thread = {
     id: `thread-${parentId}`,
     guildId: "guild",
@@ -55,9 +70,9 @@ const createHarness = (parentId = "forum") => {
     fetchStarterMessage: jest.fn(async () => starter),
     messages: {
       fetch: jest.fn(async () => ({
-        size: 1,
-        values: () => [starter],
-        last: () => starter,
+        size: followups.length + 1,
+        values: () => [starter, ...followups],
+        last: () => followups.at(-1) ?? starter,
       })),
     },
     members: {
@@ -65,7 +80,21 @@ const createHarness = (parentId = "forum") => {
       add: jest.fn(async (_userId: string) => undefined),
       remove: jest.fn(async (_userId: string) => undefined),
     },
-    send: jest.fn(async () => undefined),
+    send: jest.fn(async ({ content }: { content: string }) => {
+      const sent = {
+        id: `followup-${++nextMessageId}`,
+        content,
+        author: { id: "bot" },
+        createdTimestamp: nextMessageId + 1,
+        edit: jest.fn(async ({ content: updated }: { content: string }) => {
+          sent.content = updated;
+          return sent;
+        }),
+        delete: jest.fn(async () => undefined),
+      };
+      followups.push(sent);
+      return sent;
+    }),
   };
   const editReply = jest.fn(async (_content: string) => undefined);
   const interaction = {
@@ -74,16 +103,18 @@ const createHarness = (parentId = "forum") => {
     channel: thread,
     client: { user: { id: "bot" } },
     user: { id: "editor" },
+    memberPermissions: { has: jest.fn(() => true) },
     options: { getString: jest.fn(() => "none") },
     deferReply: jest.fn(async () => undefined),
     editReply,
   };
-  return { editReply, interaction, memberList, starter, thread };
+  return { editReply, followups, interaction, memberList, starter, thread };
 };
 
 describe("payout thread commands", () => {
   beforeEach(() => {
     syncPayoutExport.mockReset().mockResolvedValue("");
+    getSignupExportOrganizerId.mockReset().mockResolvedValue(null);
   });
 
   it("keeps a successful vendor edit when Sheets reports a failure", async () => {
@@ -148,16 +179,25 @@ describe("payout thread commands", () => {
     );
 
     const reply = jest.fn(async (_content: string) => undefined);
-    await handleShareParticipantsMessage({
+    const makeMessage = (content: string) => ({
       guildId: "guild",
       guild: interaction.guild,
       channelId: thread.id,
       channel: thread,
       client: interaction.client,
       author: { id: "editor", bot: false },
-      content: "**Party 1:**\n01: Champ - <@222>\n02: Clown - <@333>",
+      member: { permissions: { has: jest.fn(() => true) } },
+      content,
       reply,
-    } as never);
+    });
+    await handleShareParticipantsMessage(
+      makeMessage("**Party 1:**\n01: Champ - <@222>") as never,
+    );
+    expect(reply).toHaveBeenCalledWith(
+      expect.stringContaining("Roster part received"),
+    );
+    await handleShareParticipantsMessage(makeMessage("02: Clown - <@!333>") as never);
+    await handleShareParticipantsMessage(makeMessage("done") as never);
 
     expect(thread.members.add).toHaveBeenCalledWith("222");
     expect(thread.members.remove).toHaveBeenCalledWith("111");
@@ -168,9 +208,155 @@ describe("payout thread commands", () => {
     );
     expect(starter.content).toContain("01: Champ - <@222>");
     expect(starter.content).not.toContain("<@111>");
+    expect(starter.content).toContain("02: Clown - <@333>");
+    expect(starter.content).not.toContain("<@!333>");
     expect(memberList.has("333")).toBe(true);
     expect(reply).toHaveBeenCalledWith(
       "Roster updated successfully. Participants: **2**.",
     );
+  });
+
+  it("allows only the organizer or a Manage Server member to edit a payout", async () => {
+    const { interaction, starter, editReply } = createHarness();
+    interaction.memberPermissions.has.mockReturnValue(false);
+    await changeShareVendorCommand.execute(interaction as never);
+    expect(starter.edit).not.toHaveBeenCalled();
+    expect(editReply).toHaveBeenCalledWith(
+      expect.stringContaining("Only the original organizer"),
+    );
+
+    getSignupExportOrganizerId.mockResolvedValueOnce("editor");
+    await changeShareVendorCommand.execute(interaction as never);
+    expect(starter.edit).toHaveBeenCalledTimes(1);
+  });
+
+  it("rechecks roster-editor authorization when the completed roster is applied", async () => {
+    const { interaction, starter, thread } = createHarness();
+    interaction.memberPermissions.has.mockReturnValue(false);
+    getSignupExportOrganizerId
+      .mockResolvedValueOnce("editor")
+      .mockResolvedValueOnce(null);
+    await changeShareParticipantsCommand.execute(interaction as never);
+
+    const reply = jest.fn(async (_content: string) => undefined);
+    const makeMessage = (content: string) => ({
+      guildId: "guild",
+      guild: interaction.guild,
+      channelId: thread.id,
+      channel: thread,
+      client: interaction.client,
+      author: { id: "editor", bot: false },
+      member: { permissions: { has: jest.fn(() => false) } },
+      content,
+      reply,
+    });
+    await handleShareParticipantsMessage(
+      makeMessage("**Party 1:**\n01: Champ - <@222>") as never,
+    );
+    await handleShareParticipantsMessage(makeMessage("done") as never);
+
+    expect(starter.edit).not.toHaveBeenCalled();
+    expect(thread.members.add).not.toHaveBeenCalled();
+    expect(reply).toHaveBeenLastCalledWith(
+      expect.stringContaining("Only the original organizer"),
+    );
+  });
+
+  it("rolls membership back when a later membership change fails", async () => {
+    const { interaction, memberList, thread } = createHarness();
+    await changeShareParticipantsCommand.execute(interaction as never);
+    thread.members.remove.mockRejectedValueOnce(new Error("remove failed"));
+
+    const reply = jest.fn(async (_content: string) => undefined);
+    const message = {
+      guildId: "guild",
+      guild: interaction.guild,
+      channelId: thread.id,
+      channel: thread,
+      client: interaction.client,
+      author: { id: "editor", bot: false },
+      member: { permissions: { has: jest.fn(() => true) } },
+      content: "**Party 1:**\n01: Champ - <@222>",
+      reply,
+    };
+    await handleShareParticipantsMessage(message as never);
+    await handleShareParticipantsMessage({ ...message, content: "done" } as never);
+
+    expect(thread.members.add).toHaveBeenCalledWith("222");
+    expect(thread.members.remove).toHaveBeenNthCalledWith(1, "111");
+    expect(thread.members.remove).toHaveBeenNthCalledWith(2, "222");
+    expect(memberList.has("111")).toBe(true);
+    expect(reply).toHaveBeenLastCalledWith(
+      "Could not update roster: remove failed",
+    );
+    expect(syncPayoutExport).not.toHaveBeenCalled();
+  });
+
+  it("restores the original roster and membership when a later message send fails", async () => {
+    const { interaction, starter, thread } = createHarness();
+    const originalContent = starter.content;
+    await changeShareParticipantsCommand.execute(interaction as never);
+    thread.send.mockRejectedValueOnce(new Error("send failed"));
+
+    const reply = jest.fn(async (_content: string) => undefined);
+    const makeMessage = (content: string) => ({
+      guildId: "guild",
+      guild: interaction.guild,
+      channelId: thread.id,
+      channel: thread,
+      client: interaction.client,
+      author: { id: "editor", bot: false },
+      member: { permissions: { has: jest.fn(() => true) } },
+      content,
+      reply,
+    });
+    await handleShareParticipantsMessage(
+      makeMessage(`- <@222>${"x".repeat(1_950)}\n- <@333>`) as never,
+    );
+    await handleShareParticipantsMessage(makeMessage("done") as never);
+
+    expect(starter.content).toBe(originalContent);
+    expect(thread.members.add).toHaveBeenCalledWith("222");
+    expect(thread.members.add).toHaveBeenCalledWith("111");
+    expect(thread.members.remove).toHaveBeenCalledWith("111");
+    expect(thread.members.remove).toHaveBeenCalledWith("222");
+    expect(reply).toHaveBeenLastCalledWith(
+      "Could not update roster: send failed",
+    );
+    expect(syncPayoutExport).not.toHaveBeenCalled();
+  });
+
+  it("supports metadata-only starters and marks arbitrary continuation chunks", async () => {
+    const { interaction, starter, followups, thread } = createHarness();
+    starter.content = `Participants: **2**\n\nVendor: **Vendor**\n${exportIdentifier}`;
+    await changeShareParticipantsCommand.execute(interaction as never);
+
+    const reply = jest.fn(async (_content: string) => undefined);
+    const makeMessage = (content: string) => ({
+      guildId: "guild",
+      guild: interaction.guild,
+      channelId: thread.id,
+      channel: thread,
+      client: interaction.client,
+      author: { id: "editor", bot: false },
+      member: { permissions: { has: jest.fn(() => true) } },
+      content,
+      reply,
+    });
+    await handleShareParticipantsMessage(
+      makeMessage(`- <@222>${"x".repeat(1_950)}\n- <@333>`) as never,
+    );
+    await handleShareParticipantsMessage(makeMessage("done") as never);
+
+    expect(starter.content).toMatch(/^Participants: \*\*2\*\*/);
+    expect(followups[0]?.content).toMatch(/^\*\*Payout roster continued:\*\*/);
+
+    await changeShareParticipantsCommand.execute(interaction as never);
+    await handleShareParticipantsMessage(
+      makeMessage("- <@333>") as never,
+    );
+    await handleShareParticipantsMessage(makeMessage("done") as never);
+    expect(followups[0]?.delete).toHaveBeenCalled();
+    expect(starter.content).toContain("- <@333>");
   });
 });

@@ -12,6 +12,7 @@ const {
   buildExportContents,
   buildExportTitle,
   buildPayoutSheetSuccessNotice,
+  buildPayoutSheetStarterContent,
   buildPayoutSheetFailureNotice,
 } = await import("./signup-export.template.js");
 const { ExportValidationError } = await import("../utils/signup-export.js");
@@ -21,7 +22,7 @@ const identifier = "-# Export ID: botbito-export:v1:test-id";
 describe("payout sheet notices", () => {
   it("includes the worksheet, run title, and default-formula reminder on success", () => {
     expect(buildPayoutSheetSuccessNotice("DevTestSheet", "EC 25/10")).toBe(
-      "Google Sheets updated: DevTestSheet (EC 25/10).\nNote: Cell formulas are defaults. Please review and adjust them if needed.",
+      "Google Sheets updated: DevTestSheet (**EC 25/10**).\nNote: Cell formulas are defaults. Please review and adjust them if needed.",
     );
   });
 
@@ -30,6 +31,36 @@ describe("payout sheet notices", () => {
       "Google Sheets was not confirmed updated: Sheets API error 403. Please update Google Sheets manually.",
     );
   });
+
+  it("adds the Sheets destination below Your Time and above Export ID exactly once", () => {
+    const original = `Roster\n*Your Time: <t:123:F>*\n${identifier}`;
+    const updated = buildPayoutSheetStarterContent(
+      original,
+      "FSN 2026",
+      "ET 29/10",
+    );
+    expect(updated).toBe(
+      `Roster\n*Your Time: <t:123:F>*\nGoogle Sheets: FSN 2026 (**ET 29/10**)\n${identifier}`,
+    );
+    expect(
+      buildPayoutSheetStarterContent(updated, "FSN 2026", "ET 29/10"),
+    ).toBe(updated);
+  });
+
+  it("escapes worksheet and column Markdown without breaking the bold title", () => {
+    expect(buildPayoutSheetSuccessNotice("Sheet*Name", "Run*Title")).toContain(
+      "Sheet\\*Name (**Run\\*Title**)",
+    );
+  });
+
+  it.each(["missing identifier", `${"x".repeat(1950)}\n${identifier}`])(
+    "rejects unsafe starter annotations: %s",
+    (content) => {
+      expect(() =>
+        buildPayoutSheetStarterContent(content, "FSN 2026", "ET 29/10"),
+      ).toThrow();
+    },
+  );
 });
 const buildSheet = (overrides: Partial<SignupSheet> = {}): SignupSheet => ({
   guildId: "guild",

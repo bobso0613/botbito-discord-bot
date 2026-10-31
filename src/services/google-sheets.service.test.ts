@@ -92,15 +92,17 @@ describe("google sheets service", () => {
     });
   });
 
-  it("reads grid formulas/colors with a timeout and sends write batches without automatic retries", async () => {
+  it("reads only required grid fields with a longer timeout and never retries write batches", async () => {
     await readPayoutSpreadsheet("FSN 2026");
     expect(getSpreadsheet).toHaveBeenCalledWith(
       expect.objectContaining({
         spreadsheetId: "spreadsheet-id",
         includeGridData: true,
         ranges: ["'FSN 2026'", "'Combined'"],
+        fields:
+          "sheets(properties,developerMetadata,data(startRow,startColumn,rowData(values(userEnteredValue,effectiveValue,userEnteredFormat(backgroundColor,backgroundColorStyle),effectiveFormat(backgroundColor,backgroundColorStyle),note))))",
       }),
-      { timeout: 15_000, retry: false },
+      { timeout: 60_000, retry: false },
     );
     const requests = [{ updateCells: { fields: "userEnteredValue" } }];
     await writePayoutSpreadsheet(requests);

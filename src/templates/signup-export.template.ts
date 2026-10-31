@@ -17,7 +17,31 @@ export const buildPayoutSheetSuccessNotice = (
   worksheet: string,
   title: string,
 ): string =>
-  `Google Sheets updated: ${worksheet} (${title}).\nNote: Cell formulas are defaults. Please review and adjust them if needed.`;
+  `Google Sheets updated: ${escapeMarkdown(worksheet)} (**${escapeMarkdown(title)}**).\nNote: Cell formulas are defaults. Please review and adjust them if needed.`;
+
+export const buildPayoutSheetStarterContent = (
+  content: string,
+  worksheet: string,
+  title: string,
+): string => {
+  const lines = content.trimEnd().split("\n");
+  const identifier = lines.pop();
+  if (!identifier?.startsWith("-# Export ID: ")) {
+    throw new Error("The payout starter post is missing its Export ID");
+  }
+  if (lines.at(-1)?.startsWith("Google Sheets: ")) lines.pop();
+  lines.push(
+    `Google Sheets: ${escapeMarkdown(worksheet)} (**${escapeMarkdown(title)}**)`,
+    identifier,
+  );
+  const updated = lines.join("\n");
+  if (updated.length > MAX_DISCORD_MESSAGE_LENGTH) {
+    throw new Error(
+      "The payout starter post has no room for the Sheets destination",
+    );
+  }
+  return updated;
+};
 
 /** Formats a nonfatal Sheets error without implying that the Discord operation failed. */
 export const buildPayoutSheetFailureNotice = (detail: string): string =>

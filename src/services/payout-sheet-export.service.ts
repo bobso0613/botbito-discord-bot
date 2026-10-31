@@ -11,6 +11,7 @@ import { planPayoutSheetExport } from "../utils/payout-sheet-export.js";
 import { DISCORD_SETTINGS } from "../config/discord-settings.js";
 import {
   buildPayoutSheetFailureNotice,
+  buildPayoutSheetStarterContent,
   buildPayoutSheetSuccessNotice,
 } from "../templates/signup-export.template.js";
 import {
@@ -83,6 +84,14 @@ const failureNotice = (error: unknown): string => {
   return buildPayoutSheetFailureNotice(detail);
 };
 
+const historyFailureNotice = (error: unknown): string => {
+  const detail =
+    error instanceof Error
+      ? error.message.slice(0, 250)
+      : "Unknown history error";
+  return `Payout export history could not be saved: ${detail}. The Currently Vending list may be stale; contact an administrator.`;
+};
+
 const applyExportEdit = (
   entry: SignupExportHistoryEntry,
   edit: PayoutSheetEdit,
@@ -106,6 +115,43 @@ const applyExportEdit = (
   snapshot.status = "pending";
 };
 
+const updatePayoutSheetStarter = async (
+  guild: Guild,
+  worksheet: string,
+  entry: SignupExportHistoryEntry,
+  save: () => Promise<void>,
+  notice: string,
+): Promise<string> => {
+  try {
+    if (!entry.threadId || !entry.sheetsSync)
+      throw new Error("The payout thread reference is missing");
+    const thread = await guild.channels.fetch(entry.threadId);
+    if (!thread?.isThread())
+      throw new Error("The payout thread is unavailable");
+    const starter = await thread.fetchStarterMessage();
+    if (!starter) throw new Error("The payout starter post is unavailable");
+    const content = buildPayoutSheetStarterContent(
+      starter.content,
+      worksheet,
+      entry.sheetsSync.title,
+    );
+    if (content !== starter.content) {
+      await starter.edit({ content, allowedMentions: { parse: [] } });
+    }
+    if (entry.contents?.[0] !== content) {
+      entry.contents = [content, ...(entry.contents?.slice(1) ?? [])];
+      await save();
+    }
+    return notice;
+  } catch (error) {
+    const detail =
+      error instanceof Error
+        ? error.message.slice(0, 250)
+        : "Unknown Discord error";
+    return `${notice}\nThe payout thread's first post could not be updated: ${detail}. Retry the same export to add the Sheets destination.`;
+  }
+};
+
 const synchronizeEntry = async (
   guild: Guild,
   worksheet: string,
@@ -125,7 +171,13 @@ const synchronizeEntry = async (
       "Discord roster delivery was incomplete; repair the roster before syncing",
     );
   if (snapshot.status === "synced")
-    return "Google Sheets is already synchronized.";
+    return updatePayoutSheetStarter(
+      guild,
+      worksheet,
+      entry,
+      save,
+      "Google Sheets is already synchronized.",
+    );
   if (!snapshot.members && snapshot.mode !== "vendor") {
     snapshot.members = await Promise.all(
       snapshot.userIds.map(async (userId) => {
@@ -148,7 +200,13 @@ const synchronizeEntry = async (
   snapshot.status = "synced";
   snapshot.createIfMissing = false;
   await save();
-  return buildPayoutSheetSuccessNotice(worksheet, snapshot.title);
+  return updatePayoutSheetStarter(
+    guild,
+    worksheet,
+    entry,
+    save,
+    buildPayoutSheetSuccessNotice(worksheet, snapshot.title),
+  );
 };
 
 /**
@@ -166,7 +224,23 @@ export const syncPayoutExport = async (
   edit?: PayoutSheetEdit,
 ): Promise<string> => {
   const worksheet = DISCORD_SETTINGS.payoutWorksheets?.[guild.id];
-  if (!worksheet) return "";
+  if (!worksheet) {
+    if (!edit) return "";
+    try {
+      await historyService.withSignupExportHistory(
+        guild.id,
+        threadId,
+        async (entry, save) => {
+          applyExportEdit(entry, edit);
+          await save();
+          return "";
+        },
+      );
+      return "";
+    } catch (error) {
+      return historyFailureNotice(error);
+    }
+  }
   try {
     return await historyService.withSignupExportHistory(
       guild.id,

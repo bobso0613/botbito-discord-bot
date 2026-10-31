@@ -25,6 +25,13 @@ jest.unstable_mockModule("node:fs/promises", () => ({
   writeFile,
   rename,
 }));
+const settings = {
+  payoutWorksheets: {} as Record<string, string>,
+  cooldownInstanceTypesByGuild: {},
+};
+jest.unstable_mockModule("../config/discord-settings.js", () => ({
+  DISCORD_SETTINGS: settings,
+}));
 const getSignupSheet = jest.fn<() => Promise<SignupSheet | null>>();
 const readPayoutSpreadsheet = jest.fn(
   async (_worksheet: string): Promise<never> => {
@@ -40,7 +47,11 @@ jest.unstable_mockModule("./google-sheets.service.js", () => ({
 jest.unstable_mockModule("./signup-sheet.service.js", () => ({
   getSignupSheet,
 }));
-const { exportSignupRun, getCurrentlyVendingThreads } =
+const {
+  exportSignupRun,
+  getCurrentlyVendingThreads,
+  getSignupExportOrganizerId,
+} =
   await import("./signup-export.service.js");
 const { sendExport } = await import("./signup-export-forum.service.js");
 const { buildExportIdentifier, getExportRunKey } =
@@ -49,6 +60,7 @@ const { buildExportIdentifier, getExportRunKey } =
 describe("signup export history", () => {
   beforeEach(() => {
     files.clear();
+    settings.payoutWorksheets = {};
     jest.clearAllMocks();
   });
 
@@ -79,6 +91,7 @@ describe("signup export history", () => {
       serverTimezone: "GMT",
       scheduleTimezone: null,
     };
+    settings.payoutWorksheets[sheet.guildId] = "Payout";
     getSignupSheet.mockResolvedValue(sheet);
     const forum = {
       guild: {
@@ -570,14 +583,143 @@ describe("signup export history", () => {
       "signup-exports",
       "guild.json",
     );
+    const sheetsSync = {
+      identifier: "identifier",
+      title: "ET 01/10",
+      vendor: "Vendor",
+      userIds: ["member"],
+      mode: "create" as const,
+      status: "pending" as const,
+      createIfMissing: true,
+    };
     const create = jest.fn(async () => {
       expect(JSON.parse(files.get(path)!)).toEqual({
-        "run-date": { threadId: null },
+        "run-date": {
+          threadId: null,
+          organizerId: "organizer",
+          contents: ["<@member>"],
+          sheetsSync,
+        },
       });
       return "thread";
     });
-    await exportSignupRun("guild", "run-date", create);
+    await exportSignupRun(
+      "guild",
+      "run-date",
+      create,
+      undefined,
+      ["<@member>"],
+      [],
+      sheetsSync,
+      "organizer",
+    );
     expect(create).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(files.get(path)!)).toEqual({
+      "run-date": {
+        threadId: "thread",
+        organizerId: "organizer",
+        contents: ["<@member>"],
+        sheetsSync,
+      },
+    });
+    await expect(getSignupExportOrganizerId("guild", "thread")).resolves.toBe(
+      "organizer",
+    );
+  });
+
+  it("preserves reservation ownership and Sheets retry input when recovering a created post", async () => {
+    const path = resolve(
+      process.cwd(),
+      "private",
+      "signup-exports",
+      "guild.json",
+    );
+    const sheetsSync = {
+      identifier: "identifier",
+      title: "ET 01/10",
+      vendor: "Vendor",
+      userIds: ["member"],
+      mode: "create" as const,
+      status: "pending" as const,
+      createIfMissing: true,
+    };
+    files.set(
+      path,
+      JSON.stringify({
+        run: { threadId: null, organizerId: "organizer", sheetsSync },
+      }),
+    );
+    const create = jest.fn(async () => "duplicate");
+    const findExisting = jest.fn(async () => ({
+      threadId: "recovered",
+      contents: ["<@member>"],
+    }));
+
+    await expect(
+      exportSignupRun(
+        "guild",
+        "run",
+        create,
+        findExisting,
+        ["<@member>"],
+        [],
+        sheetsSync,
+        "organizer",
+      ),
+    ).resolves.toEqual({ created: false, threadId: "recovered" });
+    expect(JSON.parse(files.get(path)!)).toEqual({
+      run: {
+        threadId: "recovered",
+        organizerId: "organizer",
+        contents: ["<@member>"],
+        sheetsSync,
+      },
+    });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("blocks Sheets synchronization when recovery finds an incomplete roster", async () => {
+    const path = resolve(
+      process.cwd(),
+      "private",
+      "signup-exports",
+      "guild.json",
+    );
+    const sheetsSync = {
+      identifier: "identifier",
+      title: "ET 01/10",
+      vendor: "Vendor",
+      userIds: ["member"],
+      mode: "create" as const,
+      status: "pending" as const,
+      createIfMissing: true,
+    };
+    files.set(
+      path,
+      JSON.stringify({
+        run: {
+          threadId: null,
+          organizerId: "organizer",
+          contents: ["<@member>", "<@followup>"],
+          sheetsSync,
+        },
+      }),
+    );
+
+    await exportSignupRun(
+      "guild",
+      "run",
+      jest.fn(async () => "duplicate"),
+      async () => ({ threadId: "recovered", contents: ["<@member>"] }),
+      ["<@member>", "<@followup>"],
+      [],
+      sheetsSync,
+      "organizer",
+    );
+    expect(JSON.parse(files.get(path)!).run.sheetsSync).toEqual({
+      ...sheetsSync,
+      deliveryIncomplete: true,
+    });
   });
 
   it("does not create a post when its reservation cannot be persisted", async () => {
