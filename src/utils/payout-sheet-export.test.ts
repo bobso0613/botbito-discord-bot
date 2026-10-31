@@ -368,10 +368,13 @@ describe("payout sheet export planning", () => {
     ).toThrow("processed");
   });
 
-  it("uses the next blank run column and adds one empty column directly to its right", () => {
+  it("adds the next run after the latest header and keeps a spacer after it", () => {
     const spreadsheet = buildSpreadsheet();
-    const rows = spreadsheet.sheets![0]!.data![0]!.rowData!;
-    rows[4]!.values![6] = {};
+    const sheet = spreadsheet.sheets![0]!;
+    const rows = sheet.data![0]!.rowData!;
+    rows[4]!.values![7] = {};
+    rows[4]!.values![8] = text("Unclaimed");
+    rows[9]!.values![9] = formula("=SUM(F10:H10)");
     const requests = planPayoutSheetExport(
       spreadsheet,
       "FSN 2026",
@@ -383,8 +386,8 @@ describe("payout sheet export planning", () => {
           range: {
             sheetId: 1,
             dimension: "COLUMNS",
-            startIndex: 7,
-            endIndex: 8,
+            startIndex: 8,
+            endIndex: 9,
           },
           inheritFromBefore: true,
         },
@@ -396,32 +399,32 @@ describe("payout sheet export planning", () => {
     ).toEqual({
       sheetId: 1,
       dimension: "COLUMNS",
-      startIndex: 6,
-      endIndex: 7,
+      startIndex: 7,
+      endIndex: 8,
     });
     expect(
       requests.find(
         (request) =>
           request.updateCells?.start?.rowIndex === 9 &&
-          request.updateCells.start.columnIndex === 6,
+          request.updateCells.start.columnIndex === 7,
       )?.updateCells?.rows?.[0]?.values?.[0]?.userEnteredValue?.formulaValue,
-    ).toBe("=(G$6-G$8)/1");
+    ).toBe("=(H$6-H$8)/1");
     expect(
-      requests.some((request) => request.updateCells?.start?.columnIndex === 7),
+      requests.some((request) => request.updateCells?.start?.columnIndex === 8),
     ).toBe(false);
     expect(requests).toContainEqual({
       copyPaste: {
         source: {
           sheetId: 1,
-          startColumnIndex: 6,
-          endColumnIndex: 7,
+          startColumnIndex: 7,
+          endColumnIndex: 8,
           startRowIndex: 8,
           endRowIndex: 9,
         },
         destination: {
           sheetId: 1,
-          startColumnIndex: 7,
-          endColumnIndex: 8,
+          startColumnIndex: 8,
+          endColumnIndex: 9,
           startRowIndex: 8,
           endRowIndex: 9,
         },
@@ -429,18 +432,18 @@ describe("payout sheet export planning", () => {
       },
     });
     const resetIndex = requests.findIndex(
-      (request) => request.repeatCell?.range?.startColumnIndex === 7,
+      (request) => request.repeatCell?.range?.startColumnIndex === 8,
     );
     const copyIndex = requests.findIndex(
-      (request) => request.copyPaste?.destination?.startColumnIndex === 7,
+      (request) => request.copyPaste?.destination?.startColumnIndex === 8,
     );
     expect(resetIndex).toBeGreaterThan(-1);
     expect(copyIndex).toBeGreaterThan(resetIndex);
     expect(requests[resetIndex]!.repeatCell).toEqual({
       range: {
         sheetId: 1,
-        startColumnIndex: 7,
-        endColumnIndex: 8,
+        startColumnIndex: 8,
+        endColumnIndex: 9,
         startRowIndex: 4,
         endRowIndex: 14,
       },
@@ -456,7 +459,9 @@ describe("payout sheet export planning", () => {
     const spreadsheet = buildSpreadsheet();
     const sheet = spreadsheet.sheets![0]!;
     const rows = sheet.data![0]!.rowData!;
-    rows[4]!.values![6] = {};
+    rows[4]!.values![7] = {};
+    rows[4]!.values![8] = text("Unclaimed");
+    rows[9]!.values![9] = formula("=SUM(F10:H10)");
     const snapshots = [
       buildSnapshot(),
       { ...buildSnapshot(), identifier: "export-two", title: "EC 29/10" },
@@ -493,11 +498,11 @@ describe("payout sheet export planning", () => {
       }
     }
     expect(spareColumns).toBe(2);
-    expect(rows[4]!.values![6]?.userEnteredValue?.stringValue).toBe(
+    expect(rows[4]!.values![7]?.userEnteredValue?.stringValue).toBe(
       snapshots[0]!.title,
     );
-    expect(rows[4]!.values![7]?.userEnteredValue?.stringValue).toBe("EC 29/10");
-    expect(rows[4]!.values![8]?.userEnteredValue).toBeUndefined();
+    expect(rows[4]!.values![8]?.userEnteredValue?.stringValue).toBe("EC 29/10");
+    expect(rows[4]!.values![9]?.userEnteredValue).toBeUndefined();
     expect(
       planPayoutSheetExport(spreadsheet, "FSN 2026", snapshots[0]!),
     ).toEqual([]);
@@ -506,15 +511,16 @@ describe("payout sheet export planning", () => {
     ).toEqual([]);
   });
 
-  it("places the new run beside existing runs even when Unclaimed is several columns away", () => {
+  it("adds a new run before the trailing spacer without moving existing runs", () => {
     const spreadsheet = buildSpreadsheet();
     const sheet = spreadsheet.sheets![0]!;
-    sheet.properties!.gridProperties!.columnCount = 24;
+    sheet.properties!.gridProperties!.columnCount = 32;
     const rows = sheet.data![0]!.rowData!;
-    for (let column = 5; column <= 14; column += 1) {
-      rows[4]!.values![column] = text(`Run ${column}`);
-    }
-    rows[4]!.values![18] = text("Unclaimed");
+    rows[4]!.values![7] = {};
+    rows[4]!.values![25] = text("EB 26/10");
+    rows[4]!.values![27] = text("EB 27/10");
+    rows[4]!.values![29] = text("Unclaimed");
+    rows[10]!.values![28] = formula("=0");
     const requests = planPayoutSheetExport(
       spreadsheet,
       "FSN 2026",
@@ -523,14 +529,14 @@ describe("payout sheet export planning", () => {
     expect(
       requests.find((request) => request.updateCells?.start?.rowIndex === 4)
         ?.updateCells?.start?.columnIndex,
-    ).toBe(15);
-    expect(requests.filter((request) => request.insertDimension)).toHaveLength(
-      1,
-    );
+    ).toBe(28);
     expect(
-      requests.find((request) => request.insertDimension)?.insertDimension
-        ?.range?.startIndex,
-    ).toBe(16);
+      requests
+        .filter((request) => request.insertDimension)
+        .map((request) => request.insertDimension?.range?.startIndex),
+    ).toEqual([28, 29]);
+    expect(rows[4]!.values![25]).toEqual(text("EB 26/10"));
+    expect(rows[4]!.values![27]).toEqual(text("EB 27/10"));
   });
 
   it.each(["formula", "note", "metadata"])(
@@ -865,6 +871,7 @@ describe("payout sheet export planning", () => {
     const rows = sheet.data![0]!.rowData!;
     rows[8]!.values![9] = text("Share Total");
     rows[9]!.values![9] = formula("=sum(D10:I10) - H10");
+    rows[4]!.values![25] = text("EB 26/10");
     for (const [offset, color] of ["#8e7cc3", "#ffd966", "#00ff00"].entries()) {
       rows[9]!.values![10 + offset] = formula(
         `=sumByColor(ADDRESS(ROW($E10),COLUMN($E10))&\":\"&ADDRESS(ROW($I10),COLUMN($I10)), \"${color}\")${offset === 2 ? " -H10" : ""}`,
