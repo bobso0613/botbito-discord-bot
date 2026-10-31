@@ -31,6 +31,8 @@ jest.unstable_mockModule("./google-sheets.service.js", () => ({
   writePayoutSpreadsheet,
 }));
 let entry: SignupExportHistoryEntry;
+let history: Record<string, SignupExportHistoryEntry>;
+let spreadsheetIdCounter = 0;
 let historyResolutionError: Error | undefined;
 const save = jest.fn<() => Promise<void>>();
 jest.unstable_mockModule("./signup-export.service.js", () => ({
@@ -40,10 +42,11 @@ jest.unstable_mockModule("./signup-export.service.js", () => ({
     action: (
       current: SignupExportHistoryEntry,
       persist: () => Promise<void>,
+      history: Record<string, SignupExportHistoryEntry>,
     ) => Promise<string>,
   ) => {
     if (historyResolutionError) throw historyResolutionError;
-    return action(entry, save);
+    return action(entry, save, history);
   },
 }));
 const { queuePayoutSheetOperation, syncPayoutExport } =
@@ -65,6 +68,11 @@ const grid = (linked = false): sheets_v4.Schema$Spreadsheet => {
     (): sheets_v4.Schema$RowData => ({ values: [] }),
   );
   rows[4]!.values![7] = { userEnteredValue: { stringValue: "Unclaimed" } };
+  if (linked) {
+    rows[6]!.values![6] = {
+      userEnteredValue: { stringValue: "Vendor" },
+    };
+  }
   rows[8]!.values = [
     { userEnteredValue: { stringValue: "Name" } },
     {},
@@ -168,7 +176,9 @@ const guild = (legacyTags = false) => ({
 describe("payout Sheets synchronization", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.GOOGLE_SHEETS_ID = `payout-test-${++spreadsheetIdCounter}`;
     historyResolutionError = undefined;
+    history = {};
     editStarter.mockReset().mockResolvedValue();
     fetchStarterMessage.mockReset().mockImplementation(async () => ({
       content: originalStarter,
@@ -246,6 +256,41 @@ describe("payout Sheets synchronization", () => {
     );
     expect(rows[10]!.values![6]!.userEnteredValue).toBeUndefined();
     expect(rows[11]!.values![6]!.userEnteredValue).toBeUndefined();
+  });
+
+  it("uses saved Discord identities from other exports before creating a run", async () => {
+    const spreadsheet = grid();
+    spreadsheet.sheets![0]!.data![0]!.rowData![9]!.values![2] = {
+      userEnteredValue: { stringValue: "@alice-old" },
+    };
+    spreadsheet.sheets![1]!.data![0]!.rowData![2]!.values![0] = {
+      userEnteredValue: { stringValue: "@alice-old" },
+    };
+    const oldIdentity = {
+      userId: "111",
+      displayName: "Alice",
+      discordTag: "alice-old",
+    };
+    const previousSnapshot = {
+      ...snapshot(),
+      status: "synced" as const,
+      members: [oldIdentity],
+      syncedMembers: [oldIdentity],
+    };
+    history = {
+      previous: { threadId: "previous", sheetsSync: previousSnapshot },
+    };
+    readPayoutSpreadsheet.mockResolvedValueOnce(spreadsheet);
+
+    await syncPayoutExport(guild() as never, "thread");
+
+    expect(readPayoutSpreadsheet).toHaveBeenCalledWith("FSN 2026", true);
+    expect(JSON.stringify(writePayoutSpreadsheet.mock.calls[0]?.[0])).toContain(
+      "@alice",
+    );
+    expect(JSON.stringify(writePayoutSpreadsheet.mock.calls[0]?.[0])).not.toContain(
+      "@alice-old",
+    );
   });
 
   it("resolves changed usernames and migrates retained user IDs instead of appending", async () => {
@@ -565,6 +610,25 @@ describe("payout Sheets synchronization", () => {
     expect(await syncPayoutExport(guild() as never, "thread")).toContain(
       "Google Sheets updated",
     );
+    expect(writePayoutSpreadsheet).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks another export until an uncertain batch is reconciled", async () => {
+    writePayoutSpreadsheet.mockRejectedValueOnce(
+      Object.assign(new Error("timeout"), { code: "ETIMEDOUT" }),
+    );
+    await syncPayoutExport(guild() as never, "thread");
+    const firstCallCount = readPayoutSpreadsheet.mock.calls.length;
+    entry = {
+      threadId: "other-thread",
+      contents: [],
+      sheetsSync: { ...snapshot(), identifier: "other" },
+    };
+
+    const notice = await syncPayoutExport(guild() as never, "other-thread");
+
+    expect(notice).toContain("retry that payout");
+    expect(readPayoutSpreadsheet).toHaveBeenCalledTimes(firstCallCount);
     expect(writePayoutSpreadsheet).toHaveBeenCalledTimes(1);
   });
 

@@ -20,6 +20,7 @@ import {
   getExportInstanceTypes,
   getExportRunKey,
 } from "../utils/signup-export.js";
+import { isExportRosterContinuation } from "../utils/signup-export-roster.js";
 import { getSignupSheet } from "./signup-sheet.service.js";
 import { exportSignupRun } from "./signup-export.service.js";
 import {
@@ -50,6 +51,7 @@ export const recoverExportThread = async (
       throw error;
     });
   if (!thread) return null;
+  const starter = await thread.fetchStarterMessage();
   const messages = [];
   let before: string | undefined;
   while (true) {
@@ -64,7 +66,12 @@ export const recoverExportThread = async (
   return {
     threadId,
     contents: messages
-      .filter((message) => message.author.id === channel.client.user.id)
+      .filter(
+        (message) =>
+          message.author.id === channel.client.user.id &&
+          (message.id === starter?.id ||
+            isExportRosterContinuation(message.content)),
+      )
       .sort((first, second) => first.createdTimestamp - second.createdTimestamp)
       .map((message) => message.content),
   };

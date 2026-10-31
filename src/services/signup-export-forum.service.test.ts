@@ -128,27 +128,43 @@ describe("signup export forum lookup", () => {
       Array.from({ length: 100 }, (_, index) => {
         const entry = message(
           String(200 - index),
-          index === 0 ? "<@followup>" : "reply",
-          index === 0 ? "bot" : "member",
+          index === 0
+            ? "**Payout roster continued:**\n02: DPS - <@followup>"
+            : index === 1
+              ? "Google Sheets updated"
+              : "reply",
+          index < 2 ? "bot" : "member",
         );
         return [entry.id, entry] as const;
       }),
+    );
+    const starter = message(
+      "1",
+      "**Party 1:**\n01: Champ - <@original>",
     );
     const fetch = jest
       .fn<(...args: unknown[]) => Promise<typeof page>>()
       .mockResolvedValueOnce(page)
       .mockResolvedValueOnce(
-        new Collection([["1", message("1", "<@original>")]]),
+        new Collection([["1", starter]]),
       );
     const forum = {
       client: { user: { id: "bot" } },
-      threads: { fetch: jest.fn(async () => ({ messages: { fetch } })) },
+      threads: {
+        fetch: jest.fn(async () => ({
+          fetchStarterMessage: jest.fn(async () => starter),
+          messages: { fetch },
+        })),
+      },
     };
     await expect(
       recoverExportThread(forum as never, "existing"),
     ).resolves.toEqual({
       threadId: "existing",
-      contents: ["<@original>", "<@followup>"],
+      contents: [
+        "**Party 1:**\n01: Champ - <@original>",
+        "**Payout roster continued:**\n02: DPS - <@followup>",
+      ],
     });
     expect(fetch).toHaveBeenNthCalledWith(2, { limit: 100, before: "101" });
   });

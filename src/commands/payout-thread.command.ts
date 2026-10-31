@@ -21,11 +21,16 @@ import {
   syncPayoutExport,
 } from "../services/payout-sheet-export.service.js";
 import { getSignupExportOrganizerId } from "../services/signup-export.service.js";
-import { isExportRosterContinuation } from "../utils/signup-export-roster.js";
+import {
+  getRosterParticipantUserIds,
+  isExportRosterContinuation,
+  joinExportRosterContents,
+  payoutRosterContinuationPrefix,
+  payoutRosterLineContinuationPrefix,
+} from "../utils/signup-export-roster.js";
 
 const exportIdentifierPattern =
   /^-# Export ID: botbito-export:v1:[a-f0-9]{64}$/;
-const continuationPrefix = "**Payout roster continued:**\n";
 const maximumRosterEditLength = 100_000;
 
 interface PendingRosterEdit {
@@ -111,14 +116,6 @@ const parseStarter = (content: string): ParsedStarter | null => {
 const normalizeUserMentions = (content: string): string =>
   content.replace(/<@!(\d+)>/g, "<@$1>");
 
-const getMentionedUserIds = (content: string): Set<string> =>
-  new Set(Array.from(content.matchAll(/<@!?(\d+)>/g), (match) => match[1]!));
-
-const getRosterContinuationContents = (content: string): string =>
-  content.startsWith(continuationPrefix)
-    ? content.slice(continuationPrefix.length)
-    : content;
-
 const fetchRosterMessages = async (
   thread: ThreadChannel,
   starter: Message,
@@ -149,28 +146,113 @@ const fetchRosterMessages = async (
   return rosterMessages;
 };
 
+interface RosterChunk {
+  content: string;
+  continuesPreviousLine: boolean;
+  hasLogicalLine: boolean;
+}
+
+const rosterChunkLimit = (
+  chunks: RosterChunk[],
+  firstChunkLimit: number,
+): number => {
+  if (chunks.length === 1) return firstChunkLimit;
+  const prefix = chunks.at(-1)!.continuesPreviousLine
+    ? payoutRosterLineContinuationPrefix
+    : payoutRosterContinuationPrefix;
+  return MAX_DISCORD_MESSAGE_LENGTH - prefix.length;
+};
+
+const rosterChunkSeparator = (chunk: RosterChunk): string =>
+  chunk.hasLogicalLine ? "\n" : "";
+
+const appendRosterLine = (chunk: RosterChunk, line: string): void => {
+  chunk.content += `${rosterChunkSeparator(chunk)}${line}`;
+  chunk.hasLogicalLine = true;
+};
+
+const splitLongRosterLine = (
+  chunks: RosterChunk[],
+  line: string,
+  firstChunkLimit: number,
+): void => {
+  let remaining = line;
+  let lineStarted = false;
+  while (remaining.length > 0) {
+    const chunk = chunks.at(-1)!;
+    const available =
+      rosterChunkLimit(chunks, firstChunkLimit) -
+      chunk.content.length -
+      rosterChunkSeparator(chunk).length;
+    if (available <= 0) {
+      chunks.push({
+        content: "",
+        continuesPreviousLine: lineStarted,
+        hasLogicalLine: false,
+      });
+      continue;
+    }
+    const piece = remaining.slice(0, available);
+    appendRosterLine(chunk, piece);
+    lineStarted = true;
+    remaining = remaining.slice(piece.length);
+    if (remaining.length > 0) {
+      chunks.push({
+        content: "",
+        continuesPreviousLine: true,
+        hasLogicalLine: false,
+      });
+    }
+  }
+};
+
 const splitRosterLines = (
   roster: string,
   firstChunkLimit: number,
-): string[] => {
-  const chunks = [""];
+): RosterChunk[] => {
+  const chunks: RosterChunk[] = [
+    { content: "", continuesPreviousLine: false, hasLogicalLine: false },
+  ];
   const continuationLimit =
-    MAX_DISCORD_MESSAGE_LENGTH - continuationPrefix.length;
+    MAX_DISCORD_MESSAGE_LENGTH - payoutRosterContinuationPrefix.length;
   for (const line of roster.split("\n")) {
-    const lastIndex = chunks.length - 1;
-    const last = chunks[lastIndex];
-    const limit = chunks.length === 1 ? firstChunkLimit : continuationLimit;
-    const candidate = last ? `${last}\n${line}` : line;
-    if (candidate.length <= limit) {
-      chunks[lastIndex] = candidate;
+    let chunk = chunks.at(-1)!;
+    const available =
+      rosterChunkLimit(chunks, firstChunkLimit) -
+      chunk.content.length -
+      rosterChunkSeparator(chunk).length;
+    if (line.length === 0) {
+      if (available < 0) {
+        chunk = {
+          content: "",
+          continuesPreviousLine: false,
+          hasLogicalLine: false,
+        };
+        chunks.push(chunk);
+      }
+      if (
+        chunk.content.length + rosterChunkSeparator(chunk).length >
+        rosterChunkLimit(chunks, firstChunkLimit)
+      ) {
+        throw new Error("The updated roster could not be split safely.");
+      }
+      appendRosterLine(chunk, line);
       continue;
     }
-    if (line.length > continuationLimit) {
-      throw new Error(
-        "A roster line exceeds Discord's message limit. Shorten the line and try again.",
-      );
+    if (line.length <= available) {
+      appendRosterLine(chunk, line);
+      continue;
     }
-    chunks.push(line);
+    if (line.length <= continuationLimit) {
+      chunks.push({
+        content: line,
+        continuesPreviousLine: false,
+        hasLogicalLine: true,
+      });
+      continue;
+    }
+
+    splitLongRosterLine(chunks, line, firstChunkLimit);
   }
   return chunks;
 };
@@ -189,8 +271,13 @@ const splitRoster = (
   }
   const chunks = splitRosterLines(roster, firstChunkLimit);
   return chunks.map((chunk, index) => {
-    if (index !== 0) return `${continuationPrefix}${chunk}`;
-    return chunk ? `${chunk}${metadata}` : metadata.slice(2);
+    if (index !== 0) {
+      const prefix = chunk.continuesPreviousLine
+        ? payoutRosterLineContinuationPrefix
+        : payoutRosterContinuationPrefix;
+      return `${prefix}${chunk.content}`;
+    }
+    return chunk.content ? `${chunk.content}${metadata}` : metadata.slice(2);
   });
 };
 
@@ -330,12 +417,12 @@ const editRoster = async (
     starterParts.roster,
     ...rosterMessages
       .filter((message) => message.id !== starter.id)
-      .map((message) => getRosterContinuationContents(message.content)),
-  ]
-    .filter(Boolean)
-    .join("\n");
-  const oldUserIds = getMentionedUserIds(oldRoster);
-  const newUserIds = getMentionedUserIds(roster);
+      .map((message) => message.content),
+  ];
+  const oldUserIds = new Set(
+    getRosterParticipantUserIds(joinExportRosterContents(oldRoster)),
+  );
+  const newUserIds = new Set(getRosterParticipantUserIds(roster));
   if (newUserIds.size === 0) {
     throw new Error("Include a Discord mention for each roster participant.");
   }
@@ -490,14 +577,12 @@ export const changeShareParticipantsCommand: Command = {
       );
       const starterRoster = parseStarter(starter.content)!.roster;
       const rosterMessages = await fetchRosterMessages(thread, starter, botId);
-      const roster = [
+      const roster = joinExportRosterContents([
         starterRoster,
         ...rosterMessages
           .filter((message) => message.id !== starter.id)
           .map((message) => message.content),
-      ]
-        .filter(Boolean)
-        .join("\n");
+      ]);
       pendingShareParticipantUsers.set(thread.id, {
         userId: interaction.user.id,
         chunks: [],
@@ -578,7 +663,9 @@ export const handleShareParticipantsMessage = async (
         botId,
         pendingEdit.chunks.join("\n"),
       );
-      pendingShareParticipantUsers.delete(thread.id);
+      if (pendingShareParticipantUsers.get(thread.id) === pendingEdit) {
+        pendingShareParticipantUsers.delete(thread.id);
+      }
       const notice = await syncPayoutExport(message.guild!, thread.id, {
         contents: result.contents,
         userIds: result.userIds,

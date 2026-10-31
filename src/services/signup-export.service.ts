@@ -143,7 +143,9 @@ const repairHistoryEntry = async (
       ? { ...saved, threadId: recovered }
       : { ...saved, ...recovered };
   if (recoveredContents) {
-    history[key]!.participantUserIds = getExportRosterUserIds(recoveredContents);
+    history[key]!.participantUserIds =
+      history[key]!.sheetsSync?.userIds ??
+      getExportRosterUserIds(recoveredContents);
   }
   if (deliveryIncomplete && history[key]!.sheetsSync) {
     history[key]!.sheetsSync = {
@@ -201,7 +203,8 @@ export const exportSignupRun = async (
     ...(organizerId && { organizerId }),
     ...(contents && {
       contents,
-      participantUserIds: getExportRosterUserIds(contents),
+      participantUserIds:
+        sheetsSync?.userIds ?? getExportRosterUserIds(contents),
     }),
     ...(sheetsSync && { sheetsSync }),
   };
@@ -277,6 +280,7 @@ export const withSignupExportHistory = async <Result>(
   action: (
     entry: SignupExportHistoryEntry,
     save: () => Promise<void>,
+    history: ExportHistory,
   ) => Promise<Result>,
 ): Promise<Result> => {
   const previous = exportQueues.get(guildId) ?? Promise.resolve();
@@ -296,7 +300,7 @@ export const withSignupExportHistory = async <Result>(
         "The export history is missing or ambiguous; update Google Sheets manually.",
       );
     }
-    return action(matches[0]!, () => writeHistory(path, history));
+    return action(matches[0]!, () => writeHistory(path, history), history);
   });
   exportQueues.set(
     guildId,

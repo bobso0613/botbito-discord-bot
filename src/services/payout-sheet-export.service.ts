@@ -1,13 +1,16 @@
 import type { Guild } from "discord.js";
 import type {
+  ExportHistory,
   SignupExportHistoryEntry,
   SignupExportPart,
 } from "../types/signup-export.js";
 import type {
+  PayoutSheetMember,
   PayoutSheetSnapshot,
   PayoutSheetEdit,
 } from "../types/payout-sheet-export.js";
 import {
+  isPayoutSnapshotApplied,
   planPayoutSheetExport,
   requiresPayoutIdentityMigration,
 } from "../utils/payout-sheet-export.js";
@@ -29,6 +32,45 @@ import {
 import * as historyService from "./signup-export.service.js";
 
 const spreadsheetQueues = new Map<string, Promise<void>>();
+const uncertainWrites = new Map<
+  string,
+  { threadId: string; snapshot: PayoutSheetSnapshot }
+>();
+
+const spreadsheetQueueKey = (): string =>
+  process.env.GOOGLE_SHEETS_ID ?? "unconfigured";
+
+const recordedMembers = (
+  snapshot?: PayoutSheetSnapshot,
+): PayoutSheetMember[] => [
+  ...(snapshot?.syncedMembers ?? []),
+  ...(snapshot?.members ?? []),
+  ...(snapshot?.previousPendingRoster?.members ?? []),
+  ...(snapshot?.pendingRosters ?? []).flatMap((roster) => roster.members ?? []),
+];
+
+const historicalMembers = (
+  history: ExportHistory,
+  currentEntry: SignupExportHistoryEntry,
+  userIds: readonly string[],
+): PayoutSheetMember[] => {
+  const wantedUserIds = new Set(userIds);
+  const identities = new Map<string, PayoutSheetMember>();
+  for (const savedEntry of Object.values(history)) {
+    if (savedEntry === currentEntry) continue;
+    for (const member of recordedMembers(savedEntry.sheetsSync)) {
+      if (!wantedUserIds.has(member.userId)) continue;
+      const tag = member.discordTag.trim().replace(/^@/, "").toLowerCase();
+      identities.set(`${member.userId}\u0000${tag}`, member);
+    }
+  }
+  return [...identities.values()];
+};
+
+const isDefinitiveSheetsRejection = (error: unknown): boolean => {
+  const code = (error as { code?: string | number })?.code;
+  return typeof code === "number" && code >= 400 && code < 500 && code !== 408;
+};
 
 /**
  * Captures the exact exported roster, vendor, instance initials, and timezone-aware run date.
@@ -65,7 +107,7 @@ export const buildPayoutSheetSnapshot = (
 export const queuePayoutSheetOperation = <Result>(
   action: () => Promise<Result>,
 ): Promise<Result> => {
-  const key = process.env.GOOGLE_SHEETS_ID ?? "unconfigured";
+  const key = spreadsheetQueueKey();
   const previous = spreadsheetQueues.get(key) ?? Promise.resolve();
   const operation = previous.then(action);
   spreadsheetQueues.set(
@@ -194,11 +236,91 @@ const updatePayoutSheetStarter = async (
   }
 };
 
+const retainHistoricalIdentities = async (
+  entry: SignupExportHistoryEntry,
+  snapshot: PayoutSheetSnapshot,
+  history: ExportHistory,
+  persist: () => Promise<void>,
+): Promise<void> => {
+  if (snapshot.members) {
+    const knownIdentities = new Set(
+      (snapshot.syncedMembers ?? []).map(
+        (member) =>
+          `${member.userId}\u0000${member.discordTag.trim().replace(/^@/, "").toLowerCase()}`,
+      ),
+    );
+    const additions = historicalMembers(history, entry, snapshot.userIds).filter(
+      (member) => {
+        const tag = member.discordTag.trim().replace(/^@/, "").toLowerCase();
+        const key = `${member.userId}\u0000${tag}`;
+        if (knownIdentities.has(key)) return false;
+        knownIdentities.add(key);
+        return true;
+      },
+    );
+    if (additions.length) {
+      snapshot.syncedMembers = [
+        ...(snapshot.syncedMembers ?? []),
+        ...additions,
+      ];
+      await persist();
+    }
+  }
+};
+
+const synchronizeSpreadsheet = async (
+  worksheet: string,
+  entry: SignupExportHistoryEntry,
+  snapshot: PayoutSheetSnapshot,
+): Promise<void> => {
+  const spreadsheetId = spreadsheetQueueKey();
+  const uncertainWrite = uncertainWrites.get(spreadsheetId);
+  if (uncertainWrite && uncertainWrite.threadId !== entry.threadId) {
+    throw new Error(
+      "A previous Google Sheets write has an uncertain outcome; retry that payout before syncing another export.",
+    );
+  }
+  const spreadsheet = requiresPayoutIdentityMigration(snapshot) ||
+    (uncertainWrite &&
+      requiresPayoutIdentityMigration(uncertainWrite.snapshot))
+    ? await readPayoutSpreadsheet(worksheet, true)
+    : await readPayoutSpreadsheet(worksheet);
+  if (uncertainWrite) {
+    if (
+      !isPayoutSnapshotApplied(
+        spreadsheet,
+        worksheet,
+        uncertainWrite.snapshot,
+      )
+    ) {
+      throw new Error(
+        "A previous Google Sheets write is not safely reconciled; no newer batch was sent.",
+      );
+    }
+    uncertainWrites.delete(spreadsheetId);
+  }
+  const requests = planPayoutSheetExport(spreadsheet, worksheet, snapshot);
+  if (requests.length) {
+    try {
+      await writePayoutSpreadsheet(requests);
+    } catch (error) {
+      if (!isDefinitiveSheetsRejection(error) && entry.threadId) {
+        uncertainWrites.set(spreadsheetId, {
+          threadId: entry.threadId,
+          snapshot: structuredClone(snapshot),
+        });
+      }
+      throw error;
+    }
+  }
+};
+
 const synchronizeEntry = async (
   guild: Guild,
   worksheet: string,
   entry: SignupExportHistoryEntry,
   save: () => Promise<void>,
+  history: ExportHistory,
   edit?: PayoutSheetEdit,
 ): Promise<string> => {
   const persist = () => persistHistory(save);
@@ -237,11 +359,8 @@ const synchronizeEntry = async (
     );
     await persist();
   }
-  const spreadsheet = requiresPayoutIdentityMigration(snapshot)
-    ? await readPayoutSpreadsheet(worksheet, true)
-    : await readPayoutSpreadsheet(worksheet);
-  const requests = planPayoutSheetExport(spreadsheet, worksheet, snapshot);
-  if (requests.length) await writePayoutSpreadsheet(requests);
+  await retainHistoricalIdentities(entry, snapshot, history, persist);
+  await synchronizeSpreadsheet(worksheet, entry, snapshot);
   snapshot.status = "synced";
   snapshot.createIfMissing = false;
   snapshot.syncedParticipantCount = snapshot.userIds.length;
@@ -295,9 +414,9 @@ export const syncPayoutExport = async (
     return await historyService.withSignupExportHistory(
       guild.id,
       threadId,
-      (entry, save) => {
+      (entry, save, history) => {
         historyResolved = true;
-        return synchronizeEntry(guild, worksheet, entry, save, edit);
+        return synchronizeEntry(guild, worksheet, entry, save, history, edit);
       },
     );
   } catch (error) {

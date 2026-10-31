@@ -274,6 +274,136 @@ describe("payout thread commands", () => {
     );
   });
 
+  it("counts participant positions without treating roster notes as members", async () => {
+    const { interaction, starter, thread } = createHarness();
+    starter.content = starter.content.replace(
+      "01: Champ - <@111>",
+      "01: Champ - <@111> (alt for <@222>)",
+    );
+    await changeShareParticipantsCommand.execute(interaction as never);
+
+    const reply = jest.fn(async (_content: string) => undefined);
+    const makeMessage = (content: string) => ({
+      guildId: "guild",
+      guild: interaction.guild,
+      channelId: thread.id,
+      channel: thread,
+      client: interaction.client,
+      author: { id: "editor", bot: false },
+      member: { permissions: { has: jest.fn(() => true) } },
+      content,
+      reply,
+    });
+    await handleShareParticipantsMessage(
+      makeMessage("01: Champ - <@111> (alt for <@222>)\n02: Clown - <@333>") as never,
+    );
+    await handleShareParticipantsMessage(makeMessage("done") as never);
+
+    expect(thread.members.add).not.toHaveBeenCalledWith("222");
+    expect(syncPayoutExport).toHaveBeenCalledWith(
+      expect.anything(),
+      thread.id,
+      expect.objectContaining({ userIds: ["111", "333"] }),
+    );
+  });
+
+  it("preserves a valid 2,000-character roster line across continuation messages", async () => {
+    const { interaction, followups, starter, thread } = createHarness();
+    const longLine = `01: Champ - <@222> (${"x".repeat(1_979)})`;
+    expect(longLine).toHaveLength(2_000);
+    await changeShareParticipantsCommand.execute(interaction as never);
+
+    const reply = jest.fn(async (_content: string) => undefined);
+    const makeMessage = (content: string) => ({
+      guildId: "guild",
+      guild: interaction.guild,
+      channelId: thread.id,
+      channel: thread,
+      client: interaction.client,
+      author: { id: "editor", bot: false },
+      member: { permissions: { has: jest.fn(() => true) } },
+      content,
+      reply,
+    });
+    await handleShareParticipantsMessage(makeMessage(longLine) as never);
+    await handleShareParticipantsMessage(makeMessage("done") as never);
+
+    let reconstructed = starter.content.split(
+      /\n\nParticipants: \*\*\d+\*\*/,
+    )[0]!;
+    for (const followup of followups) {
+      if (followup.content.startsWith("**Payout roster continued (same line):**\n")) {
+        reconstructed += followup.content.slice(
+          "**Payout roster continued (same line):**\n".length,
+        );
+      } else {
+        reconstructed += `\n${followup.content.replace(
+          "**Payout roster continued:**\n",
+          "",
+        )}`;
+      }
+    }
+    expect(reconstructed).toBe(longLine);
+    expect(followups[0]?.content).toContain(
+      "**Payout roster continued (same line):**\n",
+    );
+  });
+
+  it("keeps a newer participant edit session when an earlier completion finishes", async () => {
+    const { interaction, thread } = createHarness();
+    await changeShareParticipantsCommand.execute(interaction as never);
+
+    let releaseAdd!: () => void;
+    let signalAddStarted!: () => void;
+    const addGate = new Promise<void>((resolve) => {
+      releaseAdd = resolve;
+    });
+    const addStarted = new Promise<void>((resolve) => {
+      signalAddStarted = resolve;
+    });
+    thread.members.add.mockImplementationOnce(async () => {
+      signalAddStarted();
+      await addGate;
+    });
+    const reply = jest.fn(async (_content: string) => undefined);
+    const makeMessage = (authorId: string, content: string) => ({
+      guildId: "guild",
+      guild: interaction.guild,
+      channelId: thread.id,
+      channel: thread,
+      client: interaction.client,
+      author: { id: authorId, bot: false },
+      member: { permissions: { has: jest.fn(() => true) } },
+      content,
+      reply,
+    });
+    await handleShareParticipantsMessage(
+      makeMessage("editor", "01: Champ - <@222>") as never,
+    );
+    const earlierCompletion = handleShareParticipantsMessage(
+      makeMessage("editor", "done") as never,
+    );
+    await addStarted;
+    expect(thread.members.add).toHaveBeenCalledWith("222");
+
+    const newerInteraction = {
+      ...interaction,
+      user: { id: "other-editor" },
+    };
+    await changeShareParticipantsCommand.execute(newerInteraction as never);
+    releaseAdd();
+    await earlierCompletion;
+    await handleShareParticipantsMessage(
+      makeMessage("other-editor", "01: Champ - <@444>") as never,
+    );
+    await handleShareParticipantsMessage(
+      makeMessage("other-editor", "done") as never,
+    );
+
+    expect(thread.members.add).toHaveBeenCalledWith("444");
+    expect(syncPayoutExport).toHaveBeenCalledTimes(2);
+  });
+
   it("allows only the organizer or a Manage Server member to edit a payout", async () => {
     const { interaction, starter, editReply } = createHarness();
     interaction.memberPermissions.has.mockReturnValue(false);
@@ -384,7 +514,9 @@ describe("payout thread commands", () => {
       reply,
     });
     await handleShareParticipantsMessage(
-      makeMessage(`- <@222>${"x".repeat(1_950)}\n- <@333>`) as never,
+      makeMessage(
+        `01: Champ - <@222> (${"x".repeat(1_950)})\n02: Clown - <@333>`,
+      ) as never,
     );
     await handleShareParticipantsMessage(makeMessage("done") as never);
 
@@ -417,7 +549,9 @@ describe("payout thread commands", () => {
       reply,
     });
     await handleShareParticipantsMessage(
-      makeMessage(`- <@222>${"x".repeat(1_950)}\n- <@333>`) as never,
+      makeMessage(
+        `01: Champ - <@222> (${"x".repeat(1_950)})\n02: Clown - <@333>`,
+      ) as never,
     );
     await handleShareParticipantsMessage(makeMessage("done") as never);
 
@@ -425,7 +559,9 @@ describe("payout thread commands", () => {
     expect(followups[0]?.content).toMatch(/^\*\*Payout roster continued:\*\*/);
 
     await changeShareParticipantsCommand.execute(interaction as never);
-    await handleShareParticipantsMessage(makeMessage("- <@333>") as never);
+    await handleShareParticipantsMessage(
+      makeMessage("02: Clown - <@333>") as never,
+    );
     await handleShareParticipantsMessage(makeMessage("done") as never);
     expect(followups[0]?.delete).toHaveBeenCalled();
     expect(starter.content).toContain("- <@333>");

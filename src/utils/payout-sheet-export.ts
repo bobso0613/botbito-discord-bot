@@ -1391,6 +1391,40 @@ export const requiresPayoutIdentityMigration = (
   snapshot: PayoutSheetSnapshot,
 ): boolean => retainedTagChanges(snapshot, snapshot.members ?? []).size > 0;
 
+/**
+ * Confirms that an uncertain batch's pending roster is already visible in its managed column.
+ * @returns False when the batch is not visibly committed or the grid cannot prove its full roster.
+ */
+export const isPayoutSnapshotApplied = (
+  spreadsheet: sheets_v4.Schema$Spreadsheet,
+  worksheet: string,
+  snapshot: PayoutSheetSnapshot,
+): boolean => {
+  const layout = exportLayout(spreadsheet, worksheet, snapshot);
+  if (layout.existing == null) return false;
+  if (payoutCellText(layout.grid[6]?.[layout.column]) !== snapshot.vendor) {
+    return false;
+  }
+  const members = snapshotMembers(snapshot);
+  try {
+    validatePendingColumn(layout.grid, layout.column, [
+      { participantCount: new Set(snapshot.userIds).size, members },
+    ]);
+    return true;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      [
+        "This run has processed or manually changed metadata; update Google Sheets manually.",
+        "This run has processed or manually changed shares; update Google Sheets manually.",
+      ].includes(error.message)
+    ) {
+      return false;
+    }
+    throw error;
+  }
+};
+
 const validateMigrationLookupSources = (
   spreadsheet: sheets_v4.Schema$Spreadsheet,
   grids: Map<number, Grid>,

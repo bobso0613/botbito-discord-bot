@@ -114,6 +114,11 @@ const createInteraction = () => {
     threads: {
       create,
       fetch: jest.fn(async () => ({
+        fetchStarterMessage: jest.fn(async () => ({
+          id: "starter",
+          content: "Roster",
+          author: { id: "bot" },
+        })),
         messages: { fetch: jest.fn(async () => new Collection()) },
       })),
       fetchActive: jest.fn(async () => ({

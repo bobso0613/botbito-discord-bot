@@ -352,17 +352,38 @@ describe("signup export history", () => {
       JSON.stringify({
         eligible: {
           threadId: "vending",
-          contents: ["roster", "<@11111>"],
+          contents: ["01: Champ - <@11111>"],
         },
-        duplicate: { threadId: "vending", contents: ["<@11111>"] },
-        completed: { threadId: "completed", contents: ["<@11111>"] },
-        noShare: { threadId: "no-share", contents: ["<@11111>"] },
-        otherMember: { threadId: "other", contents: ["<@111111>"] },
+        duplicate: {
+          threadId: "vending",
+          contents: ["01: Champ - <@11111>"],
+        },
+        completed: {
+          threadId: "completed",
+          contents: ["01: Champ - <@11111>"],
+        },
+        noShare: {
+          threadId: "no-share",
+          contents: ["01: Champ - <@11111>"],
+        },
+        otherMember: {
+          threadId: "other",
+          contents: ["01: Champ - <@111111>"],
+        },
         legacy: { threadId: "legacy" },
-        reserved: { threadId: null, contents: ["<@11111>"] },
-        deleted: { threadId: "deleted", contents: ["<@11111>"] },
-        otherGuild: { threadId: "other-guild", contents: ["<@11111>"] },
-        notThread: { threadId: "channel", contents: ["<@11111>"] },
+        reserved: { threadId: null, contents: ["01: Champ - <@11111>"] },
+        deleted: {
+          threadId: "deleted",
+          contents: ["01: Champ - <@11111>"],
+        },
+        otherGuild: {
+          threadId: "other-guild",
+          contents: ["01: Champ - <@11111>"],
+        },
+        notThread: {
+          threadId: "channel",
+          contents: ["01: Champ - <@11111>"],
+        },
       }),
     );
     const names: Record<string, string> = {
@@ -416,7 +437,7 @@ describe("signup export history", () => {
         legacy: {
           threadId: "legacy",
           contents: [
-            "01: Champ - <@111>\n\nParticipants: **1**\nVendor: **<@123>**",
+            "01: Champ - <@111> (alt for <@333>)\n\nParticipants: **1**\nVendor: **<@123>**",
             "100: Clown - <@222>",
             "Vendor updated to **<@123>**.",
           ],
@@ -434,6 +455,8 @@ describe("signup export history", () => {
       .resolves.toEqual(["<#legacy>"]);
     await expect(getCurrentlyVendingThreads(client as never, "guild", "111"))
       .resolves.toEqual(["<#explicit>", "<#legacy>"]);
+    await expect(getCurrentlyVendingThreads(client as never, "guild", "333"))
+      .resolves.toEqual([]);
   });
 
   it("degrades malformed history to no vending links but keeps exports fail-closed", async () => {
@@ -635,7 +658,7 @@ describe("signup export history", () => {
           threadId: null,
           organizerId: "organizer",
           contents: ["<@member>"],
-          participantUserIds: [],
+          participantUserIds: ["member"],
           sheetsSync,
         },
       });
@@ -656,7 +679,7 @@ describe("signup export history", () => {
         threadId: "thread",
         organizerId: "organizer",
         contents: ["<@member>"],
-        participantUserIds: [],
+        participantUserIds: ["member"],
         sheetsSync,
       },
     });
@@ -704,7 +727,7 @@ describe("signup export history", () => {
         threadId: "recovered",
         organizerId: "organizer",
         contents: ["<@member>"],
-        participantUserIds: [],
+        participantUserIds: ["member"],
         sheetsSync,
       },
     });
