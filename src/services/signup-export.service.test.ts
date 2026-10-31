@@ -26,6 +26,17 @@ jest.unstable_mockModule("node:fs/promises", () => ({
   rename,
 }));
 const getSignupSheet = jest.fn<() => Promise<SignupSheet | null>>();
+const readPayoutSpreadsheet = jest.fn(
+  async (_worksheet: string): Promise<never> => {
+    throw Object.assign(new Error("Missing spreadsheet access"), {
+      code: 403,
+    });
+  },
+);
+jest.unstable_mockModule("./google-sheets.service.js", () => ({
+  readPayoutSpreadsheet,
+  writePayoutSpreadsheet: jest.fn(),
+}));
 jest.unstable_mockModule("./signup-sheet.service.js", () => ({
   getSignupSheet,
 }));
@@ -41,9 +52,87 @@ describe("signup export history", () => {
     jest.clearAllMocks();
   });
 
+  it("keeps the confirmed Discord export and reports a manual-update warning when Sheets fails", async () => {
+    const sheet: SignupSheet = {
+      guildId: "499171225046876170",
+      channelId: "signup",
+      title: "Endless Tower",
+      organizerId: "organizer",
+      organizerName: "Organizer",
+      organizerAvatarUrl: "",
+      partySizes: [1],
+      slots: [
+        {
+          number: 1,
+          role: "DPS",
+          signupUserId: "111",
+          signupDisplayName: "Alice",
+          charNote: null,
+        },
+      ],
+      reserves: [],
+      notes: null,
+      thumbnailUrl: null,
+      color: null,
+      instanceType: "Endless Tower",
+      timestamp: Date.UTC(2026, 9, 29) / 1000,
+      serverTimezone: "GMT",
+      scheduleTimezone: null,
+    };
+    getSignupSheet.mockResolvedValue(sheet);
+    const forum = {
+      guild: {
+        id: sheet.guildId,
+        members: {
+          fetch: jest.fn(async () => ({
+            displayName: "Alice",
+            user: { username: "alice" },
+          })),
+        },
+      },
+      client: { user: { id: "bot" } },
+      threads: {
+        create: jest.fn(async () => ({ id: "post", send: jest.fn() })),
+        fetchActive: jest.fn(async () => ({ threads: new Collection() })),
+        fetchArchived: jest.fn(async () => ({
+          threads: new Collection(),
+          hasMore: false,
+        })),
+      },
+    };
+    const part: SignupExportPart = {
+      runKey: getExportRunKey(sheet),
+      identifier: buildExportIdentifier(sheet),
+      sheet,
+      slots: sheet.slots,
+      contents: ["<@111>"],
+      vendor: "Vendor",
+    };
+    const result = await sendExport("organizer", forum as never, sheet, part);
+    expect(result).toContain("Exported the signup roster to <#post>");
+    expect(result).toContain("Sheets API error 403");
+    expect(result).toContain("Please update Google Sheets manually");
+    expect(forum.threads.create).toHaveBeenCalledTimes(1);
+    const saved = JSON.parse(
+      files.get(
+        resolve(
+          process.cwd(),
+          "private",
+          "signup-exports",
+          `${sheet.guildId}.json`,
+        ),
+      )!,
+    );
+    expect(saved[part.runKey].threadId).toBe("post");
+    expect(saved[part.runKey].sheetsSync.status).toBe("pending");
+  });
+
   it.each([
     { selection: "cleared", instanceType: null },
-    { selection: "replaced", instanceType: ["Different One", "Different Two"] },
+    {
+      selection: "replaced",
+      instanceType: ["Different One", "Different Two"],
+    },
   ])(
     "does not post again after ET/EC split selections are $selection",
     async ({ instanceType }) => {
@@ -74,12 +163,17 @@ describe("signup export history", () => {
         scheduleTimezone: null,
       };
       getSignupSheet.mockImplementation(async () => sheet);
-      const create = jest.fn(async () => ({ id: "post", send: jest.fn() }));
+      const create = jest.fn(async () => ({
+        id: "post",
+        send: jest.fn(),
+      }));
       const forum = {
         client: { user: { id: "bot" } },
         threads: {
           create,
-          fetchActive: jest.fn(async () => ({ threads: new Collection() })),
+          fetchActive: jest.fn(async () => ({
+            threads: new Collection(),
+          })),
           fetchArchived: jest.fn(async () => ({
             threads: new Collection(),
             hasMore: false,
@@ -241,7 +335,10 @@ describe("signup export history", () => {
     files.set(
       resolve(process.cwd(), "private", "signup-exports", "guild.json"),
       JSON.stringify({
-        eligible: { threadId: "vending", contents: ["roster", "<@11111>"] },
+        eligible: {
+          threadId: "vending",
+          contents: ["roster", "<@11111>"],
+        },
         duplicate: { threadId: "vending", contents: ["<@11111>"] },
         completed: { threadId: "completed", contents: ["<@11111>"] },
         noShare: { threadId: "no-share", contents: ["<@11111>"] },

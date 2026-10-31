@@ -8,11 +8,29 @@ const settings = {
 jest.unstable_mockModule("../config/discord-settings.js", () => ({
   DISCORD_SETTINGS: settings,
 }));
-const { buildExportContents, buildExportTitle } =
-  await import("./signup-export.template.js");
+const {
+  buildExportContents,
+  buildExportTitle,
+  buildPayoutSheetSuccessNotice,
+  buildPayoutSheetFailureNotice,
+} = await import("./signup-export.template.js");
 const { ExportValidationError } = await import("../utils/signup-export.js");
 
 const identifier = "-# Export ID: botbito-export:v1:test-id";
+
+describe("payout sheet notices", () => {
+  it("includes the worksheet, run title, and default-formula reminder on success", () => {
+    expect(buildPayoutSheetSuccessNotice("DevTestSheet", "EC 25/10")).toBe(
+      "Google Sheets updated: DevTestSheet (EC 25/10).\nNote: Cell formulas are defaults. Please review and adjust them if needed.",
+    );
+  });
+
+  it("reports sheet failures independently of Discord success", () => {
+    expect(buildPayoutSheetFailureNotice("Sheets API error 403")).toBe(
+      "Google Sheets was not confirmed updated: Sheets API error 403. Please update Google Sheets manually.",
+    );
+  });
+});
 const buildSheet = (overrides: Partial<SignupSheet> = {}): SignupSheet => ({
   guildId: "guild",
   channelId: "signup",
@@ -123,7 +141,9 @@ describe("signup export title template", () => {
     ];
     expect(
       buildExportTitle(
-        buildSheet({ instanceType: ["Alpha", "Beta", "Gamma", "Unknown"] }),
+        buildSheet({
+          instanceType: ["Alpha", "Beta", "Gamma", "Unknown"],
+        }),
       ),
     ).toBe("\u23f3Run Title - 21/10 [X Y]");
   });
@@ -142,7 +162,12 @@ describe("signup export title template", () => {
 
   it("throws an expected validation error when emojis leave no room for a title", () => {
     settings.cooldownInstanceTypesByGuild.guild = [
-      { name: "Large", emoji: "X".repeat(100), keywords: [], maxAttempts: 1 },
+      {
+        name: "Large",
+        emoji: "X".repeat(100),
+        keywords: [],
+        maxAttempts: 1,
+      },
     ];
     expect(() =>
       buildExportTitle(buildSheet({ instanceType: "Large" })),

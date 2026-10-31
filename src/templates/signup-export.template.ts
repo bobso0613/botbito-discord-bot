@@ -8,6 +8,22 @@ import {
 } from "../utils/signup-export.js";
 
 /**
+ * Formats a confirmed Sheets update and the required default-formula reminder.
+ * @param worksheet Configured destination tab in GOOGLE_SHEETS_ID.
+ * @param title Managed run title, including the localized calendar date.
+ * @returns Public notice appended after the successful Discord export or edit.
+ */
+export const buildPayoutSheetSuccessNotice = (
+  worksheet: string,
+  title: string,
+): string =>
+  `Google Sheets updated: ${worksheet} (${title}).\nNote: Cell formulas are defaults. Please review and adjust them if needed.`;
+
+/** Formats a nonfatal Sheets error without implying that the Discord operation failed. */
+export const buildPayoutSheetFailureNotice = (detail: string): string =>
+  `Google Sheets was not confirmed updated: ${detail}. Please update Google Sheets manually.`;
+
+/**
  * Builds a forum title of at most 100 characters, preserving DD/MM and Unicode instance emojis.
  * Custom Discord emoji markup is omitted because forum titles do not render it.
  * @param sheet Signup with a non-null timestamp and optional instance selections.

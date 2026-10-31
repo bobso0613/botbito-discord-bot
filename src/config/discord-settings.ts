@@ -23,7 +23,7 @@ const guildSettingsDirectory = resolve(
 const loadDiscordSettings = (): DiscordSettings => {
   const settings = JSON.parse(readFileSync(settingsPath, "utf8")) as Pick<
     Partial<DiscordSettings>,
-    "payoutGuildIds" | "payoutToPingId" | "payoutToPingTag"
+    "payoutGuildIds" | "payoutWorksheets" | "payoutToPingId" | "payoutToPingTag"
   >;
   const guildScheduleSettings = JSON.parse(
     readFileSync(guildScheduleSettingsPath, "utf8"),
@@ -89,6 +89,7 @@ const loadDiscordSettings = (): DiscordSettings => {
 
   return {
     payoutGuildIds: settings.payoutGuildIds,
+    payoutWorksheets: settings.payoutWorksheets ?? {},
     payoutSheetChannelIdByGuild: Object.fromEntries(
       Object.entries(guildSettings).flatMap(([guildId, guildSetting]) =>
         guildSetting.payoutSheetChannelId

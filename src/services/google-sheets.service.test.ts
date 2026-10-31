@@ -9,8 +9,20 @@ const getValues = jest.fn(
   }),
 );
 const GoogleAuth = jest.fn();
+const getSpreadsheet = jest.fn(
+  async (_options: unknown, _requestOptions: unknown) => ({
+    data: { sheets: [] },
+  }),
+);
+const batchUpdate = jest.fn(
+  async (_options: unknown, _requestOptions: unknown) => ({ data: {} }),
+);
 const createSheets = jest.fn(() => ({
-  spreadsheets: { values: { get: getValues } },
+  spreadsheets: {
+    values: { get: getValues },
+    get: getSpreadsheet,
+    batchUpdate,
+  },
 }));
 
 jest.unstable_mockModule("node:fs/promises", () => ({ readFile }));
@@ -21,8 +33,12 @@ jest.unstable_mockModule("googleapis", () => ({
   },
 }));
 
-const { readSheetValues, readCombinedPayoutSheetRows } =
-  await import("./google-sheets.service.js");
+const {
+  readSheetValues,
+  readCombinedPayoutSheetRows,
+  readPayoutSpreadsheet,
+  writePayoutSpreadsheet,
+} = await import("./google-sheets.service.js");
 
 describe("google sheets service", () => {
   const originalCredentialsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
@@ -74,6 +90,24 @@ describe("google sheets service", () => {
       spreadsheetId: "spreadsheet-id",
       range: "Combined!A:ZZ",
     });
+  });
+
+  it("reads grid formulas/colors with a timeout and sends write batches without automatic retries", async () => {
+    await readPayoutSpreadsheet("FSN 2026");
+    expect(getSpreadsheet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        spreadsheetId: "spreadsheet-id",
+        includeGridData: true,
+        ranges: ["'FSN 2026'", "'Combined'"],
+      }),
+      { timeout: 15_000, retry: false },
+    );
+    const requests = [{ updateCells: { fields: "userEnteredValue" } }];
+    await writePayoutSpreadsheet(requests);
+    expect(batchUpdate).toHaveBeenCalledWith(
+      { spreadsheetId: "spreadsheet-id", requestBody: { requests } },
+      { timeout: 15_000, retry: false },
+    );
   });
 
   it("rejects missing configuration and incomplete service account credentials", async () => {

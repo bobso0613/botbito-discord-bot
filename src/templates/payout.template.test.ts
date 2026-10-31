@@ -228,7 +228,7 @@ describe("payout embed builders", () => {
     );
   });
 
-  it("omits the entire Distribution field when the payout contact invokes a Share Ready summary", () => {
+  it("includes the Distribution field when the payout contact invokes a Share Ready summary", () => {
     const embed = buildPayoutSummaryEmbed(
       {
         amount: "shareReady",
@@ -242,9 +242,10 @@ describe("payout embed builders", () => {
       (field) => field.name === "Distribution",
     );
 
-    expect(distributionField).toBeUndefined();
-    expect(JSON.stringify(embed.toJSON())).not.toContain("Please ping");
-    expect(JSON.stringify(embed.toJSON())).not.toContain("Oh wait");
+    expect(distributionField?.value).toContain(
+      `<@${DISCORD_SETTINGS.payoutToPingId}>`,
+    );
+    expect(distributionField?.value).toContain("Please ping");
   });
 
   it("renders the empty summary state when no payouts are share ready", () => {

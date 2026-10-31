@@ -6,7 +6,9 @@ import type {
   ExportHistory,
   FindExistingThread,
   SignupExportResult,
+  SignupExportHistoryEntry,
 } from "../types/signup-export.js";
+import type { PayoutSheetSnapshot } from "../types/payout-sheet-export.js";
 export type {
   RecoveredSignupExport,
   SignupExportResult,
@@ -128,7 +130,9 @@ const repairHistoryEntry = async (
     return;
   }
   history[key] =
-    typeof recovered === "string" ? { threadId: recovered } : recovered;
+    typeof recovered === "string"
+      ? { ...saved, threadId: recovered }
+      : { ...saved, ...recovered };
   await writeHistory(path, history);
 };
 
@@ -161,6 +165,7 @@ const findSavedExport = async (
  * @param findExistingThread Looks up coverage or recovers contents for a known thread ID. Without it, pending history stays blocked.
  * @param contents Exported roster messages saved with a newly created thread for participant lookup.
  * @param overlappingRunKeys Combined or per-instance keys whose coverage would duplicate this post.
+ * @param sheetsSync Optional exact snapshot for configured worksheet synchronization and retries.
  * @returns Whether a new post was created and its ID, or null while an earlier export is pending.
  * @throws For unreadable history, unsuccessful forum checks, creation failures, or persistence failures.
  */
@@ -171,6 +176,7 @@ export const exportSignupRun = async (
   findExistingThread?: FindExistingThread,
   contents?: readonly string[],
   overlappingRunKeys: readonly string[] = [],
+  sheetsSync?: PayoutSheetSnapshot,
 ): Promise<SignupExportResult> => {
   const path = resolve(
     process.cwd(),
@@ -219,7 +225,11 @@ export const exportSignupRun = async (
       await writeHistory(path, history);
       throw error;
     }
-    history[runKey] = { threadId, ...(contents && { contents }) };
+    history[runKey] = {
+      threadId,
+      ...(contents && { contents }),
+      ...(sheetsSync && { sheetsSync }),
+    };
     await writeHistory(path, history);
     result = { created: true, threadId };
   });
@@ -229,4 +239,42 @@ export const exportSignupRun = async (
   );
   await operation;
   return result;
+};
+
+/** Serializes thread history edits with exports, preserving sync input across failed attempts. */
+export const withSignupExportHistory = async <Result>(
+  guildId: string,
+  threadId: string,
+  action: (
+    entry: SignupExportHistoryEntry,
+    save: () => Promise<void>,
+  ) => Promise<Result>,
+): Promise<Result> => {
+  const previous = exportQueues.get(guildId) ?? Promise.resolve();
+  const operation = previous.then(async () => {
+    const path = resolve(
+      process.cwd(),
+      "private",
+      "signup-exports",
+      `${guildId}.json`,
+    );
+    const history = await readHistory(path);
+    const matches = Object.values(history).filter(
+      (entry) => entry.threadId === threadId,
+    );
+    if (matches.length !== 1) {
+      throw new Error(
+        "The export history is missing or ambiguous; update Google Sheets manually.",
+      );
+    }
+    return action(matches[0]!, () => writeHistory(path, history));
+  });
+  exportQueues.set(
+    guildId,
+    operation.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return operation;
 };

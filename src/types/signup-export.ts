@@ -1,10 +1,14 @@
 import type { SignupSheet, SignupSlot } from "./signup-sheet.js";
+import type { PayoutSheetSnapshot } from "./payout-sheet-export.js";
+
+export interface SignupExportHistoryEntry {
+  threadId: string | null;
+  contents?: readonly string[];
+  sheetsSync?: PayoutSheetSnapshot;
+}
 
 /** Persisted guild export coverage; a null ID reserves a potentially interrupted post. */
-export type ExportHistory = Record<
-  string,
-  { threadId: string | null; contents?: readonly string[] }
->;
+export type ExportHistory = Record<string, SignupExportHistoryEntry>;
 
 /** Result of creating a post, finding existing coverage, or retaining a reservation. */
 export interface SignupExportResult {
