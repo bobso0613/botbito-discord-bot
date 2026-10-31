@@ -29,6 +29,12 @@ export interface PayoutSheetSnapshot {
   vendor: string;
   userIds: string[];
   members?: PayoutSheetMember[];
+  syncedParticipantCount?: number;
+  syncedMembers?: PayoutSheetMember[];
+  previousPendingRoster?: {
+    userIds: string[];
+    members?: PayoutSheetMember[];
+  };
   mode: "create" | "vendor" | "roster";
   status: "pending" | "synced";
   /** Only newly managed exports may create a missing column; legacy exports never guess. */

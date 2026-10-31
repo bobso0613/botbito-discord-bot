@@ -92,6 +92,25 @@ const historyFailureNotice = (error: unknown): string => {
   return `Payout export history could not be saved: ${detail}. The Currently Vending list may be stale; contact an administrator.`;
 };
 
+class HistoryPersistenceError extends Error {
+  constructor(readonly originalError: unknown) {
+    super(
+      originalError instanceof Error
+        ? originalError.message
+        : String(originalError),
+    );
+    this.name = "HistoryPersistenceError";
+  }
+}
+
+const persistHistory = async (save: () => Promise<void>): Promise<void> => {
+  try {
+    await save();
+  } catch (error) {
+    throw new HistoryPersistenceError(error);
+  }
+};
+
 const applyExportEdit = (
   entry: SignupExportHistoryEntry,
   edit: PayoutSheetEdit,
@@ -103,6 +122,15 @@ const applyExportEdit = (
   if (!snapshot) return;
   if (edit.vendor !== undefined) snapshot.vendor = edit.vendor;
   if (edit.userIds) {
+    if (snapshot.status === "synced") {
+      snapshot.syncedParticipantCount ??= snapshot.userIds.length;
+      snapshot.syncedMembers ??= snapshot.members;
+    } else {
+      snapshot.previousPendingRoster ??= {
+        userIds: [...snapshot.userIds],
+        ...(snapshot.members && { members: [...snapshot.members] }),
+      };
+    }
     snapshot.userIds = [...new Set(edit.userIds)];
     snapshot.members = undefined;
     snapshot.deliveryIncomplete = false;
@@ -140,10 +168,11 @@ const updatePayoutSheetStarter = async (
     }
     if (entry.contents?.[0] !== content) {
       entry.contents = [content, ...(entry.contents?.slice(1) ?? [])];
-      await save();
+      await persistHistory(save);
     }
     return notice;
   } catch (error) {
+    if (error instanceof HistoryPersistenceError) throw error;
     const detail =
       error instanceof Error
         ? error.message.slice(0, 250)
@@ -159,9 +188,10 @@ const synchronizeEntry = async (
   save: () => Promise<void>,
   edit?: PayoutSheetEdit,
 ): Promise<string> => {
+  const persist = () => persistHistory(save);
   if (edit) {
     applyExportEdit(entry, edit);
-    await save();
+    await persist();
   }
   const snapshot = entry.sheetsSync;
   if (!snapshot)
@@ -188,23 +218,26 @@ const synchronizeEntry = async (
         return {
           userId,
           displayName: member.displayName,
-          discordTag: member.user.username,
+          discordTag: member.user.tag,
         };
       }),
     );
-    await save();
+    await persist();
   }
   const spreadsheet = await readPayoutSpreadsheet(worksheet);
   const requests = planPayoutSheetExport(spreadsheet, worksheet, snapshot);
   if (requests.length) await writePayoutSpreadsheet(requests);
   snapshot.status = "synced";
   snapshot.createIfMissing = false;
-  await save();
+  snapshot.syncedParticipantCount = snapshot.userIds.length;
+  if (snapshot.members) snapshot.syncedMembers = [...snapshot.members];
+  snapshot.previousPendingRoster = undefined;
+  await persist();
   return updatePayoutSheetStarter(
     guild,
     worksheet,
     entry,
-    save,
+    persist,
     buildPayoutSheetSuccessNotice(worksheet, snapshot.title),
   );
 };
@@ -213,7 +246,7 @@ const synchronizeEntry = async (
  * Attempts a bounded Sheets sync after Discord succeeds, returning a public notice instead of throwing.
  * Unmapped guilds are skipped. Older exports never acquire columns by guessing title/date matches.
  * Callers serialize their Discord mutation and this attempt through queuePayoutSheetOperation.
- * @param guild Guild used to resolve current participant usernames and display names.
+ * @param guild Guild used to resolve current participant tags and display names.
  * @param threadId Confirmed Discord export thread.
  * @param edit Optional authoritative metadata/roster from a completed Discord edit.
  * @returns Success with a default-formula reminder, a manual-update warning, or empty text for unmapped guilds.
@@ -248,6 +281,9 @@ export const syncPayoutExport = async (
       (entry, save) => synchronizeEntry(guild, worksheet, entry, save, edit),
     );
   } catch (error) {
+    if (error instanceof HistoryPersistenceError) {
+      return historyFailureNotice(error.originalError);
+    }
     return failureNotice(error);
   }
 };

@@ -258,6 +258,7 @@ const changeRosterMessages = async (
   });
   const deletions = rosterMessages
     .slice(contents.length)
+    .reverse()
     .map((message) => async () => {
       await message.delete();
       changes.deletedMessages.push(message.content);
@@ -427,10 +428,10 @@ export const changeShareVendorCommand: Command = {
         if (!vendor) throw new Error("Enter a vendor name, `n/a`, or `none`.");
         const line = `Vendor: **${escapeMarkdown(vendor.replace(/[\r\n]/g, " "))}**`;
         const updatedContent = /^Vendor:.*$/m.test(starter.content)
-          ? starter.content.replace(/^Vendor:.*$/m, line)
+          ? starter.content.replace(/^Vendor:.*$/m, () => line)
           : starter.content.replace(
               /^(?:Instance Types:|\*Your Time:|-# Export ID:)/m,
-              `${line}\n$&`,
+              (match) => `${line}\n${match}`,
             );
         await starter.edit({
           content: updatedContent,
@@ -444,14 +445,15 @@ export const changeShareVendorCommand: Command = {
             vendor,
           },
         );
-        await interaction.editReply(
-          [
+        await interaction.editReply({
+          content: [
             `Vendor updated to **${escapeMarkdown(vendor.replace(/[\r\n]/g, " "))}**.`,
             notice,
           ]
             .filter(Boolean)
             .join("\n"),
-        );
+          allowedMentions: { parse: [] },
+        });
       });
     } catch (error) {
       await interaction.editReply(

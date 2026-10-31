@@ -118,7 +118,7 @@ const fetchStarterMessage = jest.fn(async () => ({
   content: originalStarter,
   edit: editStarter,
 }));
-const guild = () => ({
+const guild = (legacyTags = false) => ({
   id: "499171225046876170",
   channels: {
     fetch: jest.fn(async (_id: string) => ({
@@ -127,10 +127,24 @@ const guild = () => ({
     })),
   },
   members: {
-    fetch: jest.fn(async (_options: unknown) => ({
-      displayName: "Alice",
-      user: { username: "alice" },
-    })),
+    fetch: jest.fn(async (options: unknown) => {
+      const userId = (options as { user: string }).user;
+      return userId === "222"
+        ? {
+            displayName: "Bob",
+            user: {
+              username: "bob",
+              tag: legacyTags ? "bob#1234" : "bob",
+            },
+          }
+        : {
+            displayName: "Alice",
+            user: {
+              username: "alice",
+              tag: legacyTags ? "alice#1234" : "alice",
+            },
+          };
+    }),
   },
 });
 
@@ -200,6 +214,124 @@ describe("payout Sheets synchronization", () => {
     expect(writePayoutSpreadsheet).toHaveBeenCalledTimes(1);
   });
 
+  it("reports mapped history save failures with the stale-history warning", async () => {
+    entry.sheetsSync!.status = "synced";
+    save.mockRejectedValueOnce(new Error("disk failure"));
+
+    const notice = await syncPayoutExport(guild() as never, "thread", {
+      contents: ["edited roster"],
+      userIds: ["111"],
+    });
+
+    expect(notice).toContain(
+      "Payout export history could not be saved: disk failure",
+    );
+    expect(notice).toContain("Currently Vending list may be stale");
+    expect(notice).toContain("contact an administrator");
+    expect(readPayoutSpreadsheet).not.toHaveBeenCalled();
+    expect(writePayoutSpreadsheet).not.toHaveBeenCalled();
+  });
+
+  it("keeps the previous synced roster while applying a roster edit", async () => {
+    entry.sheetsSync!.status = "synced";
+    const spreadsheet = grid(true);
+    const combinedRows = spreadsheet.sheets![1]!.data![0]!.rowData!;
+    combinedRows[2]!.values![1] = {
+      userEnteredValue: {
+        formulaValue:
+          "=IFERROR(VLOOKUP($A3,'FSN 2026'!$C$10:$Z$100,8,FALSE),0)",
+      },
+    };
+    readPayoutSpreadsheet.mockResolvedValueOnce(spreadsheet);
+
+    await syncPayoutExport(guild() as never, "thread", {
+      contents: ["updated roster"],
+      userIds: ["111", "222"],
+    });
+
+    expect(entry.sheetsSync?.syncedParticipantCount).toBe(2);
+    expect(entry.sheetsSync?.syncedMembers).toEqual([
+      {
+        userId: "111",
+        displayName: "Alice",
+        discordTag: "alice",
+      },
+      {
+        userId: "222",
+        displayName: "Bob",
+        discordTag: "bob",
+      },
+    ]);
+    expect(JSON.stringify(writePayoutSpreadsheet.mock.calls[0]?.[0])).toContain(
+      "=(G$6-G$8)/2",
+    );
+  });
+
+  it("uses the legacy Discord tag when resolving participant rows", async () => {
+    entry.sheetsSync!.members = undefined;
+    entry.sheetsSync!.mode = "roster";
+    entry.sheetsSync!.status = "pending";
+    const spreadsheet = grid(true);
+    const sheetRows = spreadsheet.sheets![0]!.data![0]!.rowData!;
+    sheetRows[9]!.values![2] = {
+      userEnteredValue: { stringValue: "@alice#1234" },
+    };
+    const combinedRows = spreadsheet.sheets![1]!.data![0]!.rowData!;
+    combinedRows[2]!.values![0] = {
+      userEnteredValue: { stringValue: "@alice#1234" },
+    };
+    readPayoutSpreadsheet.mockResolvedValueOnce(spreadsheet);
+
+    await syncPayoutExport(guild(true) as never, "thread");
+
+    expect(entry.sheetsSync?.members).toEqual([
+      { userId: "111", displayName: "Alice", discordTag: "alice#1234" },
+    ]);
+    expect(writePayoutSpreadsheet).toHaveBeenCalled();
+  });
+
+  it("accepts an uncertain previous write matching the pending roster", async () => {
+    const spreadsheet = grid(true);
+    const rows = spreadsheet.sheets![0]!.data![0]!.rowData!;
+    rows[9]!.values![6] = buildPendingShareCell(6, 2);
+    rows[10]!.values![0] = { userEnteredValue: { stringValue: "Bob" } };
+    rows[10]!.values![2] = { userEnteredValue: { stringValue: "@bob" } };
+    rows[10]!.values![6] = buildPendingShareCell(6, 2);
+    const combinedRows = spreadsheet.sheets![1]!.data![0]!.rowData!;
+    combinedRows[2]!.values![1] = {
+      userEnteredValue: {
+        formulaValue:
+          "=IFERROR(VLOOKUP($A3,'FSN 2026'!$C$10:$Z$100,8,FALSE),0)",
+      },
+    };
+    entry.sheetsSync = {
+      ...snapshot(),
+      mode: "roster",
+      status: "pending",
+      userIds: ["111", "222"],
+      members: [
+        { userId: "111", displayName: "Alice", discordTag: "alice" },
+        { userId: "222", displayName: "Bob", discordTag: "bob" },
+      ],
+      syncedParticipantCount: 1,
+      syncedMembers: [
+        { userId: "111", displayName: "Alice", discordTag: "alice" },
+      ],
+      previousPendingRoster: {
+        userIds: ["111"],
+        members: [
+          { userId: "111", displayName: "Alice", discordTag: "alice" },
+        ],
+      },
+    };
+    readPayoutSpreadsheet.mockResolvedValueOnce(spreadsheet);
+
+    await syncPayoutExport(guild() as never, "thread");
+
+    expect(entry.sheetsSync?.status).toBe("synced");
+    expect(entry.sheetsSync?.syncedParticipantCount).toBe(2);
+  });
+
   it("persists success and makes repeated exports a no-op", async () => {
     const first = await queuePayoutSheetOperation(() =>
       syncPayoutExport(guild() as never, "thread"),
@@ -208,6 +340,8 @@ describe("payout Sheets synchronization", () => {
       "Google Sheets updated: FSN 2026 (**ET 29/10**).\nNote: Cell formulas are defaults. Please review and adjust them if needed.",
     );
     expect(entry.sheetsSync?.status).toBe("synced");
+    expect(entry.sheetsSync?.syncedParticipantCount).toBe(1);
+    expect(entry.sheetsSync?.syncedMembers).toEqual(entry.sheetsSync?.members);
     expect(await syncPayoutExport(guild() as never, "thread")).toContain(
       "already synchronized",
     );

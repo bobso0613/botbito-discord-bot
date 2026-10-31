@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, jest } from "@jest/globals";
-import { ChannelType } from "discord.js";
+import { ChannelType, type ChatInputCommandInteraction } from "discord.js";
 
 const syncPayoutExport = jest.fn(async (..._args: unknown[]) => "");
 const getSignupExportOrganizerId = jest.fn(
@@ -96,11 +96,15 @@ const createHarness = (parentId = "forum") => {
       return sent;
     }),
   };
-  const editReply = jest.fn(async (_content: string) => undefined);
+  const editReply = jest.fn(
+    async (_options: Parameters<ChatInputCommandInteraction["editReply"]>[0]) =>
+      undefined,
+  );
   const interaction = {
     guildId: "guild",
     guild: { channels: { fetch: jest.fn() } },
     channel: thread,
+    channelId: thread.id,
     client: { user: { id: "bot" } },
     user: { id: "editor" },
     memberPermissions: { has: jest.fn(() => true) },
@@ -125,10 +129,16 @@ describe("payout thread commands", () => {
     await changeShareVendorCommand.execute(interaction as never);
     expect(starter.content).toContain("Vendor: **none**");
     expect(interaction.editReply).toHaveBeenCalledWith(
-      expect.stringContaining("Vendor updated to **none**."),
+      expect.objectContaining({
+        content: expect.stringContaining("Vendor updated to **none**."),
+        allowedMentions: { parse: [] },
+      }),
     );
     expect(interaction.editReply).toHaveBeenCalledWith(
-      expect.stringContaining("update Google Sheets manually"),
+      expect.objectContaining({
+        content: expect.stringContaining("update Google Sheets manually"),
+        allowedMentions: { parse: [] },
+      }),
     );
   });
 
@@ -156,7 +166,28 @@ describe("payout thread commands", () => {
         content: expect.stringContaining("Vendor: **none**"),
       }),
     );
-    expect(editReply).toHaveBeenCalledWith("Vendor updated to **none**.");
+    expect(editReply).toHaveBeenCalledWith({
+      content: "Vendor updated to **none**.",
+      allowedMentions: { parse: [] },
+    });
+  });
+
+  it("preserves vendor replacement tokens and suppresses echoed mentions", async () => {
+    const { editReply, interaction, starter } = createHarness();
+    interaction.options.getString.mockReturnValue("$& <@123>");
+
+    await changeShareVendorCommand.execute(interaction as never);
+
+    expect(starter.content).toContain("Vendor: **$& <@123>**");
+    expect(editReply).toHaveBeenCalledWith({
+      content: "Vendor updated to **$& <@123>**.",
+      allowedMentions: { parse: [] },
+    });
+    expect(syncPayoutExport).toHaveBeenCalledWith(
+      expect.anything(),
+      "thread-forum",
+      expect.objectContaining({ vendor: "$& <@123>" }),
+    );
   });
 
   it("rejects threads outside the configured payout forum", async () => {
@@ -373,5 +404,43 @@ describe("payout thread commands", () => {
     await handleShareParticipantsMessage(makeMessage("done") as never);
     expect(followups[0]?.delete).toHaveBeenCalled();
     expect(starter.content).toContain("- <@333>");
+  });
+
+  it("deletes surplus roster continuations from the end before rollback", async () => {
+    const { interaction, followups, starter, thread } = createHarness();
+    const earlier = await thread.send({
+      content: "**Payout roster continued:**\n01: First - <@111>",
+    });
+    const later = await thread.send({
+      content: "**Payout roster continued:**\n02: Second - <@333>",
+    });
+    later.delete.mockRejectedValueOnce(new Error("delete failed"));
+    const originalContent = starter.content;
+    await changeShareParticipantsCommand.execute(interaction as never);
+
+    const reply = jest.fn(async (_content: string) => undefined);
+    const makeMessage = (content: string) => ({
+      guildId: "guild",
+      guild: interaction.guild,
+      channelId: thread.id,
+      channel: thread,
+      client: interaction.client,
+      author: { id: "editor", bot: false },
+      member: { permissions: { has: jest.fn(() => true) } },
+      content,
+      reply,
+    });
+    await handleShareParticipantsMessage(
+      makeMessage("**Party 1:**\n01: Champ - <@111>") as never,
+    );
+    await handleShareParticipantsMessage(makeMessage("done") as never);
+
+    expect(later.delete).toHaveBeenCalledTimes(1);
+    expect(earlier.delete).not.toHaveBeenCalled();
+    expect(followups).toEqual([earlier, later]);
+    expect(starter.content).toBe(originalContent);
+    expect(reply).toHaveBeenLastCalledWith(
+      "Could not update roster: delete failed",
+    );
   });
 });

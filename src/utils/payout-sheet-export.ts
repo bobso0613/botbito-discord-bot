@@ -98,10 +98,27 @@ const hasPendingColor = (cell: sheets_v4.Schema$CellData): boolean => {
   );
 };
 
+const hasEmptyShareColor = (cell: sheets_v4.Schema$CellData): boolean => {
+  const color =
+    cell.effectiveFormat?.backgroundColorStyle?.rgbColor ??
+    cell.effectiveFormat?.backgroundColor ??
+    cell.userEnteredFormat?.backgroundColor;
+  return Boolean(
+    color &&
+    ["red", "green", "blue"].every(
+      (component) =>
+        Math.abs(
+          ((color[component as keyof typeof color] as number) ?? 0) -
+            EMPTY_SHARE_COLOR[component as keyof typeof EMPTY_SHARE_COLOR],
+        ) < 0.01,
+    ),
+  );
+};
+
 /**
  * Refuses processed colors, numeric overrides, and unknown financial cell states.
  * @param cell Existing run cell, including effective formatting after conditional rules.
- * @throws When an occupied cell is not a purple default share formula.
+ * @throws When a cell is processed, manually changed, or not a purple default formula.
  */
 export const validatePendingShareCell = (
   cell: sheets_v4.Schema$CellData,
@@ -109,7 +126,18 @@ export const validatePendingShareCell = (
   participants: number,
 ): void => {
   const value = cell.userEnteredValue;
-  if (!value || Object.keys(value).length === 0) return;
+  if (!value || Object.keys(value).length === 0) {
+    const color =
+      cell.effectiveFormat?.backgroundColorStyle?.rgbColor ??
+      cell.effectiveFormat?.backgroundColor ??
+      cell.userEnteredFormat?.backgroundColor;
+    if (color && !hasPendingColor(cell) && !hasEmptyShareColor(cell)) {
+      throw new Error(
+        "This run has processed or manually changed shares; update Google Sheets manually.",
+      );
+    }
+    return;
+  }
   if (
     !hasPendingColor(cell) ||
     value.formulaValue !==
@@ -216,6 +244,49 @@ const copyRow = (
     pasteType,
   },
 });
+
+const mirroredIdentityColumns = (
+  headers: sheets_v4.Schema$CellData[],
+  tagColumn: number,
+  boundary: number,
+): Map<number, "name" | "discord"> => {
+  const columns = new Map<number, "name" | "discord">();
+  if (tagColumn !== 2) return columns;
+  headers.forEach((cell, column) => {
+    const header = payoutCellText(cell).trim().toLowerCase();
+    if (
+      column > boundary &&
+      (header === "name" || header === "discord")
+    ) {
+      columns.set(column, header);
+    }
+  });
+  return columns;
+};
+
+const validateGuildFormulaTemplate = (
+  formulas: PayoutSheetFormula[],
+  template: number,
+  boundary: number,
+  mirroredColumns: Map<number, "name" | "discord">,
+): void => {
+  for (const { column, formula } of formulas) {
+    if (column <= boundary || mirroredColumns.has(column)) continue;
+    const sum =
+      /^=SUM\(\$?F(\$?)(\d+):\$?[A-Z]+(\$?)(\d+)\)$/i.exec(formula);
+    if (
+      !sum ||
+      sum[1] === "$" ||
+      sum[3] === "$" ||
+      Number(sum[2]) !== template + 1 ||
+      Number(sum[4]) !== template + 1
+    ) {
+      throw new Error(
+        "Guild template formulas after Unclaimed must be row-relative SUM formulas or mirrored identities; update Google Sheets manually.",
+      );
+    }
+  }
+};
 
 const validateFormulaTemplate = (
   formulas: PayoutSheetFormula[],
@@ -548,34 +619,13 @@ const combinedLookupAdjustments = (
 };
 
 const createAppendRowGuard = (
-  headers: sheets_v4.Schema$CellData[],
-  tagColumn: number,
-  boundary: number,
   template: sheets_v4.Schema$CellData[],
   row: number,
+  shareTotalColumn: number,
+  mirroredColumns: Map<number, "name" | "discord">,
 ) => {
-  const shareTotalColumn =
-    tagColumn === 2
-      ? headers.findIndex(
-          (cell, column) =>
-            column > boundary &&
-            payoutCellText(cell).trim().toLowerCase() === "share total",
-        )
-      : -1;
-  const mirroredIdentityColumns = new Set(
-    tagColumn === 2
-      ? headers.flatMap((cell, column) =>
-          column > boundary &&
-          ["name", "discord"].includes(
-            payoutCellText(cell).trim().toLowerCase(),
-          )
-            ? [column]
-            : [],
-        )
-      : [],
-  );
   return (cell: sheets_v4.Schema$CellData, column: number): boolean => {
-    if (!cell.userEnteredValue || mirroredIdentityColumns.has(column)) {
+    if (!cell.userEnteredValue || mirroredColumns.has(column)) {
       return false;
     }
     if (column === shareTotalColumn && cell.userEnteredValue.formulaValue) {
@@ -616,6 +666,22 @@ const addMembers = (
       ? [{ column: index, formula: cell.userEnteredValue.formulaValue }]
       : [],
   );
+  const mirroredColumns = mirroredIdentityColumns(
+    grid[start - 1] ?? [],
+    tagColumn,
+    boundary,
+  );
+  const shareTotalColumn =
+    tagColumn === 2
+      ? (grid[start - 1] ?? []).findIndex(
+          (cell, column) =>
+            column > boundary &&
+            payoutCellText(cell).trim().toLowerCase() === "share total",
+        )
+      : -1;
+  if (tagColumn === 2) {
+    validateGuildFormulaTemplate(formulas, template, boundary, mirroredColumns);
+  }
   validateFormulaTemplate(
     formulas,
     tagColumn,
@@ -627,11 +693,10 @@ const addMembers = (
   missing.forEach((member, offset) => {
     const row = template + offset + 1;
     const containsExistingData = createAppendRowGuard(
-      grid[start - 1] ?? [],
-      tagColumn,
-      boundary,
       grid[template] ?? [],
       row,
+      shareTotalColumn,
+      mirroredColumns,
     );
     if (grid[row]?.some((cell, column) => containsExistingData(cell, column))) {
       throw new Error(
@@ -661,7 +726,10 @@ const addMembers = (
     const copiedFormulas =
       tagColumn === 0
         ? formulas
-        : formulas.filter(({ column }) => column > boundary);
+        : formulas.filter(
+            ({ column }) =>
+              column > boundary && !mirroredColumns.has(column),
+          );
     for (const { column } of copiedFormulas) {
       requests.push(
         copyRow(sheetId, template, row, column, column + 1, "PASTE_FORMULA"),
@@ -672,6 +740,20 @@ const addMembers = (
         cellUpdate(sheetId, row, 0, textCell(member.displayName)),
         cellUpdate(sheetId, row, 1, textCell("Y")),
       );
+      for (const [column, identity] of mirroredColumns) {
+        requests.push(
+          cellUpdate(
+            sheetId,
+            row,
+            column,
+            textCell(
+              identity === "name"
+                ? member.displayName
+                : `@${normalizeTag(member.discordTag)}`,
+            ),
+          ),
+        );
+      }
     }
     requests.push(
       cellUpdate(
@@ -739,10 +821,11 @@ const aggregateAdjustments = (
   const inserted = payoutColumnLabel(boundary + addedColumns - 1);
   const endingBefore = new RegExp(
     String.raw`(:[$]?)${previous}([$]?\d+)(?!\d)`,
-    "g",
+    "gi",
   );
   const includesBoundary = new RegExp(
     String.raw`:[$]?${payoutColumnLabel(boundary)}[$]?\d+`,
+    "i",
   );
   grid.forEach((cells, row) => {
     cells.forEach((cell, column) => {
@@ -753,7 +836,7 @@ const aggregateAdjustments = (
           "A summary formula uses a text-based range that cannot safely shift; update Google Sheets manually.",
         );
       }
-      const looksLikeRunRange = /[$]?F[$]?\d+:/.test(formula);
+      const looksLikeRunRange = /[$]?F[$]?\d+:/i.test(formula);
       if (!looksLikeRunRange) return;
       const updated = formula.replace(endingBefore, `$1${inserted}$2`);
       if (updated === formula && !includesBoundary.test(formula)) {
@@ -893,11 +976,11 @@ const exportLayout = (
 const validatePendingColumn = (
   grid: Grid,
   column: number,
-  participants: number,
+  rosterStates: Array<{
+    participantCount: number;
+    members?: PayoutSheetMember[];
+  }>,
 ): void => {
-  for (const row of grid.slice(9)) {
-    validatePendingShareCell(row[column] ?? {}, column, participants);
-  }
   for (const index of [5, 7]) {
     const header = grid[index]?.[column];
     if (header?.userEnteredValue && !hasPendingColor(header)) {
@@ -906,6 +989,39 @@ const validatePendingColumn = (
       );
     }
   }
+  const rows = identityRows(grid, 2, 9);
+  let lastError: unknown;
+  for (const state of rosterStates) {
+    try {
+      for (const row of grid.slice(9)) {
+        validatePendingShareCell(
+          row[column] ?? {},
+          column,
+          state.participantCount,
+        );
+      }
+      for (const member of state.members ?? []) {
+        const row = rows.get(normalizeTag(member.discordTag));
+        if (
+          row == null ||
+          !grid[row]?.[column]?.userEnteredValue?.formulaValue
+        ) {
+          throw new Error(
+            "This run has processed or manually changed shares; update Google Sheets manually.",
+          );
+        }
+      }
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw (
+    lastError ??
+    new Error(
+      "This run has processed or manually changed shares; update Google Sheets manually.",
+    )
+  );
 };
 
 const snapshotMembers = (
@@ -1070,6 +1186,39 @@ const emptyColumnRequests = (
   },
 ];
 
+const validateSnapshotPendingColumn = (
+  grid: Grid,
+  column: number,
+  snapshot: PayoutSheetSnapshot,
+  members: PayoutSheetMember[],
+): void => {
+  const rosterStates = [
+    {
+      participantCount: new Set(snapshot.userIds).size,
+      members,
+    },
+    ...(snapshot.syncedParticipantCount == null
+      ? []
+      : [
+          {
+            participantCount: snapshot.syncedParticipantCount,
+            members: snapshot.syncedMembers,
+          },
+        ]),
+    ...(snapshot.previousPendingRoster
+      ? [
+          {
+            participantCount: new Set(
+              snapshot.previousPendingRoster.userIds,
+            ).size,
+            members: snapshot.previousPendingRoster.members,
+          },
+        ]
+      : []),
+  ];
+  validatePendingColumn(grid, column, rosterStates);
+};
+
 /**
  * Plans a single atomic Sheets batch without performing network or filesystem operations.
  * New exports reuse empty run columns and replenish one spacer per post; retries and edits do not.
@@ -1093,7 +1242,9 @@ export const planPayoutSheetExport = (
   }
   const members = snapshotMembers(snapshot);
   const uniqueIds = new Set(snapshot.userIds);
-  if (existing != null) validatePendingColumn(grid, column, uniqueIds.size);
+  if (existing != null) {
+    validateSnapshotPendingColumn(grid, column, snapshot, members);
+  }
   const guildRows = addMembers(sheet, grid, 2, 9, members, { boundary });
   const combinedGrid = sheetGrid(combined);
   const requiredGuildRow = Math.max(...guildRows.rows.values()) + 1;

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "@jest/globals";
 import type { sheets_v4 } from "googleapis";
-import type { PayoutSheetSnapshot } from "../types/payout-sheet-export.js";
+import type {
+  PayoutSheetMember,
+  PayoutSheetSnapshot,
+} from "../types/payout-sheet-export.js";
 import {
   buildPendingShareCell,
   findUnclaimedColumn,
@@ -75,7 +78,9 @@ export const buildSpreadsheet = (): sheets_v4.Schema$Spreadsheet => {
   };
 };
 
-export const buildSnapshot = (): PayoutSheetSnapshot => ({
+export const buildSnapshot = (): PayoutSheetSnapshot & {
+  members: PayoutSheetMember[];
+} => ({
   identifier: "export-one",
   title: "Wolfchev 29/10",
   vendor: "Sadboys 2013",
@@ -173,6 +178,16 @@ describe("payout sheet export planning", () => {
         9,
       ),
     ).toThrow("manually changed");
+  });
+
+  it("rejects processed formatting when a share cell has been cleared", () => {
+    expect(() =>
+      validatePendingShareCell(
+        { effectiveFormat: { backgroundColor: { green: 1 } } },
+        5,
+        1,
+      ),
+    ).toThrow("processed");
   });
 
   it("uses the next blank run column and adds one empty column directly to its right", () => {
@@ -429,6 +444,23 @@ describe("payout sheet export planning", () => {
     ).toThrow("text-based range");
   });
 
+  it("expands lowercase summary formulas when inserting a run", () => {
+    const spreadsheet = buildSpreadsheet();
+    spreadsheet.sheets![0]!.data![0]!.rowData![9]!.values![9] =
+      formula("=sum(f10:g10)");
+    const requests = planPayoutSheetExport(
+      spreadsheet,
+      "FSN 2026",
+      buildSnapshot(),
+    );
+    expect(
+      requests.find(
+        (request) => request.updateCells?.start?.rowIndex === 9 &&
+          request.updateCells.start.columnIndex === 11,
+      )?.updateCells?.rows?.[0]?.values?.[0]?.userEnteredValue?.formulaValue,
+    ).toBe("=sum(f10:I10)");
+  });
+
   it("handles long quoted summary text without treating it as a range", () => {
     const spreadsheet = buildSpreadsheet();
     spreadsheet.sheets![0]!.data![0]!.rowData![9]!.values![9] = formula(
@@ -563,9 +595,31 @@ describe("payout sheet export planning", () => {
         displayName: "Altbob",
         discordTag: "altbob",
       });
-      expect(() =>
-        planPayoutSheetExport(spreadsheet, "FSN 2026", snapshot),
-      ).not.toThrow();
+      const requests = planPayoutSheetExport(
+        spreadsheet,
+        "FSN 2026",
+        snapshot,
+      );
+      expect(requests).toContainEqual(
+        expect.objectContaining({
+          updateCells: expect.objectContaining({
+            start: { sheetId: 1, rowIndex: 10, columnIndex: nameColumn },
+            rows: [{ values: [text("Altbob")] }],
+          }),
+        }),
+      );
+      expect(requests).toContainEqual(
+        expect.objectContaining({
+          updateCells: expect.objectContaining({
+            start: {
+              sheetId: 1,
+              rowIndex: 10,
+              columnIndex: nameColumn + 1,
+            },
+            rows: [{ values: [text("@altbob")] }],
+          }),
+        }),
+      );
       rows[10]!.values![0] = text("Existing member");
       expect(() =>
         planPayoutSheetExport(spreadsheet, "FSN 2026", snapshot),
@@ -627,6 +681,22 @@ describe("payout sheet export planning", () => {
     expect(() =>
       planPayoutSheetExport(spreadsheet, "FSN 2026", snapshot),
     ).toThrow(expectedError);
+  });
+
+  it("rejects non-row-relative guild formulas before copying them", () => {
+    const spreadsheet = buildSpreadsheet();
+    const rows = spreadsheet.sheets![0]!.data![0]!.rowData!;
+    rows[9]!.values![10] = formula("=$J$10");
+    const snapshot = buildSnapshot();
+    snapshot.userIds.push("222");
+    snapshot.members!.push({
+      userId: "222",
+      displayName: "Bob",
+      discordTag: "bob",
+    });
+    expect(() =>
+      planPayoutSheetExport(spreadsheet, "FSN 2026", snapshot),
+    ).toThrow("row-relative SUM formulas");
   });
 
   it("updates Combined VLOOKUP indices and ranges when run and spacer columns are inserted", () => {
@@ -850,5 +920,76 @@ describe("payout sheet export planning", () => {
     expect(() =>
       planPayoutSheetExport(spreadsheet, "FSN 2026", snapshot),
     ).toThrow("processed");
+  });
+
+  it("validates edits against the last synced participant count", () => {
+    const spreadsheet = buildSpreadsheet();
+    const snapshot = buildSnapshot();
+    snapshot.mode = "roster";
+    linkColumn(spreadsheet, snapshot);
+    spreadsheet.sheets![0]!.data![0]!.rowData![9]!.values![6] =
+      buildPendingShareCell(6, 1);
+    snapshot.userIds.push("222");
+    snapshot.members!.push({
+      userId: "222",
+      displayName: "Bob",
+      discordTag: "bob",
+    });
+    snapshot.syncedParticipantCount = 1;
+    snapshot.syncedMembers = [snapshot.members[0]!];
+
+    const requests = planPayoutSheetExport(
+      spreadsheet,
+      "FSN 2026",
+      snapshot,
+    );
+
+    expect(JSON.stringify(requests)).toContain("=(G$6-G$8)/2");
+  });
+
+  it("accepts a matching target roster after an uncertain previous write", () => {
+    const spreadsheet = buildSpreadsheet();
+    const rows = spreadsheet.sheets![0]!.data![0]!.rowData!;
+    rows[9]!.values![6] = buildPendingShareCell(6, 2);
+    rows[10]!.values![0] = text("Bob");
+    rows[10]!.values![2] = text("@bob");
+    rows[10]!.values![6] = buildPendingShareCell(6, 2);
+    const snapshot = buildSnapshot();
+    snapshot.mode = "roster";
+    linkColumn(spreadsheet, snapshot);
+    snapshot.userIds.push("222");
+    snapshot.members!.push({
+      userId: "222",
+      displayName: "Bob",
+      discordTag: "bob",
+    });
+    snapshot.syncedParticipantCount = 1;
+    snapshot.syncedMembers = [snapshot.members[0]!];
+    snapshot.previousPendingRoster = {
+      userIds: ["111"],
+      members: [snapshot.members[0]!],
+    };
+
+    expect(() =>
+      planPayoutSheetExport(spreadsheet, "FSN 2026", snapshot),
+    ).not.toThrow();
+  });
+
+  it("rejects a cleared cell for a previously synced participant", () => {
+    const spreadsheet = buildSpreadsheet();
+    const snapshot = buildSnapshot();
+    snapshot.mode = "roster";
+    linkColumn(spreadsheet, snapshot);
+    snapshot.syncedParticipantCount = 1;
+    snapshot.syncedMembers = [...snapshot.members!];
+    spreadsheet.sheets![0]!.data![0]!.rowData![9]!.values![6] = {
+      userEnteredFormat: {
+        backgroundColor: { red: 1, green: 1, blue: 1 },
+      },
+    };
+
+    expect(() =>
+      planPayoutSheetExport(spreadsheet, "FSN 2026", snapshot),
+    ).toThrow("manually changed");
   });
 });
