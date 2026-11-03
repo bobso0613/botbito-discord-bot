@@ -49,8 +49,8 @@ interface UncertainWrite {
 }
 
 const uncertainWrites = new Map<string, UncertainWrite>();
-const READY_AMOUNT_READ_ATTEMPTS = 5;
-const READY_AMOUNT_READ_INTERVAL_MS = 1_000;
+const READY_AMOUNT_READ_ATTEMPTS = 8;
+const READY_AMOUNT_READ_INTERVAL_MS = 2_000;
 
 /** A finalization preflight failed before the Sheets API was asked to write. */
 export class PayoutSheetNoWriteAttemptError extends Error {

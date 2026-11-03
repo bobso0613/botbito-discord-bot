@@ -336,10 +336,14 @@ describe("payout Sheets synchronization", () => {
     "names the possible leftover temporary column when %s fails",
     async (stage) => {
       const managedSnapshot = { ...snapshot(), status: "synced" as const };
-      readPayoutSpreadsheet.mockResolvedValue(grid(true));
+      const cleared = grid(true);
+      const participant = cleared.sheets![0]!.data![0]!.rowData![9]!.values![6]!;
+      delete participant.userEnteredValue;
+      delete participant.effectiveValue;
+      readPayoutSpreadsheet.mockResolvedValue(cleared);
       if (stage === "read") {
         readPayoutSpreadsheet
-          .mockResolvedValueOnce(grid(true))
+          .mockResolvedValueOnce(cleared)
           .mockRejectedValueOnce(new Error("read failed"));
       }
       writePayoutSpreadsheet.mockImplementation(async (requests) => {
@@ -362,9 +366,23 @@ describe("payout Sheets synchronization", () => {
     },
   );
 
+  it("rejects no-share amounts before any Sheets write", async () => {
+    readPayoutSpreadsheet.mockResolvedValue(grid(true));
+    const operation = finalizePayoutExport(
+      "FSN 2026", "499171225046876170", "thread",
+      { ...snapshot(), status: "synced" }, "done-no-share",
+    );
+    await expect(operation).rejects.toBeInstanceOf(PayoutSheetNoWriteAttemptError);
+    await expect(operation).rejects.toThrow("Clear participant cell G10 manually");
+    expect(writePayoutSpreadsheet).not.toHaveBeenCalled();
+  });
+
   it("writes and verifies green, not yellow, for Done (no share)", async () => {
     const managedSnapshot = { ...snapshot(), status: "synced" as const };
     const spreadsheet = grid(true);
+    const participant = spreadsheet.sheets![0]!.data![0]!.rowData![9]!.values![6]!;
+    delete participant.userEnteredValue;
+    delete participant.effectiveValue;
     readPayoutSpreadsheet.mockResolvedValue(spreadsheet);
     writePayoutSpreadsheet.mockImplementation(async (requests) => {
       for (const request of requests) {
@@ -393,6 +411,26 @@ describe("payout Sheets synchronization", () => {
     expect(color).toEqual(NO_SHARE_COLOR);
     expect(color).not.toEqual(READY_SHARE_COLOR);
     expect(readPayoutSpreadsheet).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not confirm no-share if a participant amount reappears after the writes", async () => {
+    const spreadsheet = grid(true);
+    const participant = spreadsheet.sheets![0]!.data![0]!.rowData![9]!.values![6]!;
+    delete participant.userEnteredValue;
+    delete participant.effectiveValue;
+    readPayoutSpreadsheet.mockResolvedValue(spreadsheet);
+    writePayoutSpreadsheet.mockImplementation(async (requests) => {
+      if (requests.some((request) => request.deleteDimension)) {
+        participant.userEnteredValue = { numberValue: 100 };
+        participant.effectiveValue = { numberValue: 100 };
+      }
+    });
+
+    await expect(finalizePayoutExport(
+      "FSN 2026", "499171225046876170", "thread",
+      { ...snapshot(), status: "synced" }, "done-no-share",
+    )).rejects.toThrow("Clear participant cell G10 manually");
+    expect(writePayoutSpreadsheet).toHaveBeenCalledTimes(3);
   });
 
   it("recalculates formulas after recoloring and returns evaluated Ready amounts", async () => {
@@ -598,16 +636,17 @@ describe("payout Sheets synchronization", () => {
       await jest.runAllTimersAsync();
       await rejection;
       expect(writePayoutSpreadsheet).toHaveBeenCalledTimes(3);
-      expect(readPayoutSpreadsheet).toHaveBeenCalledTimes(7);
+      expect(readPayoutSpreadsheet).toHaveBeenCalledTimes(10);
     } finally {
       jest.useRealTimers();
     }
   });
 
   it.each(["stale", "unevaluated"])(
-    "stops after five reads when the Combined balance stays %s",
+    "stops after eight reads when the Combined balance stays %s",
     async (balanceState) => {
       jest.useFakeTimers();
+      const startedAt = Date.now();
       try {
         const managedSnapshot = snapshot();
         managedSnapshot.status = "synced";
@@ -641,7 +680,8 @@ describe("payout Sheets synchronization", () => {
         await jest.runAllTimersAsync();
         await rejection;
 
-        expect(readPayoutSpreadsheet).toHaveBeenCalledTimes(7);
+        expect(readPayoutSpreadsheet).toHaveBeenCalledTimes(10);
+        expect(Date.now() - startedAt).toBe(14_000);
         expect(writePayoutSpreadsheet).toHaveBeenCalledTimes(3);
         expect(jest.getTimerCount()).toBe(0);
       } finally {

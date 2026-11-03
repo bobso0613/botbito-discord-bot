@@ -486,8 +486,7 @@ const finalizeSheets = async (
   } catch (error) {
     if (error instanceof PayoutSheetNoWriteAttemptError) {
       state.sheets = "pending";
-      const notice = `Google Sheets was not changed (${safeError(error)}). Correct the sheet issue and run this same status command again.`;
-      await save();
+      const notice = `Google Sheets was not changed (${safeError(error)}). No status was selected; edits and export sync remain available. Correct the sheet issue and select a status again.`;
       return notice;
     }
     state.sheets = "manual";
@@ -589,6 +588,10 @@ const finalizeStatus = async (
         status,
         save,
       );
+      if (state.sheets === "pending") {
+        delete entry.shareFinalization;
+        await save();
+      }
       return {
         state: structuredClone(state),
         snapshot: structuredClone(snapshot),

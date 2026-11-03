@@ -464,7 +464,7 @@ describe("share status service", () => {
     expect(publicMessages).toHaveLength(1);
   });
 
-  it("leaves a pre-write Sheets failure pending and allows the same status to be retried", async () => {
+  it("clears a pre-write selection and allows a different status to be selected", async () => {
     finalizePayoutExport.mockRejectedValueOnce(
       new PayoutSheetNoWriteAttemptError("The Export ID column is missing."),
     );
@@ -475,7 +475,7 @@ describe("share status service", () => {
     expect(interaction.usersFetch).not.toHaveBeenCalled();
     expect(interaction.editReply).toHaveBeenCalledWith({
       content: expect.stringContaining(
-        "Correct the sheet issue and run this same status command again.",
+        "No status was selected; edits and export sync remain available.",
       ),
       allowedMentions: { parse: [] },
     });
@@ -483,8 +483,26 @@ describe("share status service", () => {
     expect(thread.setName).not.toHaveBeenCalled();
     expect(thread.send).not.toHaveBeenCalled();
     expect(thread.setLocked).not.toHaveBeenCalled();
-    expect(entry.shareFinalization?.sheets).toBe("pending");
-    expect(entry.shareFinalization?.completed).not.toBe(true);
+    expect(entry.shareFinalization).toBeUndefined();
+    await finalizeShareStatus(createInteraction() as never, "cancelled");
+    expect(entry.shareFinalization?.status).toBe("cancelled");
+    expect(entry.shareFinalization?.completed).toBe(true);
+  });
+
+  it("can retry the same status after a pre-write rejection without stale progress", async () => {
+    finalizePayoutExport.mockRejectedValueOnce(
+      new PayoutSheetNoWriteAttemptError("Clear participant cell G10 manually"),
+    );
+    await finalizeShareStatus(createInteraction() as never, "done-no-share");
+    expect(entry.shareFinalization).toBeUndefined();
+    expect(thread.setLocked).not.toHaveBeenCalled();
+
+    await finalizeShareStatus(createInteraction() as never, "done-no-share");
+
+    expect(finalizePayoutExport).toHaveBeenCalledTimes(2);
+    expect(entry.shareFinalization).toMatchObject({
+      status: "done-no-share", sheets: "confirmed", completed: true,
+    });
   });
 
   it("keeps Done (no share) DM-free and states the manual financial correction", async () => {

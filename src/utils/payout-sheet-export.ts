@@ -2077,6 +2077,22 @@ const hasFinalShareColor = (
   );
 };
 
+const assertNoShareParticipantCellsEmpty = (grid: Grid, column: number): void => {
+  for (let row = 9; row < grid.length; row += 1) {
+    const cell = grid[row]?.[column];
+    const values = [cell?.userEnteredValue, cell?.effectiveValue];
+    if (
+      values.some((value) =>
+        Object.values(value ?? {}).some((entry) => entry != null && entry !== ""),
+      )
+    ) {
+      throw new Error(
+        `Clear participant cell ${payoutColumnLabel(column)}${row + 1} manually before selecting Done (no share); all participant amounts and formulas from row 10 onwards must be removed, including zero-valued formulas.`,
+      );
+    }
+  }
+};
+
 /** Confirms old purple cells are gone and participants have their final status color. */
 export const assertPayoutFinalizationShareColors = (
   spreadsheet: sheets_v4.Schema$Spreadsheet,
@@ -2090,6 +2106,9 @@ export const assertPayoutFinalizationShareColors = (
     worksheet,
     identifier,
   );
+  if (status === "done-no-share") {
+    assertNoShareParticipantCellsEmpty(grid, column);
+  }
   if (grid.some((row, index) => index >= 5 && hasPendingColor(row[column]))) {
     throw new Error(
       "Some cells in the run column are still purple; update Google Sheets manually.",
@@ -2168,7 +2187,7 @@ export const readPayoutFinalizationShareAmounts = (
     const previousTotal = previousTotals?.get(member.userId);
     if (
       previousTotal != null &&
-      totalUnclaimed < previousTotal + thisRun
+      totalUnclaimed < previousTotal + thisRun - 1
     ) {
       throw new PayoutFinalizationAmountsNotReadyError(
         `The Combined Share Ready balance for @${tag} has not yet included this run.`,
@@ -2210,6 +2229,9 @@ export const planPayoutSheetFinalization = (
         },
       },
     ];
+  }
+  if (status === "done-no-share") {
+    assertNoShareParticipantCellsEmpty(grid, column);
   }
 
   const requests: Request[] = [];

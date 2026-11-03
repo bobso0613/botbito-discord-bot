@@ -1257,6 +1257,7 @@ describe("payout sheet export planning", () => {
     linkColumn(spreadsheet, snapshot);
     const rows = spreadsheet.sheets![0]!.data![0]!.rowData!;
     rows[9]!.values![6] = buildPendingShareCell(6, 1);
+    delete rows[9]!.values![6]!.userEnteredValue;
     const requests = planPayoutSheetFinalization(
       spreadsheet,
       "FSN 2026",
@@ -1283,7 +1284,53 @@ describe("payout sheet export planning", () => {
         spreadsheet, "FSN 2026", snapshot.identifier, snapshot.members!, "done-no-share",
       ),
     ).toThrow("not confirmed green");
-    expect(rows[9]!.values![6]!.userEnteredValue!.formulaValue).toBe("=(G$6-G$8)/1");
+    expect(rows[9]!.values![6]!.userEnteredValue).toBeUndefined();
+  });
+
+  it.each([
+    { userEnteredValue: { numberValue: 0 } },
+    { effectiveValue: { numberValue: 123 } },
+    { userEnteredValue: { numberValue: -123 } },
+    { userEnteredValue: { formulaValue: "=0" }, effectiveValue: { numberValue: 0 } },
+    { userEnteredValue: { formulaValue: '=""' }, effectiveValue: { stringValue: "" } },
+    { effectiveValue: { errorValue: { type: "ERROR" } } },
+  ])("rejects uncleared no-share cells, even outside the saved roster: %j", (value) => {
+    const spreadsheet = buildSpreadsheet();
+    const snapshot = buildSnapshot();
+    linkColumn(spreadsheet, snapshot);
+    const rows = spreadsheet.sheets![0]!.data![0]!.rowData!;
+    rows[12]!.values![6] = value;
+
+    expect(() =>
+      planPayoutSheetFinalization(spreadsheet, "FSN 2026", snapshot.identifier, "done-no-share"),
+    ).toThrow("Clear participant cell G13 manually");
+  });
+
+  it.each([
+    [3_333, true],
+    [3_332.33, true],
+    [3_332.32, false],
+    [0, false],
+  ])("handles rounded Combined balance %s with a one-zeny tolerance", (total, accepted) => {
+    const spreadsheet = buildSpreadsheet();
+    const snapshot = buildSnapshot();
+    linkColumn(spreadsheet, snapshot);
+    spreadsheet.sheets![0]!.data![0]!.rowData![9]!.values![6] = {
+      userEnteredFormat: { backgroundColor: READY_SHARE_COLOR },
+      effectiveValue: { numberValue: 3_333.33 },
+    };
+    spreadsheet.sheets![1]!.data![0]!.rowData![2]!.values![2] = {
+      effectiveValue: { numberValue: total },
+    };
+    const read = () => readPayoutFinalizationShareAmounts(
+      spreadsheet, "FSN 2026", snapshot.identifier, "499171225046876170",
+      snapshot.members!, new Map([["111", 0]]),
+    );
+    if (accepted) {
+      expect(read()).toEqual([{ userId: "111", thisRun: 3_333.33, totalUnclaimed: total }]);
+    } else {
+      expect(read).toThrow("has not yet included this run");
+    }
   });
 
   it("uses a unique exact Export ID note when column metadata is missing", () => {
