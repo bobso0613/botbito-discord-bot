@@ -369,7 +369,10 @@ export const getSignupExportFinalization = async (
   return operation;
 };
 
-/** Blocks follow-up edits once a share-status finalization has been selected. */
+/**
+ * Blocks edits once finalization is selected.
+ * Callers must hold queuePayoutSheetOperation through this check and the Discord mutation.
+ */
 export const assertSignupExportEditable = async (
   guildId: string,
   threadId: string,

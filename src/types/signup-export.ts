@@ -1,6 +1,7 @@
 import type { SignupSheet, SignupSlot } from "./signup-sheet.js";
 import type {
   PayoutFinalizationShareAmount,
+  PayoutFinalizationTotals,
   PayoutSheetSnapshot,
 } from "./payout-sheet-export.js";
 
@@ -13,12 +14,16 @@ export interface SignupExportFinalization {
   status: ShareFinalizationStatus;
   /** Sheets write state, including ambiguous/interrupted outcomes that require manual review. */
   sheets: "pending" | "in-progress" | "confirmed" | "manual";
+  /** Saved repair details, including any temporary recalculation column left behind. */
+  sheetsNotice?: string;
   /** Whether the pending hourglass title was replaced successfully. */
   titleUpdated?: boolean;
   /** Per-participant DM state; attempting means delivery may be ambiguous after interruption. */
   dmDeliveries?: Record<string, "attempting" | "sent" | "failed">;
   /** Recalculated per-run and total unclaimed amounts retained for interrupted DM recovery. */
   shareAmounts?: Record<string, Omit<PayoutFinalizationShareAmount, "userId">>;
+  /** Verified run inputs retained for public reporting after interruption. */
+  payoutTotals?: PayoutFinalizationTotals;
   /** Confirmed sheet and column labels used in status messages and DM recovery. */
   sheetName?: string;
   columnName?: string;
@@ -28,9 +33,11 @@ export interface SignupExportFinalization {
     status: "pending" | "attempting" | "sent" | "failed";
     messageId?: string;
   }>;
+  /** Separate payout summary chunks, published only after the thread is locked. */
+  summaryMessages?: NonNullable<SignupExportFinalization["publicMessages"]>;
   /** Whether the payout thread was locked. */
   locked?: boolean;
-  /** True only when the title, public report, and thread lock are confirmed. */
+  /** True only when the title, public report, thread lock, and required summary are confirmed. */
   completed?: boolean;
 }
 

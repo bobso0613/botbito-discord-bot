@@ -6,6 +6,7 @@ import {
   buildPendingShareCell,
   PAYOUT_EXPORT_METADATA_KEY,
   READY_SHARE_COLOR,
+  NO_SHARE_COLOR,
 } from "../utils/payout-sheet-export.js";
 
 jest.unstable_mockModule("../config/discord-settings.js", () => ({
@@ -50,8 +51,12 @@ jest.unstable_mockModule("./signup-export.service.js", () => ({
     return action(entry, save, history);
   },
 }));
-const { finalizePayoutExport, queuePayoutSheetOperation, syncPayoutExport } =
-  await import("./payout-sheet-export.service.js");
+const {
+  finalizePayoutExport,
+  PayoutSheetNoWriteAttemptError,
+  queuePayoutSheetOperation,
+  syncPayoutExport,
+} = await import("./payout-sheet-export.service.js");
 
 const snapshot = (): PayoutSheetSnapshot => ({
   identifier: "one",
@@ -69,6 +74,8 @@ const grid = (linked = false): sheets_v4.Schema$Spreadsheet => {
     (): sheets_v4.Schema$RowData => ({ values: [] }),
   );
   rows[4]!.values![7] = { userEnteredValue: { stringValue: "Unclaimed" } };
+  rows[5]!.values![6] = { effectiveValue: { numberValue: 125_000 } };
+  rows[7]!.values![6] = { effectiveValue: { numberValue: 25_000 } };
   if (linked) {
     rows[4]!.values![6] = {
       userEnteredValue: { stringValue: "ET 29/10" },
@@ -228,7 +235,9 @@ describe("payout Sheets synchronization", () => {
   it("finalizes by exact metadata and never retries an uncertain status write", async () => {
     const managedSnapshot = snapshot();
     managedSnapshot.status = "synced";
-    readPayoutSpreadsheet.mockResolvedValue(grid(true));
+    readPayoutSpreadsheet
+      .mockResolvedValueOnce(grid(true))
+      .mockResolvedValueOnce(grid(false));
 
     await finalizePayoutExport(
       "FSN 2026",
@@ -277,14 +286,129 @@ describe("payout Sheets synchronization", () => {
     expect(writePayoutSpreadsheet).toHaveBeenCalledTimes(writesBeforeRetry);
   });
 
+  it("marks validation failures before the first Sheets write as safe to retry", async () => {
+    const managedSnapshot = snapshot();
+    managedSnapshot.status = "synced";
+    readPayoutSpreadsheet.mockResolvedValue(grid(false));
+
+    await expect(
+      finalizePayoutExport(
+        "FSN 2026",
+        "499171225046876170",
+        "thread",
+        managedSnapshot,
+        "cancelled",
+      ),
+    ).rejects.toBeInstanceOf(PayoutSheetNoWriteAttemptError);
+
+    expect(writePayoutSpreadsheet).not.toHaveBeenCalled();
+  });
+
+  it.each(["metadata", "note", "read failure"])(
+    "does not confirm cancellation when read-back retains %s",
+    async (remaining) => {
+      const managedSnapshot = { ...snapshot(), status: "synced" as const };
+      readPayoutSpreadsheet.mockResolvedValueOnce(grid(true));
+      if (remaining === "read failure") {
+        readPayoutSpreadsheet.mockRejectedValueOnce(new Error("read failed"));
+      } else {
+        const after = grid(remaining === "metadata");
+        if (remaining === "note") {
+          after.sheets![0]!.data![0]!.rowData![4]!.values![6] = { note: "one" };
+        }
+        readPayoutSpreadsheet.mockResolvedValueOnce(after);
+      }
+      await expect(
+        finalizePayoutExport(
+          "FSN 2026",
+          "499171225046876170",
+          "thread",
+          managedSnapshot,
+          "cancelled",
+        ),
+      ).rejects.toThrow(remaining === "read failure" ? "read failed" : "still present");
+      expect(writePayoutSpreadsheet).toHaveBeenCalledTimes(1);
+      expect(readPayoutSpreadsheet).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it.each(["insert", "read", "delete"])(
+    "names the possible leftover temporary column when %s fails",
+    async (stage) => {
+      const managedSnapshot = { ...snapshot(), status: "synced" as const };
+      readPayoutSpreadsheet.mockResolvedValue(grid(true));
+      if (stage === "read") {
+        readPayoutSpreadsheet
+          .mockResolvedValueOnce(grid(true))
+          .mockRejectedValueOnce(new Error("read failed"));
+      }
+      writePayoutSpreadsheet.mockImplementation(async (requests) => {
+        if (
+          (stage === "insert" && requests.some((request) => request.insertDimension)) ||
+          (stage === "delete" && requests.some((request) => request.deleteDimension))
+        ) {
+          throw new Error("write failed");
+        }
+      });
+      await expect(
+        finalizePayoutExport(
+          "FSN 2026",
+          "499171225046876170",
+          "thread",
+          managedSnapshot,
+          "done-no-share",
+        ),
+      ).rejects.toThrow('Temporary column H may remain beside the run in "FSN 2026"');
+    },
+  );
+
+  it("writes and verifies green, not yellow, for Done (no share)", async () => {
+    const managedSnapshot = { ...snapshot(), status: "synced" as const };
+    const spreadsheet = grid(true);
+    readPayoutSpreadsheet.mockResolvedValue(spreadsheet);
+    writePayoutSpreadsheet.mockImplementation(async (requests) => {
+      for (const request of requests) {
+        const update = request.updateCells;
+        if (!update) continue;
+        const cell = spreadsheet.sheets![0]!.data![0]!.rowData![
+          update.start!.rowIndex!
+        ]!.values![update.start!.columnIndex!]!;
+        cell.userEnteredFormat = update.rows![0]!.values![0]!.userEnteredFormat;
+        cell.effectiveFormat = cell.userEnteredFormat;
+      }
+    });
+
+    await expect(
+      finalizePayoutExport(
+        "FSN 2026",
+        "499171225046876170",
+        "thread",
+        managedSnapshot,
+        "done-no-share",
+      ),
+    ).resolves.toMatchObject({ shareAmounts: [] });
+    const color = spreadsheet.sheets![0]!.data![0]!.rowData![9]!.values![6]!
+      .effectiveFormat!.backgroundColor;
+    expect(color).toEqual({ red: 0, green: 1, blue: 0 });
+    expect(color).toEqual(NO_SHARE_COLOR);
+    expect(color).not.toEqual(READY_SHARE_COLOR);
+    expect(readPayoutSpreadsheet).toHaveBeenCalledTimes(3);
+  });
+
   it("recalculates formulas after recoloring and returns evaluated Ready amounts", async () => {
     const managedSnapshot = snapshot();
     managedSnapshot.status = "synced";
     const spreadsheet = grid(true);
+    spreadsheet.sheets![1]!.data![0]!.rowData![2]!.values![2]!.effectiveValue =
+      { numberValue: 150_000 };
     readPayoutSpreadsheet.mockResolvedValue(spreadsheet);
     writePayoutSpreadsheet.mockImplementation(async (requests) => {
       const worksheetRows = spreadsheet.sheets![0]!.data![0]!.rowData!;
       for (const request of requests) {
+        if (request.deleteDimension) {
+          spreadsheet.sheets![1]!.data![0]!.rowData![2]!.values![2]!.effectiveValue =
+            { numberValue: 250_000 };
+        }
         const update = request.updateCells;
         if (update?.start?.sheetId !== 1) continue;
         const row = update.start.rowIndex!;
@@ -344,11 +468,187 @@ describe("payout Sheets synchronization", () => {
     expect(amounts).toEqual({
       sheetName: "FSN 2026",
       columnName: "ET 29/10",
+      payoutTotals: { totalEarned: 125_000, reimbursements: 25_000 },
       shareAmounts: [
         { userId: "111", thisRun: 100_000, totalUnclaimed: 250_000 },
       ],
     });
   });
+
+  it("waits for the Combined balance to include the newly Ready run", async () => {
+    const managedSnapshot = snapshot();
+    managedSnapshot.status = "synced";
+    const spreadsheet = grid(true);
+    let readCount = 0;
+    readPayoutSpreadsheet.mockImplementation(async () => {
+      readCount += 1;
+      if (readCount === 4) {
+        spreadsheet.sheets![1]!.data![0]!.rowData![2]!.values![2]!.effectiveValue =
+          { numberValue: 350_000 };
+      }
+      return spreadsheet;
+    });
+    writePayoutSpreadsheet.mockImplementation(async (requests) => {
+      const worksheetRows = spreadsheet.sheets![0]!.data![0]!.rowData!;
+      for (const request of requests) {
+        const update = request.updateCells;
+        if (update?.start?.sheetId !== 1) continue;
+        const cell =
+          worksheetRows[update.start.rowIndex!]!.values![
+            update.start.columnIndex!
+          ]!;
+        cell.userEnteredFormat = { backgroundColor: READY_SHARE_COLOR };
+        cell.effectiveFormat = { backgroundColor: READY_SHARE_COLOR };
+      }
+    });
+
+    const result = await finalizePayoutExport(
+      "FSN 2026",
+      "499171225046876170",
+      "thread",
+      managedSnapshot,
+      "ready",
+    );
+
+    expect(readPayoutSpreadsheet).toHaveBeenCalledTimes(4);
+    expect(result.shareAmounts).toEqual([
+      { userId: "111", thisRun: 100_000, totalUnclaimed: 350_000 },
+    ]);
+  });
+
+  it.each(["loading", "missing"])(
+    "polls %s run totals and returns the same read-back as participant shares",
+    async (state) => {
+      jest.useFakeTimers();
+      try {
+        const managedSnapshot = { ...snapshot(), status: "synced" as const };
+        const initial = grid(true);
+        initial.sheets![1]!.data![0]!.rowData![2]!.values![2]!.effectiveValue =
+          { numberValue: 150_000 };
+        const loading = grid(true);
+        const rows = loading.sheets![0]!.data![0]!.rowData!;
+        rows[9]!.values![6]!.userEnteredFormat = {
+          backgroundColor: READY_SHARE_COLOR,
+        };
+        rows[9]!.values![6]!.effectiveFormat = {
+          backgroundColor: READY_SHARE_COLOR,
+        };
+        rows[5]!.values![6] = state === "loading"
+          ? { effectiveValue: { stringValue: "Loading..." } }
+          : {};
+        const ready = structuredClone(loading);
+        ready.sheets![0]!.data![0]!.rowData![5]!.values![6] = {
+          effectiveValue: { numberValue: 175_000 },
+        };
+        readPayoutSpreadsheet
+          .mockResolvedValueOnce(initial)
+          .mockResolvedValueOnce(initial)
+          .mockResolvedValueOnce(loading)
+          .mockResolvedValue(ready);
+        const result = finalizePayoutExport(
+          "FSN 2026",
+          "499171225046876170",
+          "thread",
+          managedSnapshot,
+          "ready",
+        );
+        await jest.runAllTimersAsync();
+        await expect(result).resolves.toMatchObject({
+          payoutTotals: { totalEarned: 175_000, reimbursements: 25_000 },
+          shareAmounts: [
+            { userId: "111", thisRun: 100_000, totalUnclaimed: 250_000 },
+          ],
+        });
+        expect(writePayoutSpreadsheet).toHaveBeenCalledTimes(3);
+        expect(readPayoutSpreadsheet).toHaveBeenCalledTimes(4);
+      } finally {
+        jest.useRealTimers();
+      }
+    },
+  );
+
+  it("does not confirm Ready when run totals stay unevaluated", async () => {
+    jest.useFakeTimers();
+    try {
+      const managedSnapshot = { ...snapshot(), status: "synced" as const };
+      const initial = grid(true);
+      initial.sheets![1]!.data![0]!.rowData![2]!.values![2]!.effectiveValue =
+        { numberValue: 150_000 };
+      const updated = grid(true);
+      const rows = updated.sheets![0]!.data![0]!.rowData!;
+      rows[9]!.values![6]!.userEnteredFormat = {
+        backgroundColor: READY_SHARE_COLOR,
+      };
+      rows[9]!.values![6]!.effectiveFormat = {
+        backgroundColor: READY_SHARE_COLOR,
+      };
+      rows[7]!.values![6] = { effectiveValue: { stringValue: "Loading..." } };
+      readPayoutSpreadsheet
+        .mockResolvedValueOnce(initial)
+        .mockResolvedValueOnce(initial)
+        .mockResolvedValue(updated);
+      const result = finalizePayoutExport(
+        "FSN 2026",
+        "499171225046876170",
+        "thread",
+        managedSnapshot,
+        "ready",
+      );
+      const rejection = expect(result).rejects.toThrow("must be evaluated numbers");
+      await jest.runAllTimersAsync();
+      await rejection;
+      expect(writePayoutSpreadsheet).toHaveBeenCalledTimes(3);
+      expect(readPayoutSpreadsheet).toHaveBeenCalledTimes(7);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it.each(["stale", "unevaluated"])(
+    "stops after five reads when the Combined balance stays %s",
+    async (balanceState) => {
+      jest.useFakeTimers();
+      try {
+        const managedSnapshot = snapshot();
+        managedSnapshot.status = "synced";
+        const initialSpreadsheet = grid(true);
+        const updatedSpreadsheet = grid(true);
+        const runCell =
+          updatedSpreadsheet.sheets![0]!.data![0]!.rowData![9]!.values![6]!;
+        runCell.userEnteredFormat = { backgroundColor: READY_SHARE_COLOR };
+        runCell.effectiveFormat = { backgroundColor: READY_SHARE_COLOR };
+        if (balanceState === "unevaluated") {
+          updatedSpreadsheet.sheets![1]!.data![0]!.rowData![2]!.values![2]!
+            .effectiveValue = { stringValue: "Loading..." };
+        }
+        readPayoutSpreadsheet
+          .mockResolvedValue(updatedSpreadsheet)
+          .mockResolvedValueOnce(initialSpreadsheet)
+          .mockResolvedValueOnce(initialSpreadsheet);
+        const result = finalizePayoutExport(
+          "FSN 2026",
+          "499171225046876170",
+          "thread",
+          managedSnapshot,
+          "ready",
+        );
+        const rejection = expect(result).rejects.toThrow(
+          balanceState === "stale"
+            ? "has not yet included this run"
+            : "evaluated numeric payout amounts",
+        );
+
+        await jest.runAllTimersAsync();
+        await rejection;
+
+        expect(readPayoutSpreadsheet).toHaveBeenCalledTimes(7);
+        expect(writePayoutSpreadsheet).toHaveBeenCalledTimes(3);
+        expect(jest.getTimerCount()).toBe(0);
+      } finally {
+        jest.useRealTimers();
+      }
+    },
+  );
 
   it("reconciles every potentially committed roster after consecutive timeouts", async () => {
     const spreadsheet = grid(true);

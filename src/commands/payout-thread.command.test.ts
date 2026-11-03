@@ -8,9 +8,20 @@ const getSignupExportOrganizerId = jest.fn(
 const assertSignupExportEditable = jest.fn(
   async (_guildId: string, _threadId: string) => undefined,
 );
+let spreadsheetQueue: Promise<void> = Promise.resolve();
+const queuePayoutSheetOperation = async <Result>(
+  action: () => Promise<Result>,
+): Promise<Result> => {
+  const operation = spreadsheetQueue.then(action);
+  spreadsheetQueue = operation.then(
+    () => undefined,
+    () => undefined,
+  );
+  return operation;
+};
 jest.unstable_mockModule("../services/payout-sheet-export.service.js", () => ({
   syncPayoutExport,
-  queuePayoutSheetOperation: async (action: () => Promise<unknown>) => action(),
+  queuePayoutSheetOperation,
 }));
 jest.unstable_mockModule("../services/signup-export.service.js", () => ({
   getSignupExportOrganizerId,
@@ -122,6 +133,7 @@ const createHarness = (parentId = "forum") => {
 
 describe("payout thread commands", () => {
   beforeEach(() => {
+    spreadsheetQueue = Promise.resolve();
     syncPayoutExport.mockReset().mockResolvedValue("");
     getSignupExportOrganizerId.mockReset().mockResolvedValue(null);
     assertSignupExportEditable.mockReset().mockResolvedValue(undefined);
@@ -315,6 +327,50 @@ describe("payout thread commands", () => {
     expect(memberList.has("333")).toBe(true);
     expect(reply).toHaveBeenCalledWith(
       "Roster updated successfully. Participants: **2**.",
+    );
+  });
+
+  it("rechecks a prepared roster edit inside the queue after finalization wins", async () => {
+    const { interaction, starter, thread } = createHarness();
+    await changeShareParticipantsCommand.execute(interaction as never);
+    const message = {
+      guildId: "guild",
+      guild: interaction.guild,
+      channelId: thread.id,
+      channel: thread,
+      client: interaction.client,
+      author: { id: "editor", bot: false },
+      member: { permissions: { has: jest.fn(() => true) } },
+      content: "01: Champ - <@222>",
+      reply: jest.fn(async (_content: string) => undefined),
+    };
+    await handleShareParticipantsMessage(message as never);
+
+    let releaseFinalization!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      releaseFinalization = resolve;
+    });
+    const finalization = queuePayoutSheetOperation(async () => {
+      await blocked;
+      assertSignupExportEditable.mockRejectedValue(
+        new Error("This payout is being finalized"),
+      );
+    });
+    const edit = handleShareParticipantsMessage({
+      ...message,
+      content: "done",
+    } as never);
+    expect(assertSignupExportEditable).toHaveBeenCalledTimes(1);
+    releaseFinalization();
+    await Promise.all([finalization, edit]);
+
+    expect(assertSignupExportEditable).toHaveBeenCalledTimes(2);
+    expect(starter.edit).not.toHaveBeenCalled();
+    expect(thread.members.add).not.toHaveBeenCalled();
+    expect(thread.members.remove).not.toHaveBeenCalled();
+    expect(syncPayoutExport).not.toHaveBeenCalled();
+    expect(message.reply).toHaveBeenLastCalledWith(
+      expect.stringContaining("This payout is being finalized"),
     );
   });
 

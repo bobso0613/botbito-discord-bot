@@ -31,6 +31,7 @@ const finalizePayoutExport = jest.fn<
 >(async (_worksheet, _guildId, _threadId, _snapshot, status) => ({
   sheetName: "Sheet",
   columnName: "EB 27/10",
+  payoutTotals: { totalEarned: 200_000, reimbursements: 50_000 },
   shareAmounts:
     status === "ready"
       ? [
@@ -53,6 +54,7 @@ const queuePayoutSheetOperation = async <Result>(
 jest.unstable_mockModule("../services/payout-sheet-export.service.js", () => ({
   finalizePayoutExport,
   queuePayoutSheetOperation,
+  PayoutSheetNoWriteAttemptError: class extends Error {},
 }));
 const save = jest.fn(async () => undefined);
 let entry: SignupExportHistoryEntry;
@@ -207,6 +209,7 @@ const resetState = (): void => {
       async (_worksheet, _guildId, _threadId, _snapshot, status) => ({
         sheetName: "Sheet",
         columnName: "EB 27/10",
+        payoutTotals: { totalEarned: 200_000, reimbursements: 50_000 },
         shareAmounts:
           status === "ready"
             ? [
@@ -332,7 +335,7 @@ describe("/set share status", () => {
     expect(publicMessages[0]?.content).toContain(
       "**Sheet (EB 27/10)** updated successfully. DMs sent to participants.",
     );
-    expect(publicMessages).toHaveLength(1);
+    expect(publicMessages).toHaveLength(2);
     expect(thread.name).toBe("✅Run Name - 02/11 [guild emoji]");
     expect(thread.setLocked).toHaveBeenCalledWith(true);
     expect(entry.shareFinalization?.completed).toBe(true);
@@ -483,6 +486,9 @@ describe("/set share status", () => {
       publicMessages: [
         { content: "previous result", status: "sent", messageId: "public-1" },
       ],
+      summaryMessages: [
+        { content: "previous summary", status: "sent", messageId: "summary-1" },
+      ],
       locked: true,
     };
     thread.name = "✅Run Name - 02/11 [guild emoji]";
@@ -536,7 +542,7 @@ describe("/set share status", () => {
     expect(finalizePayoutExport).toHaveBeenCalledTimes(1);
     expect(firstDm).toHaveBeenCalledTimes(1);
     expect(secondDm).toHaveBeenCalledTimes(1);
-    expect(thread.send).not.toHaveBeenCalled();
+    expect(thread.send).toHaveBeenCalledTimes(1);
     expect(thread.setLocked).toHaveBeenCalledTimes(1);
     expect(entry.shareFinalization?.completed).toBe(true);
   });

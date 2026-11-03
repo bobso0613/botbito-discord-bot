@@ -26,11 +26,19 @@ export interface PayoutFinalizationShareAmount {
   totalUnclaimed: number;
 }
 
+/** Evaluated financial inputs from the finalized run column. */
+export interface PayoutFinalizationTotals {
+  totalEarned: number;
+  reimbursements: number;
+}
+
 /** Confirmed sheet/column identity and evaluated balances after share finalization. */
 export interface PayoutSheetFinalizationResult {
   sheetName: string;
   columnName: string;
   shareAmounts: PayoutFinalizationShareAmount[];
+  /** Ready run inputs from rows 6 and 8 of the exact managed column. */
+  payoutTotals?: PayoutFinalizationTotals;
 }
 
 /** Participant IDs and identities recorded for one pending roster write. */

@@ -2,12 +2,12 @@ import type { sheets_v4 } from "googleapis";
 import type {
   PayoutSheetMember,
   PayoutFinalizationShareAmount,
+  PayoutFinalizationTotals,
   PayoutSheetSnapshot,
   PayoutSheetFormula,
   PayoutSheetGrid as Grid,
   PayoutSheetRequest as Request,
 } from "../types/payout-sheet-export.js";
-import { parseZeny } from "./payout-sheet.js";
 import {
   EMPTY_SHARE_COLOR,
   PAYOUT_BACKGROUND_FIELDS,
@@ -15,12 +15,14 @@ import {
   PAYOUT_VALUE_AND_BACKGROUND_FIELDS,
   PENDING_SHARE_COLOR,
   READY_SHARE_COLOR,
+  NO_SHARE_COLOR,
 } from "../constants/payout-sheet-export.js";
 
 export {
   PAYOUT_EXPORT_METADATA_KEY,
   PENDING_SHARE_COLOR,
   READY_SHARE_COLOR,
+  NO_SHARE_COLOR,
 } from "../constants/payout-sheet-export.js";
 
 /** Converts a zero-based column index to an A1 column label. */
@@ -1931,21 +1933,133 @@ export const getPayoutFinalizationColumnName = (
   return name;
 };
 
-/** Reads an evaluated number, falling back only to a literal value when available. */
+/** Confirms neither managed identity remains after deleting a run column. */
+export const assertPayoutFinalizationColumnRemoved = (
+  spreadsheet: sheets_v4.Schema$Spreadsheet,
+  worksheet: string,
+  identifier: string,
+): void => {
+  const sheets = spreadsheet.sheets ?? [];
+  if (
+    sheets.filter((sheet) => sheet.properties?.title === worksheet).length !== 1
+  ) {
+    throw new Error("The payout worksheet could not be verified after deletion.");
+  }
+  if (
+    sheets.some(
+      (sheet) =>
+        (sheet.developerMetadata ?? []).some(
+          (entry) =>
+            entry.metadataKey === PAYOUT_EXPORT_METADATA_KEY &&
+            entry.metadataValue === identifier,
+        ) ||
+        (sheetGrid(sheet)[4] ?? []).some((cell) => cell?.note === identifier),
+    )
+  ) {
+    throw new Error(
+      "The run column's Export ID is still present after deletion; remove the exact run column manually.",
+    );
+  }
+};
+
+/** Indicates that a formula-backed payout amount has not produced a numeric result yet. */
+export class PayoutFinalizationAmountsNotReadyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PayoutFinalizationAmountsNotReadyError";
+  }
+}
+
+/** Reads only a numeric effective value; entered formulas and display text are not evaluated amounts. */
 const payoutCellAmount = (
   cell?: sheets_v4.Schema$CellData,
 ): number | undefined => {
-  const value =
-    cell?.effectiveValue?.numberValue ??
-    cell?.effectiveValue?.stringValue ??
-    cell?.userEnteredValue?.numberValue ??
-    cell?.userEnteredValue?.stringValue;
-  if (value == null) return undefined;
-  return typeof value === "number" ? value : parseZeny(value);
+  const value = cell?.effectiveValue?.numberValue;
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
 };
 
-/** Checks a cell's effective or entered background against the Ready yellow. */
-const hasReadyShareColor = (cell?: sheets_v4.Schema$CellData): boolean => {
+/** Reads evaluated earned/reimbursement totals from the exact guild run column. */
+export const readPayoutFinalizationTotals = (
+  spreadsheet: sheets_v4.Schema$Spreadsheet,
+  worksheet: string,
+  identifier: string,
+): PayoutFinalizationTotals => {
+  const { grid, column } = resolveFinalizationColumn(
+    spreadsheet,
+    worksheet,
+    identifier,
+  );
+  const totalEarned = payoutCellAmount(grid[5]?.[column]);
+  const reimbursements = payoutCellAmount(grid[7]?.[column]);
+  if (totalEarned == null || reimbursements == null) {
+    throw new PayoutFinalizationAmountsNotReadyError(
+      "The run's Total earned (row 6) and Reimbursements (row 8) must be evaluated numbers.",
+    );
+  }
+  return { totalEarned, reimbursements };
+};
+
+const getCombinedShareReadyColumn = (
+  spreadsheet: sheets_v4.Schema$Spreadsheet,
+  guildId: string,
+): { grid: Grid; column: number } => {
+  const combined = (spreadsheet.sheets ?? []).find(
+    (sheet) => sheet.properties?.title === "Combined",
+  );
+  if (!combined) throw new Error("The Combined payout worksheet is missing.");
+  const grid = sheetGrid(combined);
+  const guildStartColumn = (grid[0] ?? []).findIndex(
+    (cell) => payoutCellText(cell).trim() === guildId,
+  );
+  const column = (grid[1] ?? []).findIndex(
+    (cell, index) =>
+      index >= guildStartColumn &&
+      payoutCellText(cell).trim().toLowerCase() === "share ready",
+  );
+  if (guildStartColumn < 0 || column < 0) {
+    throw new Error(
+      "The guild's Combined Share Ready column could not be located.",
+    );
+  }
+  return { grid, column };
+};
+
+/** Reads the current evaluated Combined balance before this run is marked Ready. */
+export const readPayoutCombinedShareReadyAmounts = (
+  spreadsheet: sheets_v4.Schema$Spreadsheet,
+  guildId: string,
+  members: readonly PayoutSheetMember[],
+): ReadonlyMap<string, number> => {
+  if (!members.length) {
+    throw new Error("The saved payout participant identities are unavailable.");
+  }
+  const { grid, column } = getCombinedShareReadyColumn(spreadsheet, guildId);
+  const rows = identityRows(grid, 0, 2);
+  return new Map(
+    members.map((member) => {
+      const tag = normalizeTag(member.discordTag);
+      const row = rows.get(tag);
+      if (row == null) {
+        throw new Error(`Could not find the Combined payout row for @${tag}.`);
+      }
+      const amount = payoutCellAmount(grid[row]?.[column]);
+      if (amount == null) {
+        throw new PayoutFinalizationAmountsNotReadyError(
+          `The Combined Share Ready balance for @${tag} is not an evaluated number yet.`,
+        );
+      }
+      return [member.userId, amount];
+    }),
+  );
+};
+
+/** Checks a cell's effective or entered background against its final status. */
+const hasFinalShareColor = (
+  cell: sheets_v4.Schema$CellData | undefined,
+  expectedColor: typeof READY_SHARE_COLOR,
+): boolean => {
   const color =
     cell?.effectiveFormat?.backgroundColorStyle?.rgbColor ??
     cell?.effectiveFormat?.backgroundColor ??
@@ -1957,18 +2071,19 @@ const hasReadyShareColor = (cell?: sheets_v4.Schema$CellData): boolean => {
       (component) =>
         Math.abs(
           ((color as Record<string, number | undefined>)[component] ?? 0) -
-            READY_SHARE_COLOR[component as keyof typeof READY_SHARE_COLOR],
+            expectedColor[component as keyof typeof expectedColor],
         ) < 0.01,
     ),
   );
 };
 
-/** Confirms all old purple cells are gone and each saved participant cell is effectively yellow. */
+/** Confirms old purple cells are gone and participants have their final status color. */
 export const assertPayoutFinalizationShareColors = (
   spreadsheet: sheets_v4.Schema$Spreadsheet,
   worksheet: string,
   identifier: string,
   members: readonly PayoutSheetMember[],
+  status: "ready" | "done-no-share" = "ready",
 ): void => {
   const { grid, column } = resolveFinalizationColumn(
     spreadsheet,
@@ -1986,9 +2101,11 @@ export const assertPayoutFinalizationShareColors = (
   const participantRows = identityRows(grid, 2, 9);
   for (const member of members) {
     const row = participantRows.get(normalizeTag(member.discordTag));
-    if (row == null || !hasReadyShareColor(grid[row]?.[column])) {
+    const colorName = status === "ready" ? "yellow" : "green";
+    const expectedColor = status === "ready" ? READY_SHARE_COLOR : NO_SHARE_COLOR;
+    if (row == null || !hasFinalShareColor(grid[row]?.[column], expectedColor)) {
       throw new Error(
-        `The run share for @${normalizeTag(member.discordTag)} is not confirmed yellow; update Google Sheets manually.`,
+        `The run share for @${normalizeTag(member.discordTag)} is not confirmed ${colorName}; update Google Sheets manually.`,
       );
     }
   }
@@ -2000,6 +2117,7 @@ export const assertPayoutFinalizationShareColors = (
  * @param identifier Saved Export ID from the starter post and history.
  * @param guildId Guild identifier used to select its Combined Share Ready column.
  * @param members Exported participants with their saved Discord identities.
+ * @param previousTotals Evaluated Combined balances before this run was marked Ready.
  * @returns Exact run amount and current total unclaimed amount for each participant.
  * @throws When identities or evaluated amounts are missing or ambiguous.
  */
@@ -2009,6 +2127,7 @@ export const readPayoutFinalizationShareAmounts = (
   identifier: string,
   guildId: string,
   members: readonly PayoutSheetMember[],
+  previousTotals?: ReadonlyMap<string, number>,
 ): PayoutFinalizationShareAmount[] => {
   assertPayoutFinalizationShareColors(
     spreadsheet,
@@ -2024,25 +2143,8 @@ export const readPayoutFinalizationShareAmounts = (
   if (!members.length) {
     throw new Error("The saved payout participant identities are unavailable.");
   }
-  const combined = (spreadsheet.sheets ?? []).find(
-    (sheet) => sheet.properties?.title === "Combined",
-  );
-  if (!combined) throw new Error("The Combined payout worksheet is missing.");
-  const combinedGrid = sheetGrid(combined);
-  const guildStartColumn = (combinedGrid[0] ?? []).findIndex(
-    (cell) => payoutCellText(cell).trim() === guildId,
-  );
-  const totalUnclaimedColumn = (combinedGrid[1] ?? []).findIndex(
-    (cell, index) =>
-      index >= guildStartColumn &&
-      payoutCellText(cell).trim().toLowerCase() === "share ready",
-  );
-  if (guildStartColumn < 0 || totalUnclaimedColumn < 0) {
-    throw new Error(
-      "The guild's Combined Share Ready column could not be located.",
-    );
-  }
-
+  const { grid: combinedGrid, column: totalUnclaimedColumn } =
+    getCombinedShareReadyColumn(spreadsheet, guildId);
   const participantRows = identityRows(grid, 2, 9);
   const combinedRows = identityRows(combinedGrid, 0, 2);
   return members.map((member) => {
@@ -2059,8 +2161,17 @@ export const readPayoutFinalizationShareAmounts = (
       combinedGrid[combinedRow]?.[totalUnclaimedColumn],
     );
     if (thisRun == null || totalUnclaimed == null) {
-      throw new Error(
-        `Could not read recalculated payout amounts for @${tag}.`,
+      throw new PayoutFinalizationAmountsNotReadyError(
+        `Could not read evaluated numeric payout amounts for @${tag}.`,
+      );
+    }
+    const previousTotal = previousTotals?.get(member.userId);
+    if (
+      previousTotal != null &&
+      totalUnclaimed < previousTotal + thisRun
+    ) {
+      throw new PayoutFinalizationAmountsNotReadyError(
+        `The Combined Share Ready balance for @${tag} has not yet included this run.`,
       );
     }
     return { userId: member.userId, thisRun, totalUnclaimed };
@@ -2134,7 +2245,12 @@ export const planPayoutSheetFinalization = (
         sheetId,
         row,
         column,
-        { userEnteredFormat: { backgroundColor: READY_SHARE_COLOR } },
+        {
+          userEnteredFormat: {
+            backgroundColor:
+              status === "ready" ? READY_SHARE_COLOR : NO_SHARE_COLOR,
+          },
+        },
         PAYOUT_BACKGROUND_FIELDS,
       ),
     );

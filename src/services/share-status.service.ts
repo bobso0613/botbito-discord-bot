@@ -17,11 +17,15 @@ import {
 } from "../commands/payout-thread.command.js";
 import {
   finalizePayoutExport,
+  PayoutSheetNoWriteAttemptError,
   queuePayoutSheetOperation,
 } from "./payout-sheet-export.service.js";
 import { withSignupExportHistory } from "./signup-export.service.js";
 import { buildReadyShareStatusEmbed } from "../templates/payout.template.js";
 import type { InteractionContext } from "../types/interaction-context.js";
+import { formatZeny } from "../utils/format-zeny.js";
+
+const finalizationQueues = new Map<string, Promise<void>>();
 
 /** User-facing terminal outcomes supported for payout-share finalization. */
 export const shareStatusChoices = [
@@ -199,30 +203,36 @@ const deliverReadyMessages = async (
   }, Promise.resolve());
 };
 
-/** Publishes report chunks once, using the public interaction response for the first chunk. */
+/** Publishes chunks once; summaries use thread messages rather than the interaction reply. */
 const publishReport = async (
   interaction: ChatInputCommandInteraction,
   thread: ThreadChannel,
   state: SignupExportFinalization,
   content: string,
   save: () => Promise<void>,
+  destination: "publicMessages" | "summaryMessages" = "publicMessages",
 ): Promise<string | null> => {
-  state.publicMessages ??= splitReport(content).map((chunk) => ({
-    content: chunk,
-    status: "pending",
-  }));
+  const messages: NonNullable<SignupExportFinalization["publicMessages"]> =
+    (state[destination] ??= splitReport(content).map((chunk) => ({
+      content: chunk,
+      status: "pending",
+    })));
+  const label =
+    destination === "publicMessages" ? "public status report" : "payout summary";
+  const useInteractionReply = destination === "publicMessages";
   await save();
   let editedInteractionReply = false;
-  for (const [index, report] of state.publicMessages.entries()) {
+  for (const [index, report] of messages.entries()) {
     if (report.status === "sent") continue;
     if (report.status !== "pending") {
-      return "A public status report may have been partially delivered; inspect the thread before retrying this same status.";
+      return `A ${label} may have been partially delivered; inspect the thread before retrying this same status.`;
     }
     report.status = "attempting";
     await save();
+    const isInteractionReply = index === 0 && useInteractionReply;
     try {
       const message =
-        index === 0
+        isInteractionReply
           ? await interaction.editReply({
               content: report.content,
               allowedMentions: { parse: [] },
@@ -231,17 +241,21 @@ const publishReport = async (
               content: report.content,
               allowedMentions: { parse: [] },
             });
-      if (index === 0) editedInteractionReply = true;
+      if (isInteractionReply) editedInteractionReply = true;
       report.status = "sent";
       report.messageId = message.id;
       await save();
     } catch (error) {
       report.status = "failed";
       await save();
-      return `The public status report could not be confirmed: ${safeError(error)}. Check the thread and publish the result manually.`;
+      return `The ${label} could not be confirmed: ${safeError(error)}. Check the thread and publish the result manually.`;
     }
   }
-  if (!editedInteractionReply && state.publicMessages[0]?.status === "sent") {
+  if (
+    useInteractionReply &&
+    !editedInteractionReply &&
+    messages[0]?.status === "sent"
+  ) {
     await interaction.editReply({
       content:
         "This status report was already published. The selected status is unchanged; no notifications were repeated.",
@@ -249,6 +263,55 @@ const publishReport = async (
     });
   }
   return null;
+};
+
+const publishLockedPayoutSummary = async (
+  interaction: ChatInputCommandInteraction,
+  thread: ThreadChannel,
+  state: SignupExportFinalization,
+  members: readonly PayoutSheetMember[],
+  save: () => Promise<void>,
+): Promise<string | null> => {
+  if (state.status !== "ready" || state.sheets !== "confirmed" || !state.locked) {
+    return null;
+  }
+  return publishReport(
+    interaction,
+    thread,
+    state,
+    buildReadyPayoutSummary(state, members),
+    save,
+    "summaryMessages",
+  );
+};
+
+const buildReadyPayoutSummary = (
+  state: SignupExportFinalization,
+  members: readonly PayoutSheetMember[],
+): string => {
+  if (!state.payoutTotals) {
+    return "Payout summary is unavailable for this older saved finalization; inspect the run column in Google Sheets.";
+  }
+  const { totalEarned, reimbursements } = state.payoutTotals;
+  const amounts = state.shareAmounts ?? {};
+  const uniqueMembers = new Map(
+    members.map((member) => [member.userId, member]),
+  );
+  const breakdown = [...uniqueMembers.values()].map((member) => {
+    const share = amounts[member.userId];
+    if (!share) {
+      return `${escapeMarkdown(member.displayName)} - verified share unavailable; inspect Google Sheets.`;
+    }
+    return `${escapeMarkdown(member.displayName)} - ${formatZeny(Math.trunc(share.thisRun))}`;
+  });
+  return [
+    `**Total earned**: ${formatZeny(Math.trunc(totalEarned))}`,
+    `less **Reimbursements**: ${formatZeny(Math.trunc(reimbursements))}`,
+    `total: ${formatZeny(Math.trunc(totalEarned - reimbursements))}`,
+    "",
+    "Breakdown:",
+    ...breakdown,
+  ].join("\n");
 };
 
 /** Builds truthful status and partial-failure text from confirmed sheet and Discord outcomes. */
@@ -278,7 +341,7 @@ const buildResultReport = (
   } else if (status === "done-no-share") {
     lines.push(
       sheets === "confirmed"
-        ? `${sheetTarget} updated successfully. Note: No share; no DMs were sent. The organizer must manually adjust amounts and formulas. These amounts may appear claimable until corrected; financial values were not changed.`
+        ? `${sheetTarget} updated successfully. Note: No share; no DMs were sent. Cells are green (#00FF00), not Ready yellow. The organizer must manually adjust amounts and formulas; financial values were not changed.`
         : "Google Sheets was not confirmed updated. This run has no share: the organizer must manually correct the run's amounts, formulas, and status. These amounts may appear claimable until corrected; financial values were not changed automatically.",
     );
   } else {
@@ -392,7 +455,10 @@ const finalizeSheets = async (
     return "A previous Sheets operation was interrupted and will not be repeated; inspect and correct the run manually.";
   }
   if (state.sheets === "manual") {
-    return "Google Sheets was not confirmed; manual correction is required and this command will not repeat the Sheets operation.";
+    return (
+      state.sheetsNotice ??
+      "Google Sheets was not confirmed; manual correction is required and this command will not repeat the Sheets operation."
+    );
   }
   if (state.sheets !== "pending") return null;
 
@@ -412,13 +478,21 @@ const finalizeSheets = async (
       state.shareAmounts = Object.fromEntries(
         result.shareAmounts.map(({ userId, ...share }) => [userId, share]),
       );
+      state.payoutTotals = result.payoutTotals;
     }
     state.sheets = "confirmed";
     await save();
     return null;
   } catch (error) {
+    if (error instanceof PayoutSheetNoWriteAttemptError) {
+      state.sheets = "pending";
+      const notice = `Google Sheets was not changed (${safeError(error)}). Correct the sheet issue and run this same status command again.`;
+      await save();
+      return notice;
+    }
     state.sheets = "manual";
     const notice = `Google Sheets was not confirmed (${safeError(error)}); manual correction is required.`;
+    state.sheetsNotice = notice;
     await save();
     return notice;
   }
@@ -485,82 +559,118 @@ const finalizeStatus = async (
   );
   requireBotPermissions(interaction, thread);
 
-  return withSignupExportHistory(guildId, thread.id, async (entry, save) => {
-    if (
-      !canEditShare(
-        entry.organizerId ?? null,
-        interaction.user.id,
-        interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ??
-          false,
-      )
-    ) {
-      throw new Error(
-        "Only the original organizer or a member with Manage Server permission can set this payout status.",
+  const prepared = await queuePayoutSheetOperation(() =>
+    withSignupExportHistory(guildId, thread.id, async (entry, save) => {
+      if (
+        !canEditShare(
+          entry.organizerId ?? null,
+          interaction.user.id,
+          interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ??
+            false,
+        )
+      ) {
+        throw new Error(
+          "Only the original organizer or a member with Manage Server permission can set this payout status.",
+        );
+      }
+      const worksheet = validateFinalizationEntry(
+        entry,
+        guildId,
+        starter.content,
       );
-    }
-    const worksheet = validateFinalizationEntry(
-      entry,
-      guildId,
-      starter.content,
-    );
-    const snapshot = entry.sheetsSync!;
-    const state = await getOrStartFinalization(entry, thread, status, save);
-    await finalizeSheets(
-      state,
-      worksheet,
-      guildId,
-      thread.id,
-      snapshot,
-      status,
-      save,
-    );
-    const titleFailed = await updateThreadTitle(thread, state, status, save);
-
-    if (status === "ready" && state.sheets === "confirmed") {
-      await deliverReadyMessages(
-        interaction,
-        thread,
+      const snapshot = entry.sheetsSync!;
+      const state = await getOrStartFinalization(entry, thread, status, save);
+      const sheetsNotice = await finalizeSheets(
         state,
-        entry.participantUserIds ?? snapshot.userIds,
-        snapshot.title,
-        snapshot.members ?? snapshot.syncedMembers ?? [],
+        worksheet,
+        guildId,
+        thread.id,
+        snapshot,
+        status,
         save,
       );
-    }
-    const report = buildResultReport(
-      status,
-      state.sheets,
-      state.sheetName,
-      state.columnName,
-      titleFailed,
-      state.dmDeliveries,
-      getInterruptedDmIds(state.dmDeliveries),
-    );
-    const publicFailure = await publishReport(
+      return {
+        state: structuredClone(state),
+        snapshot: structuredClone(snapshot),
+        participantIds: [...(entry.participantUserIds ?? snapshot.userIds)],
+        sheetsNotice,
+      };
+    }),
+  );
+  const { state, snapshot, participantIds, sheetsNotice } = prepared;
+  const save = (): Promise<void> =>
+    withSignupExportHistory(guildId, thread.id, async (entry, persist) => {
+      entry.shareFinalization = structuredClone(state);
+      await persist();
+    });
+  if (state.sheets === "pending") {
+    await interaction.editReply({
+      content:
+        sheetsNotice ??
+        "Google Sheets was not changed. Correct the sheet issue and run this same status command again.",
+      allowedMentions: { parse: [] },
+    });
+    return;
+  }
+  const titleFailed = await updateThreadTitle(thread, state, status, save);
+
+  if (status === "ready" && state.sheets === "confirmed") {
+    await deliverReadyMessages(
       interaction,
       thread,
       state,
-      report,
+      participantIds,
+      snapshot.title,
+      snapshot.members ?? snapshot.syncedMembers ?? [],
       save,
     );
-    const lockFailure = await lockThread(thread, state, save);
-    if (publicFailure || lockFailure) {
-      await thread.send({
-        content: [publicFailure, lockFailure].filter(Boolean).join("\n"),
-        allowedMentions: { parse: [] },
-      });
-    }
-    const reportComplete =
-      state.publicMessages?.length &&
-      state.publicMessages.every((message) => message.status === "sent");
-    state.completed = Boolean(
-      state.titleUpdated && reportComplete && state.locked,
+  }
+  const report = buildResultReport(
+    status,
+    state.sheets,
+    state.sheetName,
+    state.columnName,
+    titleFailed,
+    state.dmDeliveries,
+    getInterruptedDmIds(state.dmDeliveries),
+  );
+  const publicFailure = await publishReport(
+    interaction,
+    thread,
+    state,
+    [report, sheetsNotice].filter(Boolean).join("\n"),
+    save,
+  );
+  const lockFailure = await lockThread(thread, state, save);
+  const summaryFailure = await publishLockedPayoutSummary(
+    interaction,
+    thread,
+    state,
+    snapshot.members ?? snapshot.syncedMembers ?? [],
+    save,
+  );
+  if (publicFailure || lockFailure || summaryFailure) {
+    await thread.send({
+      content: [publicFailure, lockFailure, summaryFailure].filter(Boolean).join("\n"),
+      allowedMentions: { parse: [] },
+    });
+  }
+  const reportComplete =
+    state.publicMessages?.length &&
+    state.publicMessages.every((message) => message.status === "sent");
+  state.completed = Boolean(
+    state.titleUpdated && reportComplete && state.locked,
+  );
+  if (status === "ready" && state.sheets === "confirmed") {
+    state.completed &&= Boolean(
+      state.summaryMessages?.length &&
+      state.summaryMessages.every((message) => message.status === "sent"),
     );
-    await save();
-  });
+  }
+  await save();
 };
 
-/** Serializes and completes a payout status lifecycle.
+/** Serializes each thread's lifecycle, holding shared queues only for Sheets and history.
  * @param interaction Authorized guild interaction in the payout thread.
  * @param status Immutable terminal outcome selected by the organizer.
  * @returns Resolves after saving progress and attempting the public result and thread lock.
@@ -568,5 +678,17 @@ const finalizeStatus = async (
 export const finalizeShareStatus = (
   interaction: ChatInputCommandInteraction,
   status: ShareFinalizationStatus,
-): Promise<void> =>
-  queuePayoutSheetOperation(() => finalizeStatus(interaction, status));
+): Promise<void> => {
+  const key = `${interaction.guildId}:${interaction.channelId ?? interaction.channel?.id}`;
+  const previous = finalizationQueues.get(key) ?? Promise.resolve();
+  const operation = previous.then(() => finalizeStatus(interaction, status));
+  const settled = operation.then(
+    () => undefined,
+    () => undefined,
+  );
+  finalizationQueues.set(key, settled);
+  void settled.then(() => {
+    if (finalizationQueues.get(key) === settled) finalizationQueues.delete(key);
+  });
+  return operation;
+};

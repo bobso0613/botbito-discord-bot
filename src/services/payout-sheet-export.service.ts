@@ -12,11 +12,16 @@ import type {
 } from "../types/payout-sheet-export.js";
 import {
   assertPayoutFinalizationShareColors,
+  assertPayoutFinalizationColumnRemoved,
   getPayoutFinalizationColumnName,
   isPayoutSnapshotApplied,
+  PayoutFinalizationAmountsNotReadyError,
   readPayoutFinalizationShareAmounts,
+  readPayoutFinalizationTotals,
+  readPayoutCombinedShareReadyAmounts,
   planPayoutSheetFinalization,
   planPayoutSheetExport,
+  payoutColumnLabel,
   requiresPayoutIdentityMigration,
 } from "../utils/payout-sheet-export.js";
 import { DISCORD_SETTINGS } from "../config/discord-settings.js";
@@ -44,6 +49,20 @@ interface UncertainWrite {
 }
 
 const uncertainWrites = new Map<string, UncertainWrite>();
+const READY_AMOUNT_READ_ATTEMPTS = 5;
+const READY_AMOUNT_READ_INTERVAL_MS = 1_000;
+
+/** A finalization preflight failed before the Sheets API was asked to write. */
+export class PayoutSheetNoWriteAttemptError extends Error {
+  constructor(originalError: unknown) {
+    super(
+      originalError instanceof Error
+        ? originalError.message
+        : String(originalError),
+    );
+    this.name = "PayoutSheetNoWriteAttemptError";
+  }
+}
 
 const spreadsheetQueueKey = (): string =>
   process.env.GOOGLE_SHEETS_ID ?? "unconfigured";
@@ -327,22 +346,57 @@ const synchronizeSpreadsheet = async (
   }
 };
 
-/** Reconciles prior writes, finalizes one exact column, and reads back confirmed Ready balances.
- * @param worksheet Configured guild worksheet containing the run.
- * @param guildId Guild used to locate the Combined Share Ready balance.
- * @param threadId Export thread used to scope uncertain-write protection.
- * @param snapshot Successfully synced export metadata and saved participant identities.
- * @param status Final status to apply to the run column.
- * @returns Confirmed sheet/column labels and evaluated participant balances for Ready.
- * @throws When a prior write is uncertain, the column is unsafe, a write fails, or values cannot be confirmed.
- */
-export const finalizePayoutExport = async (
+/** Polls evaluated Ready balances and run totals without repeating finalization writes. */
+const readReadyFinalizationPayout = async (
   worksheet: string,
+  identifier: string,
   guildId: string,
+  members: readonly PayoutSheetMember[],
+  previousTotals: ReadonlyMap<string, number> | undefined,
+  attemptsRemaining = READY_AMOUNT_READ_ATTEMPTS,
+): Promise<Pick<PayoutSheetFinalizationResult, "shareAmounts" | "payoutTotals">> => {
+  const spreadsheet = await readPayoutSpreadsheet(worksheet, true);
+  try {
+    const shareAmounts = readPayoutFinalizationShareAmounts(
+      spreadsheet,
+      worksheet,
+      identifier,
+      guildId,
+      members,
+      previousTotals,
+    );
+    const payoutTotals = readPayoutFinalizationTotals(
+      spreadsheet,
+      worksheet,
+      identifier,
+    );
+    return { shareAmounts, payoutTotals };
+  } catch (error) {
+    if (
+      !(error instanceof PayoutFinalizationAmountsNotReadyError) ||
+      attemptsRemaining <= 1
+    ) {
+      throw error;
+    }
+    await new Promise((resolve) =>
+      setTimeout(resolve, READY_AMOUNT_READ_INTERVAL_MS),
+    );
+    return readReadyFinalizationPayout(
+      worksheet,
+      identifier,
+      guildId,
+      members,
+      previousTotals,
+      attemptsRemaining - 1,
+    );
+  }
+};
+
+const readFinalizationSpreadsheet = async (
+  worksheet: string,
   threadId: string,
   snapshot: PayoutSheetSnapshot,
-  status: "ready" | "done-no-share" | "cancelled",
-): Promise<PayoutSheetFinalizationResult> => {
+) => {
   if (snapshot.status !== "synced" || snapshot.deliveryIncomplete) {
     throw new Error("The managed payout export is not ready for finalization.");
   }
@@ -369,78 +423,134 @@ export const finalizePayoutExport = async (
     }
     uncertainWrites.delete(spreadsheetId);
   }
-  const columnName = getPayoutFinalizationColumnName(
-    spreadsheet,
-    worksheet,
-    snapshot.identifier,
-  );
-  const requests = planPayoutSheetFinalization(
-    spreadsheet,
-    worksheet,
-    snapshot.identifier,
-    status,
-  );
-  if (!requests.length) {
-    return { sheetName: worksheet, columnName, shareAmounts: [] };
-  }
-  const formattingRequests = requests.filter((request) => request.updateCells);
-  const insertionRequests = requests.filter(
-    (request) => request.insertDimension,
-  );
-  const deletionRequests = requests.filter(
-    (request) => request.deleteDimension,
-  );
-  const writeFinalizationBatch = async (
-    batch: typeof requests,
-  ): Promise<void> => {
-    if (!batch.length) return;
-    try {
-      await writePayoutSpreadsheet(batch);
-    } catch (error) {
-      if (!isDefinitiveSheetsRejection(error)) {
-        uncertainWrites.set(spreadsheetId, {
-          threadId,
-          snapshot: structuredClone(snapshot),
-          operation: "finalization",
-        });
-      }
-      throw error;
-    }
-  };
-  await writeFinalizationBatch(formattingRequests);
-  await writeFinalizationBatch(insertionRequests);
-  if (insertionRequests.length) {
-    const insertedSpreadsheet = await readPayoutSpreadsheet(worksheet, true);
-    getPayoutFinalizationColumnName(
-      insertedSpreadsheet,
+  return spreadsheet;
+};
+
+/** Reconciles prior writes, finalizes one exact column, and reads back confirmed Ready balances.
+ * @param worksheet Configured guild worksheet containing the run.
+ * @param guildId Guild used to locate the Combined Share Ready balance.
+ * @param threadId Export thread used to scope uncertain-write protection.
+ * @param snapshot Successfully synced export metadata and saved participant identities.
+ * @param status Final status to apply to the run column.
+ * @returns Confirmed sheet/column labels and evaluated participant balances for Ready.
+ * @throws PayoutSheetNoWriteAttemptError when preflight fails before a write; other errors can follow a write attempt.
+ */
+export const finalizePayoutExport = async (
+  worksheet: string,
+  guildId: string,
+  threadId: string,
+  snapshot: PayoutSheetSnapshot,
+  status: "ready" | "done-no-share" | "cancelled",
+): Promise<PayoutSheetFinalizationResult> => {
+  let writeAttempted = false;
+  let possibleTemporaryColumn: string | undefined;
+  try {
+    const spreadsheetId = spreadsheetQueueKey();
+    const spreadsheet = await readFinalizationSpreadsheet(
+      worksheet,
+      threadId,
+      snapshot,
+    );
+    const columnName = getPayoutFinalizationColumnName(
+      spreadsheet,
       worksheet,
       snapshot.identifier,
     );
-  }
-  await writeFinalizationBatch(deletionRequests);
-  if (status === "cancelled") {
-    return { sheetName: worksheet, columnName, shareAmounts: [] };
-  }
+    const requests = planPayoutSheetFinalization(
+      spreadsheet,
+      worksheet,
+      snapshot.identifier,
+      status,
+    );
+    if (!requests.length) {
+      return { sheetName: worksheet, columnName, shareAmounts: [] };
+    }
+    const members = snapshot.members ?? snapshot.syncedMembers ?? [];
+    const previousTotals =
+      status === "ready"
+        ? readPayoutCombinedShareReadyAmounts(spreadsheet, guildId, members)
+        : undefined;
+    const formattingRequests = requests.filter((request) => request.updateCells);
+    const insertionRequests = requests.filter(
+      (request) => request.insertDimension,
+    );
+    const deletionRequests = requests.filter(
+      (request) => request.deleteDimension,
+    );
+    const writeFinalizationBatch = async (
+      batch: typeof requests,
+    ): Promise<void> => {
+      if (!batch.length) return;
+      writeAttempted = true;
+      try {
+        await writePayoutSpreadsheet(batch);
+      } catch (error) {
+        if (!isDefinitiveSheetsRejection(error)) {
+          uncertainWrites.set(spreadsheetId, {
+            threadId,
+            snapshot: structuredClone(snapshot),
+            operation: "finalization",
+          });
+        }
+        throw error;
+      }
+    };
+    await writeFinalizationBatch(formattingRequests);
+    const temporaryColumnIndex =
+      insertionRequests[0]?.insertDimension?.range?.startIndex;
+    if (temporaryColumnIndex != null) {
+      possibleTemporaryColumn = payoutColumnLabel(temporaryColumnIndex);
+    }
+    await writeFinalizationBatch(insertionRequests);
+    if (insertionRequests.length) {
+      const insertedSpreadsheet = await readPayoutSpreadsheet(worksheet, true);
+      getPayoutFinalizationColumnName(
+        insertedSpreadsheet,
+        worksheet,
+        snapshot.identifier,
+      );
+    }
+    await writeFinalizationBatch(deletionRequests);
+    possibleTemporaryColumn = undefined;
+    if (status === "cancelled") {
+      const updatedSpreadsheet = await readPayoutSpreadsheet(worksheet, true);
+      assertPayoutFinalizationColumnRemoved(
+        updatedSpreadsheet,
+        worksheet,
+        snapshot.identifier,
+      );
+      return { sheetName: worksheet, columnName, shareAmounts: [] };
+    }
 
-  const updatedSpreadsheet = await readPayoutSpreadsheet(worksheet, true);
-  const members = snapshot.members ?? snapshot.syncedMembers ?? [];
-  assertPayoutFinalizationShareColors(
-    updatedSpreadsheet,
-    worksheet,
-    snapshot.identifier,
-    members,
-  );
-  if (status === "ready") {
-    const shareAmounts = readPayoutFinalizationShareAmounts(
+    if (status === "ready") {
+      const payout = await readReadyFinalizationPayout(
+        worksheet,
+        snapshot.identifier,
+        guildId,
+        members,
+        previousTotals,
+      );
+      return { sheetName: worksheet, columnName, ...payout };
+    }
+
+    const updatedSpreadsheet = await readPayoutSpreadsheet(worksheet, true);
+    assertPayoutFinalizationShareColors(
       updatedSpreadsheet,
       worksheet,
       snapshot.identifier,
-      guildId,
       members,
+      status,
     );
-    return { sheetName: worksheet, columnName, shareAmounts };
+    return { sheetName: worksheet, columnName, shareAmounts: [] };
+  } catch (error) {
+    if (!writeAttempted) throw new PayoutSheetNoWriteAttemptError(error);
+    if (possibleTemporaryColumn) {
+      throw new Error(
+        `Temporary column ${possibleTemporaryColumn} may remain beside the run in "${worksheet}"; inspect and remove it manually. ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    throw error;
   }
-  return { sheetName: worksheet, columnName, shareAmounts: [] };
 };
 
 const synchronizeEntry = async (
