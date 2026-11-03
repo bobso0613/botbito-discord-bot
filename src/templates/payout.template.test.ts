@@ -6,6 +6,7 @@ import {
   buildPayoutEmbeds,
   buildPayoutEmbedNotJoined,
   buildPayoutSummaryEmbed,
+  buildReadyShareStatusEmbed,
 } from "./payout.template.js";
 
 const context: InteractionContext = {
@@ -20,6 +21,33 @@ const context: InteractionContext = {
 };
 
 describe("payout embed builders", () => {
+  it("builds a yellow Ready share embed with run and total balances", () => {
+    const embed = buildReadyShareStatusEmbed(context, 100_000.99, 250_000.99);
+
+    expect(embed.toJSON()).toMatchObject({
+      author: {
+        name: `💰 ${context.displayName} (@${context.discordTag})`,
+      },
+      title: `<a:pepemoneyrain:${process.env.PEPEMONEYRAIN_EMOJI_ID}> Claimable Shares`,
+      fields: [
+        { name: "This run", value: "`100,000 z`", inline: false },
+        { name: "Total unclaimed", value: "`250,000 z`", inline: false },
+        {
+          name: "How to claim",
+          value: expect.stringContaining("Please type `/payout` in Test Guild"),
+          inline: false,
+        },
+      ],
+      color: 0xffd966,
+      thumbnail: { url: context.userAvatarUrl },
+      footer: {
+        text: context.guildName,
+        icon_url: context.guildIconUrl,
+      },
+    });
+    expect(embed.data.timestamp).toBeDefined();
+  });
+
   it.each([300, 1500])(
     "paginates %s vending links within message character and field limits",
     (count) => {

@@ -20,7 +20,10 @@ import {
   queuePayoutSheetOperation,
   syncPayoutExport,
 } from "../services/payout-sheet-export.service.js";
-import { getSignupExportOrganizerId } from "../services/signup-export.service.js";
+import {
+  assertSignupExportEditable,
+  getSignupExportOrganizerId,
+} from "../services/signup-export.service.js";
 import {
   getRosterParticipantUserIds,
   isExportRosterContinuation,
@@ -58,7 +61,14 @@ interface ParsedStarter {
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
-const getSharePost = async (
+/** Validates the configured payout forum thread and bot-authored starter Export ID.
+ * @param guildId Invoking server ID, which must be payout-enabled.
+ * @param guild Invoking server used to resolve the configured forum.
+ * @param channel Channel where the command was invoked.
+ * @param botId Current bot user ID used to verify the starter author.
+ * @returns Validated thread, starter post, and bot identity.
+ */
+export const getSharePost = async (
   guildId: string | null,
   guild: Guild | null,
   channel: TextBasedChannel | null,
@@ -137,7 +147,8 @@ const fetchRosterMessages = async (
     .filter(
       (message) =>
         message.author.id === botId &&
-        (message.id === starter.id || isExportRosterContinuation(message.content)),
+        (message.id === starter.id ||
+          isExportRosterContinuation(message.content)),
     )
     .sort((first, second) => first.createdTimestamp - second.createdTimestamp);
   if (!rosterMessages.some((message) => message.id === starter.id)) {
@@ -460,16 +471,26 @@ const editRoster = async (
   return { count: newUserIds.size, contents, userIds: [...newUserIds] };
 };
 
+/** Checks the existing payout-edit policy for the original organizer or a server manager.
+ * @param organizerId Original organizer saved with the export, if available.
+ * @param userId Invoking Discord user ID.
+ * @param isPayoutManager Whether the invoker has Manage Server permission.
+ * @returns Whether the invoker may edit this payout thread.
+ */
+export const canEditShare = (
+  organizerId: string | null,
+  userId: string,
+  isPayoutManager: boolean,
+): boolean => isPayoutManager || organizerId === userId;
+
 const requireShareEditor = async (
   guildId: string,
   threadId: string,
   userId: string,
   isPayoutManager: boolean,
 ): Promise<void> => {
-  if (
-    !isPayoutManager &&
-    (await getSignupExportOrganizerId(guildId, threadId)) !== userId
-  ) {
+  const organizerId = await getSignupExportOrganizerId(guildId, threadId);
+  if (!canEditShare(organizerId, userId, isPayoutManager)) {
     throw new Error(
       "Only the original organizer or a member with Manage Server permission can edit this payout.",
     );
@@ -507,6 +528,10 @@ export const changeShareVendorCommand: Command = {
           interaction.user.id,
           interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ??
             false,
+        );
+        await assertSignupExportEditable(
+          interaction.guildId!,
+          interaction.channelId,
         );
         const vendor = interaction.options.getString("vendor", true).trim();
         if (!vendor) throw new Error("Enter a vendor name, `n/a`, or `none`.");
@@ -574,6 +599,10 @@ export const changeShareParticipantsCommand: Command = {
         interaction.user.id,
         interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ??
           false,
+      );
+      await assertSignupExportEditable(
+        interaction.guildId!,
+        interaction.channelId,
       );
       const starterRoster = parseStarter(starter.content)!.roster;
       const rosterMessages = await fetchRosterMessages(thread, starter, botId);
@@ -657,6 +686,7 @@ export const handleShareParticipantsMessage = async (
         message.member?.permissions.has(PermissionFlagsBits.ManageGuild) ??
           false,
       );
+      await assertSignupExportEditable(guildId, thread.id);
       const result = await editRoster(
         thread,
         starter,

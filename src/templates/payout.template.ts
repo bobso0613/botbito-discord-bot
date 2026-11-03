@@ -1,4 +1,4 @@
-import { EmbedBuilder } from "discord.js";
+import { EmbedBuilder, escapeMarkdown } from "discord.js";
 import type { InteractionContext } from "../types/interaction-context.js";
 import type { PayoutDetails, PayoutSummary } from "../types/payout.js";
 import { formatZeny } from "../utils/format-zeny.js";
@@ -111,6 +111,49 @@ export const buildPayoutEmbed = (
   context: InteractionContext,
   vendingThreads: readonly string[] = [],
 ): EmbedBuilder => buildPayoutEmbeds(details, context, vendingThreads)[0]!;
+
+/** Builds the claimable-share embed sent after a run is marked ready.
+ * @param context Participant and guild display details for the DM.
+ * @param runAmount Participant's evaluated share in the finalized run.
+ * @param totalUnclaimed Participant's current Combined Share Ready balance.
+ * @returns Yellow embed showing this run and the participant's total unclaimed amount.
+ */
+export const buildReadyShareStatusEmbed = (
+  context: InteractionContext,
+  runAmount: number,
+  totalUnclaimed: number,
+): EmbedBuilder => {
+  const embed = new EmbedBuilder()
+    .setAuthor({
+      name: `💰 ${context.displayName} (@${context.discordTag})`,
+    })
+    .setTitle(`<a:pepemoneyrain:${pepeMoneyRainEmojiId}> Claimable Shares`)
+    .addFields(
+      {
+        name: "This run",
+        value: formatZeny(Math.trunc(runAmount)),
+        inline: false,
+      },
+      {
+        name: "Total unclaimed",
+        value: formatZeny(Math.trunc(totalUnclaimed)),
+        inline: false,
+      },
+      {
+        name: "How to claim",
+        value: [
+          `Please type \`/payout\` in ${context.guildName ?? "your server"} for your totals.`,
+          `If you also want to claim you may message @${escapeMarkdown(DISCORD_SETTINGS.payoutToPingTag)} (<@${DISCORD_SETTINGS.payoutToPingId}>)`,
+        ].join("\n"),
+        inline: false,
+      },
+    )
+    .setColor("#ffd966")
+    .setFooter(getEmbedFooter(context))
+    .setThumbnail(context.userAvatarUrl)
+    .setTimestamp();
+  return embed;
+};
 
 /** Builds the not-joined response when all sheet balances are zero and no vending threads qualify. */
 export const buildPayoutEmbedNotJoined = (

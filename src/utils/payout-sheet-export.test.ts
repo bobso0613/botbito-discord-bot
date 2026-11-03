@@ -9,8 +9,14 @@ import {
   findUnclaimedColumn,
   payoutColumnLabel,
   validatePendingShareCell,
+  planPayoutSheetFinalization,
+  readPayoutFinalizationShareAmounts,
+  readPayoutFinalizationTotals,
   planPayoutSheetExport,
   PAYOUT_EXPORT_METADATA_KEY,
+  READY_SHARE_COLOR,
+  NO_SHARE_COLOR,
+  assertPayoutFinalizationShareColors,
 } from "./payout-sheet-export.js";
 
 const text = (value: string): sheets_v4.Schema$CellData => ({
@@ -1116,6 +1122,451 @@ describe("payout sheet export planning", () => {
     expect(planPayoutSheetExport(spreadsheet, "FSN 2026", snapshot)).toEqual(
       [],
     );
+  });
+
+  it("recolors only purple cells in the moved Export ID column", () => {
+    const spreadsheet = buildSpreadsheet();
+    const sheet = spreadsheet.sheets![0]!;
+    const rows = sheet.data![0]!.rowData!;
+    rows[4]!.values![7] = {};
+    rows[4]!.values![8] = text("Unclaimed");
+    rows[5]!.values![7] = {
+      userEnteredValue: { stringValue: "Run title" },
+      userEnteredFormat: {
+        backgroundColor: { red: 142 / 255, green: 124 / 255, blue: 195 / 255 },
+      },
+    };
+    rows[7]!.values![7] = {
+      userEnteredValue: { numberValue: 25 },
+      userEnteredFormat: {
+        backgroundColor: { red: 142 / 255, green: 124 / 255, blue: 195 / 255 },
+      },
+    };
+    rows[9]!.values![7] = {
+      userEnteredValue: { formulaValue: "=custom-financial-formula()" },
+      userEnteredFormat: {
+        backgroundColor: { red: 142 / 255, green: 124 / 255, blue: 195 / 255 },
+      },
+    };
+    sheet.developerMetadata = [
+      {
+        metadataKey: PAYOUT_EXPORT_METADATA_KEY,
+        metadataValue: "export-one",
+        location: {
+          dimensionRange: {
+            sheetId: 1,
+            dimension: "COLUMNS",
+            startIndex: 7,
+            endIndex: 8,
+          },
+        },
+      },
+    ];
+
+    const requests = planPayoutSheetFinalization(
+      spreadsheet,
+      "FSN 2026",
+      "export-one",
+      "ready",
+    );
+
+    expect(
+      requests
+        .filter((request) => request.updateCells)
+        .map((request) => request.updateCells?.start),
+    ).toEqual([
+      { sheetId: 1, rowIndex: 5, columnIndex: 7 },
+      { sheetId: 1, rowIndex: 7, columnIndex: 7 },
+      { sheetId: 1, rowIndex: 9, columnIndex: 7 },
+    ]);
+    for (const request of requests.filter((item) => item.updateCells)) {
+      expect(request.updateCells?.fields).toContain(
+        "userEnteredFormat.backgroundColorStyle",
+      );
+      expect(request.updateCells?.rows?.[0]?.values?.[0]).toEqual({
+        userEnteredFormat: {
+          backgroundColor: { red: 1, green: 217 / 255, blue: 102 / 255 },
+        },
+      });
+      expect(
+        request.updateCells?.rows?.[0]?.values?.[0]?.userEnteredValue,
+      ).toBeUndefined();
+    }
+    expect(rows[9]!.values![7]!.userEnteredValue?.formulaValue).toBe(
+      "=custom-financial-formula()",
+    );
+    expect(rows[9]!.values![5]!.userEnteredFormat?.backgroundColor).toEqual({
+      red: 142 / 255,
+      green: 124 / 255,
+      blue: 195 / 255,
+    });
+    expect(requests.slice(-2)).toEqual([
+      {
+        insertDimension: {
+          range: {
+            sheetId: 1,
+            dimension: "COLUMNS",
+            startIndex: 8,
+            endIndex: 9,
+          },
+          inheritFromBefore: true,
+        },
+      },
+      {
+        deleteDimension: {
+          range: {
+            sheetId: 1,
+            dimension: "COLUMNS",
+            startIndex: 8,
+            endIndex: 9,
+          },
+        },
+      },
+    ]);
+  });
+
+  it("deletes only the exact identified column for cancellation", () => {
+    const spreadsheet = buildSpreadsheet();
+    const snapshot = buildSnapshot();
+    linkColumn(spreadsheet, snapshot);
+
+    expect(
+      planPayoutSheetFinalization(
+        spreadsheet,
+        "FSN 2026",
+        snapshot.identifier,
+        "cancelled",
+      ),
+    ).toEqual([
+      {
+        deleteDimension: {
+          range: {
+            sheetId: 1,
+            dimension: "COLUMNS",
+            startIndex: 6,
+            endIndex: 7,
+          },
+        },
+      },
+    ]);
+  });
+
+  it("plans and verifies green no-share cells without changing financial values", () => {
+    const spreadsheet = buildSpreadsheet();
+    const snapshot = buildSnapshot();
+    linkColumn(spreadsheet, snapshot);
+    const rows = spreadsheet.sheets![0]!.data![0]!.rowData!;
+    rows[9]!.values![6] = buildPendingShareCell(6, 1);
+    delete rows[9]!.values![6]!.userEnteredValue;
+    const requests = planPayoutSheetFinalization(
+      spreadsheet,
+      "FSN 2026",
+      snapshot.identifier,
+      "done-no-share",
+    );
+    for (const request of requests.filter((item) => item.updateCells)) {
+      const update = request.updateCells!;
+      expect(update.rows![0]!.values![0]).toEqual({
+        userEnteredFormat: { backgroundColor: { red: 0, green: 1, blue: 0 } },
+      });
+      rows[update.start!.rowIndex!]!.values![6]!.userEnteredFormat = {
+        backgroundColor: NO_SHARE_COLOR,
+      };
+    }
+    expect(() =>
+      assertPayoutFinalizationShareColors(
+        spreadsheet, "FSN 2026", snapshot.identifier, snapshot.members!, "done-no-share",
+      ),
+    ).not.toThrow();
+    rows[9]!.values![6]!.effectiveFormat = { backgroundColor: READY_SHARE_COLOR };
+    expect(() =>
+      assertPayoutFinalizationShareColors(
+        spreadsheet, "FSN 2026", snapshot.identifier, snapshot.members!, "done-no-share",
+      ),
+    ).toThrow("not confirmed green");
+    expect(rows[9]!.values![6]!.userEnteredValue).toBeUndefined();
+  });
+
+  it.each([
+    { userEnteredValue: { numberValue: 0 } },
+    { effectiveValue: { numberValue: 123 } },
+    { userEnteredValue: { numberValue: -123 } },
+    { userEnteredValue: { formulaValue: "=0" }, effectiveValue: { numberValue: 0 } },
+    { userEnteredValue: { formulaValue: '=""' }, effectiveValue: { stringValue: "" } },
+    { effectiveValue: { errorValue: { type: "ERROR" } } },
+  ])("rejects uncleared no-share cells, even outside the saved roster: %j", (value) => {
+    const spreadsheet = buildSpreadsheet();
+    const snapshot = buildSnapshot();
+    linkColumn(spreadsheet, snapshot);
+    const rows = spreadsheet.sheets![0]!.data![0]!.rowData!;
+    rows[12]!.values![6] = value;
+
+    expect(() =>
+      planPayoutSheetFinalization(spreadsheet, "FSN 2026", snapshot.identifier, "done-no-share"),
+    ).toThrow("Clear participant cell G13 manually");
+  });
+
+  it.each([
+    [3_333, true],
+    [3_332.33, true],
+    [3_332.32, false],
+    [0, false],
+  ])("handles rounded Combined balance %s with a one-zeny tolerance", (total, accepted) => {
+    const spreadsheet = buildSpreadsheet();
+    const snapshot = buildSnapshot();
+    linkColumn(spreadsheet, snapshot);
+    spreadsheet.sheets![0]!.data![0]!.rowData![9]!.values![6] = {
+      userEnteredFormat: { backgroundColor: READY_SHARE_COLOR },
+      effectiveValue: { numberValue: 3_333.33 },
+    };
+    spreadsheet.sheets![1]!.data![0]!.rowData![2]!.values![2] = {
+      effectiveValue: { numberValue: total },
+    };
+    const read = () => readPayoutFinalizationShareAmounts(
+      spreadsheet, "FSN 2026", snapshot.identifier, "499171225046876170",
+      snapshot.members!, new Map([["111", 0]]),
+    );
+    if (accepted) {
+      expect(read()).toEqual([{ userId: "111", thisRun: 3_333.33, totalUnclaimed: total }]);
+    } else {
+      expect(read).toThrow("has not yet included this run");
+    }
+  });
+
+  it("uses a unique exact Export ID note when column metadata is missing", () => {
+    const spreadsheet = buildSpreadsheet();
+    spreadsheet.sheets![0]!.data![0]!.rowData![4]!.values![6] = {
+      userEnteredValue: { stringValue: "EB 27/10" },
+      note: "export-one",
+    };
+    spreadsheet.sheets![0]!.data![0]!.rowData![9]!.values![6] =
+      buildPendingShareCell(6, 1);
+
+    const requests = planPayoutSheetFinalization(
+      spreadsheet,
+      "FSN 2026",
+      "export-one",
+      "ready",
+    );
+
+    expect(requests.filter((request) => request.updateCells)).toHaveLength(1);
+    expect(requests[0]!.updateCells?.start).toEqual({
+      sheetId: 1,
+      rowIndex: 9,
+      columnIndex: 6,
+    });
+  });
+
+  it("reads evaluated run and Combined Share Ready values by exported member", () => {
+    const spreadsheet = buildSpreadsheet();
+    const snapshot = buildSnapshot();
+    linkColumn(spreadsheet, snapshot);
+    const sheetRows = spreadsheet.sheets![0]!.data![0]!.rowData!;
+    sheetRows[9]!.values![6] = {
+      userEnteredValue: { formulaValue: "=(G$6-G$8)/1" },
+      effectiveValue: { numberValue: 100_000 },
+      userEnteredFormat: { backgroundColor: READY_SHARE_COLOR },
+      effectiveFormat: { backgroundColor: READY_SHARE_COLOR },
+    };
+    const combinedRows = spreadsheet.sheets![1]!.data![0]!.rowData!;
+    combinedRows[2]!.values![2] = {
+      userEnteredValue: { formulaValue: "=sumByColor(...)" },
+      effectiveValue: { numberValue: 250_000 },
+    };
+
+    expect(
+      readPayoutFinalizationShareAmounts(
+        spreadsheet,
+        "FSN 2026",
+        snapshot.identifier,
+        "499171225046876170",
+        snapshot.members!,
+      ),
+    ).toEqual([{ userId: "111", thisRun: 100_000, totalUnclaimed: 250_000 }]);
+  });
+
+  it.each(["DevTestSheet", "FSN 2026", "Ghostz 2026"])(
+    "reads rows 6 and 8 only from the linked run in %s",
+    (worksheet) => {
+      const spreadsheet = buildSpreadsheet();
+      const snapshot = buildSnapshot();
+      linkColumn(spreadsheet, snapshot);
+      const sheet = spreadsheet.sheets![0]!;
+      sheet.properties!.title = worksheet;
+      const rows = sheet.data![0]!.rowData!;
+      rows[4]!.values![7] = {};
+      rows[4]!.values![8] = text("Unclaimed");
+      sheet.developerMetadata![0]!.location!.dimensionRange!.startIndex = 7;
+      sheet.developerMetadata![0]!.location!.dimensionRange!.endIndex = 8;
+      rows[5]!.values![6] = { effectiveValue: { numberValue: 999_999 } };
+      rows[7]!.values![6] = { effectiveValue: { numberValue: 888_888 } };
+      rows[5]!.values![7] = {
+        userEnteredValue: { formulaValue: "=SUM(100000,50000)" },
+        effectiveValue: { numberValue: 150_000 },
+      };
+      rows[7]!.values![7] = { effectiveValue: { numberValue: 0 } };
+
+      expect(
+        readPayoutFinalizationTotals(spreadsheet, worksheet, snapshot.identifier),
+      ).toEqual({ totalEarned: 150_000, reimbursements: 0 });
+      expect(() =>
+        readPayoutFinalizationTotals(spreadsheet, "Other guild", snapshot.identifier),
+      ).toThrow("not in the configured payout worksheet");
+    },
+  );
+
+  it.each([5, 7])(
+    "rejects missing or unevaluated row %i totals instead of using zero",
+    (row) => {
+      const spreadsheet = buildSpreadsheet();
+      const snapshot = buildSnapshot();
+      linkColumn(spreadsheet, snapshot);
+      const rows = spreadsheet.sheets![0]!.data![0]!.rowData!;
+      for (const invalid of [
+        {},
+        { userEnteredValue: { formulaValue: "=SUM(1,2)" } },
+        { effectiveValue: { stringValue: "Loading..." } },
+        { effectiveValue: { numberValue: Number.NaN } },
+        { effectiveValue: { numberValue: Number.POSITIVE_INFINITY } },
+      ]) {
+        rows[5]!.values![6] = { effectiveValue: { numberValue: 150_000 } };
+        rows[7]!.values![6] = { effectiveValue: { numberValue: 50_000 } };
+        rows[row]!.values![6] = invalid;
+        expect(() =>
+          readPayoutFinalizationTotals(spreadsheet, "FSN 2026", snapshot.identifier),
+        ).toThrow("must be evaluated numbers");
+      }
+    },
+  );
+
+  it.each(["Loading...", "-"])(
+    "rejects unevaluated payout display text instead of treating %s as zero",
+    (displayText) => {
+      const spreadsheet = buildSpreadsheet();
+      const snapshot = buildSnapshot();
+      linkColumn(spreadsheet, snapshot);
+      const runCell: sheets_v4.Schema$CellData = {
+        ...buildPendingShareCell(6, 1),
+        effectiveValue: { stringValue: displayText },
+        userEnteredFormat: { backgroundColor: READY_SHARE_COLOR },
+        effectiveFormat: { backgroundColor: READY_SHARE_COLOR },
+      };
+      spreadsheet.sheets![0]!.data![0]!.rowData![9]!.values![6] = runCell;
+      const combinedRows = spreadsheet.sheets![1]!.data![0]!.rowData!;
+      combinedRows[2]!.values![2] = {
+        effectiveValue: { numberValue: 250_000 },
+      };
+      const combinedCell = combinedRows[2]!.values![2]!;
+
+      expect(() =>
+        readPayoutFinalizationShareAmounts(
+          spreadsheet,
+          "FSN 2026",
+          snapshot.identifier,
+          "499171225046876170",
+          snapshot.members!,
+        ),
+      ).toThrow("evaluated numeric payout amounts");
+
+      runCell.effectiveValue = { numberValue: 100_000 };
+      combinedCell.effectiveValue = { stringValue: displayText };
+      expect(() =>
+        readPayoutFinalizationShareAmounts(
+          spreadsheet,
+          "FSN 2026",
+          snapshot.identifier,
+          "499171225046876170",
+          snapshot.members!,
+        ),
+      ).toThrow("evaluated numeric payout amounts");
+    },
+  );
+
+  it("rejects duplicate Export ID notes rather than guessing a column", () => {
+    const spreadsheet = buildSpreadsheet();
+    spreadsheet.sheets![0]!.data![0]!.rowData![4]!.values![6] = {
+      note: "export-one",
+    };
+    spreadsheet.sheets![0]!.data![0]!.rowData![4]!.values![5] = {
+      note: "export-one",
+    };
+
+    expect(() =>
+      planPayoutSheetFinalization(
+        spreadsheet,
+        "FSN 2026",
+        "export-one",
+        "ready",
+      ),
+    ).toThrow("Duplicate Export ID cell notes");
+  });
+
+  it.each([
+    [
+      "missing",
+      (spreadsheet: sheets_v4.Schema$Spreadsheet) => {
+        spreadsheet.sheets![0]!.developerMetadata = [];
+      },
+      "no linked",
+    ],
+    [
+      "duplicate",
+      (spreadsheet: sheets_v4.Schema$Spreadsheet) => {
+        const marker = spreadsheet.sheets![0]!.developerMetadata![0]!;
+        spreadsheet.sheets![0]!.developerMetadata!.push(
+          structuredClone(marker),
+        );
+      },
+      "Duplicate",
+    ],
+    [
+      "malformed",
+      (spreadsheet: sheets_v4.Schema$Spreadsheet) => {
+        spreadsheet.sheets![0]!.developerMetadata![0]!.location!.dimensionRange!.endIndex = 8;
+      },
+      "Invalid Export ID",
+    ],
+    [
+      "wrong worksheet",
+      (spreadsheet: sheets_v4.Schema$Spreadsheet) => {
+        spreadsheet.sheets![0]!.developerMetadata = [];
+        spreadsheet.sheets![1]!.developerMetadata = [
+          {
+            metadataKey: PAYOUT_EXPORT_METADATA_KEY,
+            metadataValue: "export-one",
+            location: {
+              dimensionRange: {
+                sheetId: 2,
+                dimension: "COLUMNS",
+                startIndex: 6,
+                endIndex: 7,
+              },
+            },
+          },
+        ];
+      },
+      "not in the configured",
+    ],
+    [
+      "out of area",
+      (spreadsheet: sheets_v4.Schema$Spreadsheet) => {
+        spreadsheet.sheets![0]!.developerMetadata![0]!.location!.dimensionRange!.startIndex = 7;
+        spreadsheet.sheets![0]!.developerMetadata![0]!.location!.dimensionRange!.endIndex = 8;
+      },
+      "outside the expected",
+    ],
+  ])("rejects %s Export ID metadata", (_name, mutate, message) => {
+    const spreadsheet = buildSpreadsheet();
+    linkColumn(spreadsheet, buildSnapshot());
+    (mutate as (sheet: sheets_v4.Schema$Spreadsheet) => void)(spreadsheet);
+    expect(() =>
+      planPayoutSheetFinalization(
+        spreadsheet,
+        "FSN 2026",
+        "export-one",
+        "ready",
+      ),
+    ).toThrow(message as string);
   });
 
   it("updates only the linked vendor cell and never guesses a legacy column", () => {

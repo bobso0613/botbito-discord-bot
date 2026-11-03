@@ -8,6 +8,16 @@ export const PENDING_SHARE_COLOR = {
   blue: 195 / 255,
 };
 
+/** Ready-to-distribute share background (#FFD966), using Sheets API RGB components. */
+export const READY_SHARE_COLOR = {
+  red: 1,
+  green: 217 / 255,
+  blue: 102 / 255,
+};
+
+/** Done-without-share background (#00FF00), excluded from Ready yellow. */
+export const NO_SHARE_COLOR = { red: 0, green: 1, blue: 0 };
+
 /** Neutral background for unoccupied run cells. */
 export const EMPTY_SHARE_COLOR = { red: 1, green: 1, blue: 1 };
 

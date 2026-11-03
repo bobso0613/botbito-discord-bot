@@ -5,13 +5,23 @@ import type {
   SignupExportPart,
 } from "../types/signup-export.js";
 import type {
+  PayoutSheetFinalizationResult,
   PayoutSheetMember,
   PayoutSheetSnapshot,
   PayoutSheetEdit,
 } from "../types/payout-sheet-export.js";
 import {
+  assertPayoutFinalizationShareColors,
+  assertPayoutFinalizationColumnRemoved,
+  getPayoutFinalizationColumnName,
   isPayoutSnapshotApplied,
+  PayoutFinalizationAmountsNotReadyError,
+  readPayoutFinalizationShareAmounts,
+  readPayoutFinalizationTotals,
+  readPayoutCombinedShareReadyAmounts,
+  planPayoutSheetFinalization,
   planPayoutSheetExport,
+  payoutColumnLabel,
   requiresPayoutIdentityMigration,
 } from "../utils/payout-sheet-export.js";
 import { DISCORD_SETTINGS } from "../config/discord-settings.js";
@@ -32,10 +42,27 @@ import {
 import * as historyService from "./signup-export.service.js";
 
 const spreadsheetQueues = new Map<string, Promise<void>>();
-const uncertainWrites = new Map<
-  string,
-  { threadId: string; snapshot: PayoutSheetSnapshot }
->();
+interface UncertainWrite {
+  threadId: string;
+  snapshot: PayoutSheetSnapshot;
+  operation: "export" | "finalization";
+}
+
+const uncertainWrites = new Map<string, UncertainWrite>();
+const READY_AMOUNT_READ_ATTEMPTS = 8;
+const READY_AMOUNT_READ_INTERVAL_MS = 2_000;
+
+/** A finalization preflight failed before the Sheets API was asked to write. */
+export class PayoutSheetNoWriteAttemptError extends Error {
+  constructor(originalError: unknown) {
+    super(
+      originalError instanceof Error
+        ? originalError.message
+        : String(originalError),
+    );
+    this.name = "PayoutSheetNoWriteAttemptError";
+  }
+}
 
 const spreadsheetQueueKey = (): string =>
   process.env.GOOGLE_SHEETS_ID ?? "unconfigured";
@@ -249,15 +276,17 @@ const retainHistoricalIdentities = async (
           `${member.userId}\u0000${member.discordTag.trim().replace(/^@/, "").toLowerCase()}`,
       ),
     );
-    const additions = historicalMembers(history, entry, snapshot.userIds).filter(
-      (member) => {
-        const tag = member.discordTag.trim().replace(/^@/, "").toLowerCase();
-        const key = `${member.userId}\u0000${tag}`;
-        if (knownIdentities.has(key)) return false;
-        knownIdentities.add(key);
-        return true;
-      },
-    );
+    const additions = historicalMembers(
+      history,
+      entry,
+      snapshot.userIds,
+    ).filter((member) => {
+      const tag = member.discordTag.trim().replace(/^@/, "").toLowerCase();
+      const key = `${member.userId}\u0000${tag}`;
+      if (knownIdentities.has(key)) return false;
+      knownIdentities.add(key);
+      return true;
+    });
     if (additions.length) {
       snapshot.syncedMembers = [
         ...(snapshot.syncedMembers ?? []),
@@ -275,23 +304,24 @@ const synchronizeSpreadsheet = async (
 ): Promise<void> => {
   const spreadsheetId = spreadsheetQueueKey();
   const uncertainWrite = uncertainWrites.get(spreadsheetId);
+  if (uncertainWrite?.operation === "finalization") {
+    throw new Error(
+      "A previous share-status Sheets write has an uncertain outcome; update Google Sheets manually before syncing another payout.",
+    );
+  }
   if (uncertainWrite && uncertainWrite.threadId !== entry.threadId) {
     throw new Error(
       "A previous Google Sheets write has an uncertain outcome; retry that payout before syncing another export.",
     );
   }
-  const spreadsheet = requiresPayoutIdentityMigration(snapshot) ||
-    (uncertainWrite &&
-      requiresPayoutIdentityMigration(uncertainWrite.snapshot))
-    ? await readPayoutSpreadsheet(worksheet, true)
-    : await readPayoutSpreadsheet(worksheet);
+  const spreadsheet =
+    requiresPayoutIdentityMigration(snapshot) ||
+    (uncertainWrite && requiresPayoutIdentityMigration(uncertainWrite.snapshot))
+      ? await readPayoutSpreadsheet(worksheet, true)
+      : await readPayoutSpreadsheet(worksheet);
   if (uncertainWrite) {
     if (
-      !isPayoutSnapshotApplied(
-        spreadsheet,
-        worksheet,
-        uncertainWrite.snapshot,
-      )
+      !isPayoutSnapshotApplied(spreadsheet, worksheet, uncertainWrite.snapshot)
     ) {
       throw new Error(
         "A previous Google Sheets write is not safely reconciled; no newer batch was sent.",
@@ -308,10 +338,218 @@ const synchronizeSpreadsheet = async (
         uncertainWrites.set(spreadsheetId, {
           threadId: entry.threadId,
           snapshot: structuredClone(snapshot),
+          operation: "export",
         });
       }
       throw error;
     }
+  }
+};
+
+/** Polls evaluated Ready balances and run totals without repeating finalization writes. */
+const readReadyFinalizationPayout = async (
+  worksheet: string,
+  identifier: string,
+  guildId: string,
+  members: readonly PayoutSheetMember[],
+  previousTotals: ReadonlyMap<string, number> | undefined,
+  attemptsRemaining = READY_AMOUNT_READ_ATTEMPTS,
+): Promise<Pick<PayoutSheetFinalizationResult, "shareAmounts" | "payoutTotals">> => {
+  const spreadsheet = await readPayoutSpreadsheet(worksheet, true);
+  try {
+    const shareAmounts = readPayoutFinalizationShareAmounts(
+      spreadsheet,
+      worksheet,
+      identifier,
+      guildId,
+      members,
+      previousTotals,
+    );
+    const payoutTotals = readPayoutFinalizationTotals(
+      spreadsheet,
+      worksheet,
+      identifier,
+    );
+    return { shareAmounts, payoutTotals };
+  } catch (error) {
+    if (
+      !(error instanceof PayoutFinalizationAmountsNotReadyError) ||
+      attemptsRemaining <= 1
+    ) {
+      throw error;
+    }
+    await new Promise((resolve) =>
+      setTimeout(resolve, READY_AMOUNT_READ_INTERVAL_MS),
+    );
+    return readReadyFinalizationPayout(
+      worksheet,
+      identifier,
+      guildId,
+      members,
+      previousTotals,
+      attemptsRemaining - 1,
+    );
+  }
+};
+
+const readFinalizationSpreadsheet = async (
+  worksheet: string,
+  threadId: string,
+  snapshot: PayoutSheetSnapshot,
+) => {
+  if (snapshot.status !== "synced" || snapshot.deliveryIncomplete) {
+    throw new Error("The managed payout export is not ready for finalization.");
+  }
+  const spreadsheetId = spreadsheetQueueKey();
+  const uncertainWrite = uncertainWrites.get(spreadsheetId);
+  if (uncertainWrite?.operation === "finalization") {
+    throw new Error(
+      "A previous share-status Sheets write has an uncertain outcome; update Google Sheets manually.",
+    );
+  }
+  if (uncertainWrite && uncertainWrite.threadId !== threadId) {
+    throw new Error(
+      "A previous Google Sheets write has an uncertain outcome; retry that payout before finalizing another export.",
+    );
+  }
+  const spreadsheet = await readPayoutSpreadsheet(worksheet, true);
+  if (uncertainWrite) {
+    if (
+      !isPayoutSnapshotApplied(spreadsheet, worksheet, uncertainWrite.snapshot)
+    ) {
+      throw new Error(
+        "A previous Google Sheets write is not safely reconciled; no newer batch was sent.",
+      );
+    }
+    uncertainWrites.delete(spreadsheetId);
+  }
+  return spreadsheet;
+};
+
+/** Reconciles prior writes, finalizes one exact column, and reads back confirmed Ready balances.
+ * @param worksheet Configured guild worksheet containing the run.
+ * @param guildId Guild used to locate the Combined Share Ready balance.
+ * @param threadId Export thread used to scope uncertain-write protection.
+ * @param snapshot Successfully synced export metadata and saved participant identities.
+ * @param status Final status to apply to the run column.
+ * @returns Confirmed sheet/column labels and evaluated participant balances for Ready.
+ * @throws PayoutSheetNoWriteAttemptError when preflight fails before a write; other errors can follow a write attempt.
+ */
+export const finalizePayoutExport = async (
+  worksheet: string,
+  guildId: string,
+  threadId: string,
+  snapshot: PayoutSheetSnapshot,
+  status: "ready" | "done-no-share" | "cancelled",
+): Promise<PayoutSheetFinalizationResult> => {
+  let writeAttempted = false;
+  let possibleTemporaryColumn: string | undefined;
+  try {
+    const spreadsheetId = spreadsheetQueueKey();
+    const spreadsheet = await readFinalizationSpreadsheet(
+      worksheet,
+      threadId,
+      snapshot,
+    );
+    const columnName = getPayoutFinalizationColumnName(
+      spreadsheet,
+      worksheet,
+      snapshot.identifier,
+    );
+    const requests = planPayoutSheetFinalization(
+      spreadsheet,
+      worksheet,
+      snapshot.identifier,
+      status,
+    );
+    if (!requests.length) {
+      return { sheetName: worksheet, columnName, shareAmounts: [] };
+    }
+    const members = snapshot.members ?? snapshot.syncedMembers ?? [];
+    const previousTotals =
+      status === "ready"
+        ? readPayoutCombinedShareReadyAmounts(spreadsheet, guildId, members)
+        : undefined;
+    const formattingRequests = requests.filter((request) => request.updateCells);
+    const insertionRequests = requests.filter(
+      (request) => request.insertDimension,
+    );
+    const deletionRequests = requests.filter(
+      (request) => request.deleteDimension,
+    );
+    const writeFinalizationBatch = async (
+      batch: typeof requests,
+    ): Promise<void> => {
+      if (!batch.length) return;
+      writeAttempted = true;
+      try {
+        await writePayoutSpreadsheet(batch);
+      } catch (error) {
+        if (!isDefinitiveSheetsRejection(error)) {
+          uncertainWrites.set(spreadsheetId, {
+            threadId,
+            snapshot: structuredClone(snapshot),
+            operation: "finalization",
+          });
+        }
+        throw error;
+      }
+    };
+    await writeFinalizationBatch(formattingRequests);
+    const temporaryColumnIndex =
+      insertionRequests[0]?.insertDimension?.range?.startIndex;
+    if (temporaryColumnIndex != null) {
+      possibleTemporaryColumn = payoutColumnLabel(temporaryColumnIndex);
+    }
+    await writeFinalizationBatch(insertionRequests);
+    if (insertionRequests.length) {
+      const insertedSpreadsheet = await readPayoutSpreadsheet(worksheet, true);
+      getPayoutFinalizationColumnName(
+        insertedSpreadsheet,
+        worksheet,
+        snapshot.identifier,
+      );
+    }
+    await writeFinalizationBatch(deletionRequests);
+    possibleTemporaryColumn = undefined;
+    if (status === "cancelled") {
+      const updatedSpreadsheet = await readPayoutSpreadsheet(worksheet, true);
+      assertPayoutFinalizationColumnRemoved(
+        updatedSpreadsheet,
+        worksheet,
+        snapshot.identifier,
+      );
+      return { sheetName: worksheet, columnName, shareAmounts: [] };
+    }
+
+    if (status === "ready") {
+      const payout = await readReadyFinalizationPayout(
+        worksheet,
+        snapshot.identifier,
+        guildId,
+        members,
+        previousTotals,
+      );
+      return { sheetName: worksheet, columnName, ...payout };
+    }
+
+    const updatedSpreadsheet = await readPayoutSpreadsheet(worksheet, true);
+    assertPayoutFinalizationShareColors(
+      updatedSpreadsheet,
+      worksheet,
+      snapshot.identifier,
+      members,
+      status,
+    );
+    return { sheetName: worksheet, columnName, shareAmounts: [] };
+  } catch (error) {
+    if (!writeAttempted) throw new PayoutSheetNoWriteAttemptError(error);
+    if (possibleTemporaryColumn) {
+      throw new Error(
+        `Temporary column ${possibleTemporaryColumn} may remain beside the run in "${worksheet}"; inspect and remove it manually. ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    throw error;
   }
 };
 
@@ -323,6 +561,11 @@ const synchronizeEntry = async (
   history: ExportHistory,
   edit?: PayoutSheetEdit,
 ): Promise<string> => {
+  if (entry.shareFinalization) {
+    throw new Error(
+      "This payout is being finalized or has already been finalized; Sheets sync is disabled.",
+    );
+  }
   const persist = () => persistHistory(save);
   if (edit) {
     applyExportEdit(entry, edit);
@@ -399,6 +642,11 @@ export const syncPayoutExport = async (
         guild.id,
         threadId,
         async (entry, save) => {
+          if (entry.shareFinalization) {
+            throw new Error(
+              "This payout is being finalized or has already been finalized; edits are disabled.",
+            );
+          }
           applyExportEdit(entry, edit);
           await save();
           return "";

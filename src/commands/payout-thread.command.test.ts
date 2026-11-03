@@ -5,12 +5,27 @@ const syncPayoutExport = jest.fn(async (..._args: unknown[]) => "");
 const getSignupExportOrganizerId = jest.fn(
   async (_guildId: string, _threadId: string) => null as string | null,
 );
+const assertSignupExportEditable = jest.fn(
+  async (_guildId: string, _threadId: string) => undefined,
+);
+let spreadsheetQueue: Promise<void> = Promise.resolve();
+const queuePayoutSheetOperation = async <Result>(
+  action: () => Promise<Result>,
+): Promise<Result> => {
+  const operation = spreadsheetQueue.then(action);
+  spreadsheetQueue = operation.then(
+    () => undefined,
+    () => undefined,
+  );
+  return operation;
+};
 jest.unstable_mockModule("../services/payout-sheet-export.service.js", () => ({
   syncPayoutExport,
-  queuePayoutSheetOperation: async (action: () => Promise<unknown>) => action(),
+  queuePayoutSheetOperation,
 }));
 jest.unstable_mockModule("../services/signup-export.service.js", () => ({
   getSignupExportOrganizerId,
+  assertSignupExportEditable,
 }));
 
 jest.unstable_mockModule("../config/discord-settings.js", () => ({
@@ -23,6 +38,7 @@ jest.unstable_mockModule("../config/discord-settings.js", () => ({
 const {
   changeShareParticipantsCommand,
   changeShareVendorCommand,
+  getSharePost,
   handleShareParticipantsMessage,
 } = await import("./payout-thread.command.js");
 
@@ -117,8 +133,10 @@ const createHarness = (parentId = "forum") => {
 
 describe("payout thread commands", () => {
   beforeEach(() => {
+    spreadsheetQueue = Promise.resolve();
     syncPayoutExport.mockReset().mockResolvedValue("");
     getSignupExportOrganizerId.mockReset().mockResolvedValue(null);
+    assertSignupExportEditable.mockReset().mockResolvedValue(undefined);
   });
 
   it("includes three-digit export slots when copying and replacing a roster", async () => {
@@ -141,7 +159,10 @@ describe("payout thread commands", () => {
       reply: jest.fn(async (_content: string) => undefined),
     };
     await handleShareParticipantsMessage(message as never);
-    await handleShareParticipantsMessage({ ...message, content: "done" } as never);
+    await handleShareParticipantsMessage({
+      ...message,
+      content: "done",
+    } as never);
     expect(thread.members.remove).toHaveBeenCalledWith("444");
     expect(continuation.delete).toHaveBeenCalled();
   });
@@ -226,6 +247,41 @@ describe("payout thread commands", () => {
     );
   });
 
+  it("rejects non-thread and non-payout-guild status targets", async () => {
+    const { interaction, thread } = createHarness();
+    await expect(
+      getSharePost(
+        "guild",
+        interaction.guild as never,
+        { isThread: () => false } as never,
+        "bot",
+      ),
+    ).rejects.toThrow("configured payout channel");
+    await expect(
+      getSharePost(
+        "other-guild",
+        interaction.guild as never,
+        thread as never,
+        "bot",
+      ),
+    ).rejects.toThrow("payout-enabled server");
+  });
+
+  it("blocks vendor changes after share finalization has been selected", async () => {
+    const { interaction, starter, editReply } = createHarness();
+    assertSignupExportEditable.mockRejectedValueOnce(
+      new Error("This payout is being finalized"),
+    );
+
+    await changeShareVendorCommand.execute(interaction as never);
+
+    expect(starter.edit).not.toHaveBeenCalled();
+    expect(syncPayoutExport).not.toHaveBeenCalled();
+    expect(editReply).toHaveBeenCalledWith(
+      expect.stringContaining("This payout is being finalized"),
+    );
+  });
+
   it("recalculates participants and synchronizes thread membership", async () => {
     const { editReply, interaction, memberList, starter, thread } =
       createHarness();
@@ -274,6 +330,50 @@ describe("payout thread commands", () => {
     );
   });
 
+  it("rechecks a prepared roster edit inside the queue after finalization wins", async () => {
+    const { interaction, starter, thread } = createHarness();
+    await changeShareParticipantsCommand.execute(interaction as never);
+    const message = {
+      guildId: "guild",
+      guild: interaction.guild,
+      channelId: thread.id,
+      channel: thread,
+      client: interaction.client,
+      author: { id: "editor", bot: false },
+      member: { permissions: { has: jest.fn(() => true) } },
+      content: "01: Champ - <@222>",
+      reply: jest.fn(async (_content: string) => undefined),
+    };
+    await handleShareParticipantsMessage(message as never);
+
+    let releaseFinalization!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      releaseFinalization = resolve;
+    });
+    const finalization = queuePayoutSheetOperation(async () => {
+      await blocked;
+      assertSignupExportEditable.mockRejectedValue(
+        new Error("This payout is being finalized"),
+      );
+    });
+    const edit = handleShareParticipantsMessage({
+      ...message,
+      content: "done",
+    } as never);
+    expect(assertSignupExportEditable).toHaveBeenCalledTimes(1);
+    releaseFinalization();
+    await Promise.all([finalization, edit]);
+
+    expect(assertSignupExportEditable).toHaveBeenCalledTimes(2);
+    expect(starter.edit).not.toHaveBeenCalled();
+    expect(thread.members.add).not.toHaveBeenCalled();
+    expect(thread.members.remove).not.toHaveBeenCalled();
+    expect(syncPayoutExport).not.toHaveBeenCalled();
+    expect(message.reply).toHaveBeenLastCalledWith(
+      expect.stringContaining("This payout is being finalized"),
+    );
+  });
+
   it("counts participant positions without treating roster notes as members", async () => {
     const { interaction, starter, thread } = createHarness();
     starter.content = starter.content.replace(
@@ -295,7 +395,9 @@ describe("payout thread commands", () => {
       reply,
     });
     await handleShareParticipantsMessage(
-      makeMessage("01: Champ - <@111> (alt for <@222>)\n02: Clown - <@333>") as never,
+      makeMessage(
+        "01: Champ - <@111> (alt for <@222>)\n02: Clown - <@333>",
+      ) as never,
     );
     await handleShareParticipantsMessage(makeMessage("done") as never);
 
@@ -332,7 +434,11 @@ describe("payout thread commands", () => {
       /\n\nParticipants: \*\*\d+\*\*/,
     )[0]!;
     for (const followup of followups) {
-      if (followup.content.startsWith("**Payout roster continued (same line):**\n")) {
+      if (
+        followup.content.startsWith(
+          "**Payout roster continued (same line):**\n",
+        )
+      ) {
         reconstructed += followup.content.slice(
           "**Payout roster continued (same line):**\n".length,
         );

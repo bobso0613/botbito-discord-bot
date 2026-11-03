@@ -5,6 +5,8 @@ import type { PayoutSheetSnapshot } from "../types/payout-sheet-export.js";
 import {
   buildPendingShareCell,
   PAYOUT_EXPORT_METADATA_KEY,
+  READY_SHARE_COLOR,
+  NO_SHARE_COLOR,
 } from "../utils/payout-sheet-export.js";
 
 jest.unstable_mockModule("../config/discord-settings.js", () => ({
@@ -49,8 +51,12 @@ jest.unstable_mockModule("./signup-export.service.js", () => ({
     return action(entry, save, history);
   },
 }));
-const { queuePayoutSheetOperation, syncPayoutExport } =
-  await import("./payout-sheet-export.service.js");
+const {
+  finalizePayoutExport,
+  PayoutSheetNoWriteAttemptError,
+  queuePayoutSheetOperation,
+  syncPayoutExport,
+} = await import("./payout-sheet-export.service.js");
 
 const snapshot = (): PayoutSheetSnapshot => ({
   identifier: "one",
@@ -68,7 +74,12 @@ const grid = (linked = false): sheets_v4.Schema$Spreadsheet => {
     (): sheets_v4.Schema$RowData => ({ values: [] }),
   );
   rows[4]!.values![7] = { userEnteredValue: { stringValue: "Unclaimed" } };
+  rows[5]!.values![6] = { effectiveValue: { numberValue: 125_000 } };
+  rows[7]!.values![6] = { effectiveValue: { numberValue: 25_000 } };
   if (linked) {
+    rows[4]!.values![6] = {
+      userEnteredValue: { stringValue: "ET 29/10" },
+    };
     rows[6]!.values![6] = {
       userEnteredValue: { stringValue: "Vendor" },
     };
@@ -79,7 +90,10 @@ const grid = (linked = false): sheets_v4.Schema$Spreadsheet => {
     { userEnteredValue: { stringValue: "Discord" } },
   ];
   rows[9]!.values![2] = { userEnteredValue: { stringValue: "@alice" } };
-  rows[9]!.values![6] = buildPendingShareCell(6, 1);
+  rows[9]!.values![6] = {
+    ...buildPendingShareCell(6, 1),
+    effectiveValue: { numberValue: 100_000 },
+  };
   return {
     sheets: [
       {
@@ -115,9 +129,19 @@ const grid = (linked = false): sheets_v4.Schema$Spreadsheet => {
         data: [
           {
             rowData: [
-              {},
               {
-                values: [{ userEnteredValue: { stringValue: "Discord Tag" } }],
+                values: [
+                  {},
+                  { userEnteredValue: { stringValue: "499171225046876170" } },
+                ],
+              },
+              {
+                values: [
+                  { userEnteredValue: { stringValue: "Discord Tag" } },
+                  { userEnteredValue: { stringValue: "Pending" } },
+                  { userEnteredValue: { stringValue: "Share Ready" } },
+                  { userEnteredValue: { stringValue: "Distributed" } },
+                ],
               },
               {
                 values: [
@@ -128,6 +152,7 @@ const grid = (linked = false): sheets_v4.Schema$Spreadsheet => {
                         "=IFERROR(VLOOKUP($A3,'FSN 2026'!$C$10:$Z$100,8,FALSE),0)",
                     },
                   },
+                  { effectiveValue: { numberValue: 250_000 } },
                 ],
               },
             ],
@@ -193,6 +218,477 @@ describe("payout Sheets synchronization", () => {
     writePayoutSpreadsheet.mockResolvedValue();
     save.mockResolvedValue();
   });
+
+  it("blocks export and vendor sync after finalization intent is saved", async () => {
+    entry.shareFinalization = { status: "cancelled", sheets: "confirmed" };
+
+    const notice = await syncPayoutExport(guild() as never, "thread", {
+      vendor: "Changed",
+    });
+
+    expect(notice).toContain("finalized");
+    expect(entry.sheetsSync?.vendor).toBe("Vendor");
+    expect(readPayoutSpreadsheet).not.toHaveBeenCalled();
+    expect(writePayoutSpreadsheet).not.toHaveBeenCalled();
+  });
+
+  it("finalizes by exact metadata and never retries an uncertain status write", async () => {
+    const managedSnapshot = snapshot();
+    managedSnapshot.status = "synced";
+    readPayoutSpreadsheet
+      .mockResolvedValueOnce(grid(true))
+      .mockResolvedValueOnce(grid(false));
+
+    await finalizePayoutExport(
+      "FSN 2026",
+      "499171225046876170",
+      "thread",
+      managedSnapshot,
+      "cancelled",
+    );
+
+    expect(readPayoutSpreadsheet).toHaveBeenCalledWith("FSN 2026", true);
+    expect(writePayoutSpreadsheet).toHaveBeenCalledWith([
+      {
+        deleteDimension: {
+          range: {
+            sheetId: 1,
+            dimension: "COLUMNS",
+            startIndex: 6,
+            endIndex: 7,
+          },
+        },
+      },
+    ]);
+
+    const uncertainSheet = grid(true);
+    readPayoutSpreadsheet.mockResolvedValue(uncertainSheet);
+    writePayoutSpreadsheet.mockRejectedValueOnce(new Error("timeout"));
+    await expect(
+      finalizePayoutExport(
+        "FSN 2026",
+        "499171225046876170",
+        "thread",
+        managedSnapshot,
+        "cancelled",
+      ),
+    ).rejects.toThrow("timeout");
+    const writesBeforeRetry = writePayoutSpreadsheet.mock.calls.length;
+    await expect(
+      finalizePayoutExport(
+        "FSN 2026",
+        "499171225046876170",
+        "thread",
+        managedSnapshot,
+        "cancelled",
+      ),
+    ).rejects.toThrow("uncertain outcome");
+    expect(writePayoutSpreadsheet).toHaveBeenCalledTimes(writesBeforeRetry);
+  });
+
+  it("marks validation failures before the first Sheets write as safe to retry", async () => {
+    const managedSnapshot = snapshot();
+    managedSnapshot.status = "synced";
+    readPayoutSpreadsheet.mockResolvedValue(grid(false));
+
+    await expect(
+      finalizePayoutExport(
+        "FSN 2026",
+        "499171225046876170",
+        "thread",
+        managedSnapshot,
+        "cancelled",
+      ),
+    ).rejects.toBeInstanceOf(PayoutSheetNoWriteAttemptError);
+
+    expect(writePayoutSpreadsheet).not.toHaveBeenCalled();
+  });
+
+  it.each(["metadata", "note", "read failure"])(
+    "does not confirm cancellation when read-back retains %s",
+    async (remaining) => {
+      const managedSnapshot = { ...snapshot(), status: "synced" as const };
+      readPayoutSpreadsheet.mockResolvedValueOnce(grid(true));
+      if (remaining === "read failure") {
+        readPayoutSpreadsheet.mockRejectedValueOnce(new Error("read failed"));
+      } else {
+        const after = grid(remaining === "metadata");
+        if (remaining === "note") {
+          after.sheets![0]!.data![0]!.rowData![4]!.values![6] = { note: "one" };
+        }
+        readPayoutSpreadsheet.mockResolvedValueOnce(after);
+      }
+      await expect(
+        finalizePayoutExport(
+          "FSN 2026",
+          "499171225046876170",
+          "thread",
+          managedSnapshot,
+          "cancelled",
+        ),
+      ).rejects.toThrow(remaining === "read failure" ? "read failed" : "still present");
+      expect(writePayoutSpreadsheet).toHaveBeenCalledTimes(1);
+      expect(readPayoutSpreadsheet).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it.each(["insert", "read", "delete"])(
+    "names the possible leftover temporary column when %s fails",
+    async (stage) => {
+      const managedSnapshot = { ...snapshot(), status: "synced" as const };
+      const cleared = grid(true);
+      const participant = cleared.sheets![0]!.data![0]!.rowData![9]!.values![6]!;
+      delete participant.userEnteredValue;
+      delete participant.effectiveValue;
+      readPayoutSpreadsheet.mockResolvedValue(cleared);
+      if (stage === "read") {
+        readPayoutSpreadsheet
+          .mockResolvedValueOnce(cleared)
+          .mockRejectedValueOnce(new Error("read failed"));
+      }
+      writePayoutSpreadsheet.mockImplementation(async (requests) => {
+        if (
+          (stage === "insert" && requests.some((request) => request.insertDimension)) ||
+          (stage === "delete" && requests.some((request) => request.deleteDimension))
+        ) {
+          throw new Error("write failed");
+        }
+      });
+      await expect(
+        finalizePayoutExport(
+          "FSN 2026",
+          "499171225046876170",
+          "thread",
+          managedSnapshot,
+          "done-no-share",
+        ),
+      ).rejects.toThrow('Temporary column H may remain beside the run in "FSN 2026"');
+    },
+  );
+
+  it("rejects no-share amounts before any Sheets write", async () => {
+    readPayoutSpreadsheet.mockResolvedValue(grid(true));
+    const operation = finalizePayoutExport(
+      "FSN 2026", "499171225046876170", "thread",
+      { ...snapshot(), status: "synced" }, "done-no-share",
+    );
+    await expect(operation).rejects.toBeInstanceOf(PayoutSheetNoWriteAttemptError);
+    await expect(operation).rejects.toThrow("Clear participant cell G10 manually");
+    expect(writePayoutSpreadsheet).not.toHaveBeenCalled();
+  });
+
+  it("writes and verifies green, not yellow, for Done (no share)", async () => {
+    const managedSnapshot = { ...snapshot(), status: "synced" as const };
+    const spreadsheet = grid(true);
+    const participant = spreadsheet.sheets![0]!.data![0]!.rowData![9]!.values![6]!;
+    delete participant.userEnteredValue;
+    delete participant.effectiveValue;
+    readPayoutSpreadsheet.mockResolvedValue(spreadsheet);
+    writePayoutSpreadsheet.mockImplementation(async (requests) => {
+      for (const request of requests) {
+        const update = request.updateCells;
+        if (!update) continue;
+        const cell = spreadsheet.sheets![0]!.data![0]!.rowData![
+          update.start!.rowIndex!
+        ]!.values![update.start!.columnIndex!]!;
+        cell.userEnteredFormat = update.rows![0]!.values![0]!.userEnteredFormat;
+        cell.effectiveFormat = cell.userEnteredFormat;
+      }
+    });
+
+    await expect(
+      finalizePayoutExport(
+        "FSN 2026",
+        "499171225046876170",
+        "thread",
+        managedSnapshot,
+        "done-no-share",
+      ),
+    ).resolves.toMatchObject({ shareAmounts: [] });
+    const color = spreadsheet.sheets![0]!.data![0]!.rowData![9]!.values![6]!
+      .effectiveFormat!.backgroundColor;
+    expect(color).toEqual({ red: 0, green: 1, blue: 0 });
+    expect(color).toEqual(NO_SHARE_COLOR);
+    expect(color).not.toEqual(READY_SHARE_COLOR);
+    expect(readPayoutSpreadsheet).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not confirm no-share if a participant amount reappears after the writes", async () => {
+    const spreadsheet = grid(true);
+    const participant = spreadsheet.sheets![0]!.data![0]!.rowData![9]!.values![6]!;
+    delete participant.userEnteredValue;
+    delete participant.effectiveValue;
+    readPayoutSpreadsheet.mockResolvedValue(spreadsheet);
+    writePayoutSpreadsheet.mockImplementation(async (requests) => {
+      if (requests.some((request) => request.deleteDimension)) {
+        participant.userEnteredValue = { numberValue: 100 };
+        participant.effectiveValue = { numberValue: 100 };
+      }
+    });
+
+    await expect(finalizePayoutExport(
+      "FSN 2026", "499171225046876170", "thread",
+      { ...snapshot(), status: "synced" }, "done-no-share",
+    )).rejects.toThrow("Clear participant cell G10 manually");
+    expect(writePayoutSpreadsheet).toHaveBeenCalledTimes(3);
+  });
+
+  it("recalculates formulas after recoloring and returns evaluated Ready amounts", async () => {
+    const managedSnapshot = snapshot();
+    managedSnapshot.status = "synced";
+    const spreadsheet = grid(true);
+    spreadsheet.sheets![1]!.data![0]!.rowData![2]!.values![2]!.effectiveValue =
+      { numberValue: 150_000 };
+    readPayoutSpreadsheet.mockResolvedValue(spreadsheet);
+    writePayoutSpreadsheet.mockImplementation(async (requests) => {
+      const worksheetRows = spreadsheet.sheets![0]!.data![0]!.rowData!;
+      for (const request of requests) {
+        if (request.deleteDimension) {
+          spreadsheet.sheets![1]!.data![0]!.rowData![2]!.values![2]!.effectiveValue =
+            { numberValue: 250_000 };
+        }
+        const update = request.updateCells;
+        if (update?.start?.sheetId !== 1) continue;
+        const row = update.start.rowIndex!;
+        const column = update.start.columnIndex!;
+        const cell = worksheetRows[row]!.values![column]!;
+        cell.userEnteredFormat = { backgroundColor: READY_SHARE_COLOR };
+        cell.effectiveFormat = { backgroundColor: READY_SHARE_COLOR };
+      }
+    });
+
+    const amounts = await finalizePayoutExport(
+      "FSN 2026",
+      "499171225046876170",
+      "thread",
+      managedSnapshot,
+      "ready",
+    );
+
+    expect(readPayoutSpreadsheet).toHaveBeenCalledTimes(3);
+    expect(writePayoutSpreadsheet).toHaveBeenCalledTimes(3);
+    expect(
+      writePayoutSpreadsheet.mock.calls[0]![0].every((request) =>
+        Boolean(request.updateCells),
+      ),
+    ).toBe(true);
+    expect(writePayoutSpreadsheet.mock.calls[1]![0]).toEqual([
+      {
+        insertDimension: {
+          range: {
+            sheetId: 1,
+            dimension: "COLUMNS",
+            startIndex: 7,
+            endIndex: 8,
+          },
+          inheritFromBefore: true,
+        },
+      },
+    ]);
+    expect(writePayoutSpreadsheet.mock.calls[2]![0]).toEqual([
+      {
+        deleteDimension: {
+          range: {
+            sheetId: 1,
+            dimension: "COLUMNS",
+            startIndex: 7,
+            endIndex: 8,
+          },
+        },
+      },
+    ]);
+    expect(writePayoutSpreadsheet.mock.invocationCallOrder[0]).toBeLessThan(
+      readPayoutSpreadsheet.mock.invocationCallOrder[1]!,
+    );
+    expect(readPayoutSpreadsheet.mock.invocationCallOrder[1]).toBeLessThan(
+      writePayoutSpreadsheet.mock.invocationCallOrder[2]!,
+    );
+    expect(amounts).toEqual({
+      sheetName: "FSN 2026",
+      columnName: "ET 29/10",
+      payoutTotals: { totalEarned: 125_000, reimbursements: 25_000 },
+      shareAmounts: [
+        { userId: "111", thisRun: 100_000, totalUnclaimed: 250_000 },
+      ],
+    });
+  });
+
+  it("waits for the Combined balance to include the newly Ready run", async () => {
+    const managedSnapshot = snapshot();
+    managedSnapshot.status = "synced";
+    const spreadsheet = grid(true);
+    let readCount = 0;
+    readPayoutSpreadsheet.mockImplementation(async () => {
+      readCount += 1;
+      if (readCount === 4) {
+        spreadsheet.sheets![1]!.data![0]!.rowData![2]!.values![2]!.effectiveValue =
+          { numberValue: 350_000 };
+      }
+      return spreadsheet;
+    });
+    writePayoutSpreadsheet.mockImplementation(async (requests) => {
+      const worksheetRows = spreadsheet.sheets![0]!.data![0]!.rowData!;
+      for (const request of requests) {
+        const update = request.updateCells;
+        if (update?.start?.sheetId !== 1) continue;
+        const cell =
+          worksheetRows[update.start.rowIndex!]!.values![
+            update.start.columnIndex!
+          ]!;
+        cell.userEnteredFormat = { backgroundColor: READY_SHARE_COLOR };
+        cell.effectiveFormat = { backgroundColor: READY_SHARE_COLOR };
+      }
+    });
+
+    const result = await finalizePayoutExport(
+      "FSN 2026",
+      "499171225046876170",
+      "thread",
+      managedSnapshot,
+      "ready",
+    );
+
+    expect(readPayoutSpreadsheet).toHaveBeenCalledTimes(4);
+    expect(result.shareAmounts).toEqual([
+      { userId: "111", thisRun: 100_000, totalUnclaimed: 350_000 },
+    ]);
+  });
+
+  it.each(["loading", "missing"])(
+    "polls %s run totals and returns the same read-back as participant shares",
+    async (state) => {
+      jest.useFakeTimers();
+      try {
+        const managedSnapshot = { ...snapshot(), status: "synced" as const };
+        const initial = grid(true);
+        initial.sheets![1]!.data![0]!.rowData![2]!.values![2]!.effectiveValue =
+          { numberValue: 150_000 };
+        const loading = grid(true);
+        const rows = loading.sheets![0]!.data![0]!.rowData!;
+        rows[9]!.values![6]!.userEnteredFormat = {
+          backgroundColor: READY_SHARE_COLOR,
+        };
+        rows[9]!.values![6]!.effectiveFormat = {
+          backgroundColor: READY_SHARE_COLOR,
+        };
+        rows[5]!.values![6] = state === "loading"
+          ? { effectiveValue: { stringValue: "Loading..." } }
+          : {};
+        const ready = structuredClone(loading);
+        ready.sheets![0]!.data![0]!.rowData![5]!.values![6] = {
+          effectiveValue: { numberValue: 175_000 },
+        };
+        readPayoutSpreadsheet
+          .mockResolvedValueOnce(initial)
+          .mockResolvedValueOnce(initial)
+          .mockResolvedValueOnce(loading)
+          .mockResolvedValue(ready);
+        const result = finalizePayoutExport(
+          "FSN 2026",
+          "499171225046876170",
+          "thread",
+          managedSnapshot,
+          "ready",
+        );
+        await jest.runAllTimersAsync();
+        await expect(result).resolves.toMatchObject({
+          payoutTotals: { totalEarned: 175_000, reimbursements: 25_000 },
+          shareAmounts: [
+            { userId: "111", thisRun: 100_000, totalUnclaimed: 250_000 },
+          ],
+        });
+        expect(writePayoutSpreadsheet).toHaveBeenCalledTimes(3);
+        expect(readPayoutSpreadsheet).toHaveBeenCalledTimes(4);
+      } finally {
+        jest.useRealTimers();
+      }
+    },
+  );
+
+  it("does not confirm Ready when run totals stay unevaluated", async () => {
+    jest.useFakeTimers();
+    try {
+      const managedSnapshot = { ...snapshot(), status: "synced" as const };
+      const initial = grid(true);
+      initial.sheets![1]!.data![0]!.rowData![2]!.values![2]!.effectiveValue =
+        { numberValue: 150_000 };
+      const updated = grid(true);
+      const rows = updated.sheets![0]!.data![0]!.rowData!;
+      rows[9]!.values![6]!.userEnteredFormat = {
+        backgroundColor: READY_SHARE_COLOR,
+      };
+      rows[9]!.values![6]!.effectiveFormat = {
+        backgroundColor: READY_SHARE_COLOR,
+      };
+      rows[7]!.values![6] = { effectiveValue: { stringValue: "Loading..." } };
+      readPayoutSpreadsheet
+        .mockResolvedValueOnce(initial)
+        .mockResolvedValueOnce(initial)
+        .mockResolvedValue(updated);
+      const result = finalizePayoutExport(
+        "FSN 2026",
+        "499171225046876170",
+        "thread",
+        managedSnapshot,
+        "ready",
+      );
+      const rejection = expect(result).rejects.toThrow("must be evaluated numbers");
+      await jest.runAllTimersAsync();
+      await rejection;
+      expect(writePayoutSpreadsheet).toHaveBeenCalledTimes(3);
+      expect(readPayoutSpreadsheet).toHaveBeenCalledTimes(10);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it.each(["stale", "unevaluated"])(
+    "stops after eight reads when the Combined balance stays %s",
+    async (balanceState) => {
+      jest.useFakeTimers();
+      const startedAt = Date.now();
+      try {
+        const managedSnapshot = snapshot();
+        managedSnapshot.status = "synced";
+        const initialSpreadsheet = grid(true);
+        const updatedSpreadsheet = grid(true);
+        const runCell =
+          updatedSpreadsheet.sheets![0]!.data![0]!.rowData![9]!.values![6]!;
+        runCell.userEnteredFormat = { backgroundColor: READY_SHARE_COLOR };
+        runCell.effectiveFormat = { backgroundColor: READY_SHARE_COLOR };
+        if (balanceState === "unevaluated") {
+          updatedSpreadsheet.sheets![1]!.data![0]!.rowData![2]!.values![2]!
+            .effectiveValue = { stringValue: "Loading..." };
+        }
+        readPayoutSpreadsheet
+          .mockResolvedValue(updatedSpreadsheet)
+          .mockResolvedValueOnce(initialSpreadsheet)
+          .mockResolvedValueOnce(initialSpreadsheet);
+        const result = finalizePayoutExport(
+          "FSN 2026",
+          "499171225046876170",
+          "thread",
+          managedSnapshot,
+          "ready",
+        );
+        const rejection = expect(result).rejects.toThrow(
+          balanceState === "stale"
+            ? "has not yet included this run"
+            : "evaluated numeric payout amounts",
+        );
+
+        await jest.runAllTimersAsync();
+        await rejection;
+
+        expect(readPayoutSpreadsheet).toHaveBeenCalledTimes(10);
+        expect(Date.now() - startedAt).toBe(14_000);
+        expect(writePayoutSpreadsheet).toHaveBeenCalledTimes(3);
+        expect(jest.getTimerCount()).toBe(0);
+      } finally {
+        jest.useRealTimers();
+      }
+    },
+  );
 
   it("reconciles every potentially committed roster after consecutive timeouts", async () => {
     const spreadsheet = grid(true);
@@ -288,9 +784,9 @@ describe("payout Sheets synchronization", () => {
     expect(JSON.stringify(writePayoutSpreadsheet.mock.calls[0]?.[0])).toContain(
       "@alice",
     );
-    expect(JSON.stringify(writePayoutSpreadsheet.mock.calls[0]?.[0])).not.toContain(
-      "@alice-old",
-    );
+    expect(
+      JSON.stringify(writePayoutSpreadsheet.mock.calls[0]?.[0]),
+    ).not.toContain("@alice-old");
   });
 
   it("resolves changed usernames and migrates retained user IDs instead of appending", async () => {

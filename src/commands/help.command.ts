@@ -19,6 +19,7 @@ const CATEGORY_BY_COMMAND_NAME: Record<string, string> = {
   "/payoutsummary": "Payout",
   "/changesharevendor": "Payout",
   "/changeshareparticipants": "Payout",
+  "/set share status": "Payout",
   "/export": "Payout",
   "/guildsched": "Schedule",
   "/mysched": "Schedule",
