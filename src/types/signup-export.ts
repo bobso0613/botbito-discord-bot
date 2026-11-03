@@ -1,5 +1,38 @@
 import type { SignupSheet, SignupSlot } from "./signup-sheet.js";
-import type { PayoutSheetSnapshot } from "./payout-sheet-export.js";
+import type {
+  PayoutFinalizationShareAmount,
+  PayoutSheetSnapshot,
+} from "./payout-sheet-export.js";
+
+/** Terminal distribution outcome selected for one exported payout thread. */
+export type ShareFinalizationStatus = "ready" | "done-no-share" | "cancelled";
+
+/** Durable progress for completing one selected share status across Sheets and Discord. */
+export interface SignupExportFinalization {
+  /** Status chosen by the organizer; it cannot change after persistence. */
+  status: ShareFinalizationStatus;
+  /** Sheets write state, including ambiguous/interrupted outcomes that require manual review. */
+  sheets: "pending" | "in-progress" | "confirmed" | "manual";
+  /** Whether the pending hourglass title was replaced successfully. */
+  titleUpdated?: boolean;
+  /** Per-participant DM state; attempting means delivery may be ambiguous after interruption. */
+  dmDeliveries?: Record<string, "attempting" | "sent" | "failed">;
+  /** Recalculated per-run and total unclaimed amounts retained for interrupted DM recovery. */
+  shareAmounts?: Record<string, Omit<PayoutFinalizationShareAmount, "userId">>;
+  /** Confirmed sheet and column labels used in status messages and DM recovery. */
+  sheetName?: string;
+  columnName?: string;
+  /** Public result chunks and their individual delivery state. */
+  publicMessages?: Array<{
+    content: string;
+    status: "pending" | "attempting" | "sent" | "failed";
+    messageId?: string;
+  }>;
+  /** Whether the payout thread was locked. */
+  locked?: boolean;
+  /** True only when the title, public report, and thread lock are confirmed. */
+  completed?: boolean;
+}
 
 export interface SignupExportHistoryEntry {
   threadId: string | null;
@@ -7,6 +40,8 @@ export interface SignupExportHistoryEntry {
   contents?: readonly string[];
   participantUserIds?: string[];
   sheetsSync?: PayoutSheetSnapshot;
+  /** Optional for compatibility with history written before share-status finalization. */
+  shareFinalization?: SignupExportFinalization;
 }
 
 /** Persisted guild export coverage; a null ID reserves a potentially interrupted post. */

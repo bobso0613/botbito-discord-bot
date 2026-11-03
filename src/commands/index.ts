@@ -7,6 +7,7 @@ import { myCooldowsCommand } from "./mycooldowns.command.js";
 import { mySchedCommand } from "./mysched.command.js";
 import { payoutCommand } from "./payout.command.js";
 import { payoutSummaryCommand } from "./payout-summary.command.js";
+import { setShareStatusCommand } from "./share-status.command.js";
 import {
   changeShareParticipantsCommand,
   changeShareVendorCommand,
@@ -20,6 +21,7 @@ export const commands: Command[] = [
   payoutSummaryCommand,
   changeShareVendorCommand,
   changeShareParticipantsCommand,
+  setShareStatusCommand,
   guildSchedCommand,
   mySchedCommand,
   myCooldowsCommand,

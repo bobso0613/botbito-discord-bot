@@ -48,8 +48,10 @@ jest.unstable_mockModule("./signup-sheet.service.js", () => ({
   getSignupSheet,
 }));
 const {
+  assertSignupExportEditable,
   exportSignupRun,
   getCurrentlyVendingThreads,
+  getSignupExportFinalization,
   getSignupExportOrganizerId,
 } = await import("./signup-export.service.js");
 const { sendExport } = await import("./signup-export-forum.service.js");
@@ -61,6 +63,35 @@ describe("signup export history", () => {
     files.clear();
     settings.payoutWorksheets = {};
     jest.clearAllMocks();
+  });
+
+  it("keeps legacy threads editable but blocks uniquely finalized history", async () => {
+    const path = resolve(
+      process.cwd(),
+      "private",
+      "signup-exports",
+      "guild.json",
+    );
+    await expect(
+      assertSignupExportEditable("guild", "legacy-thread"),
+    ).resolves.toBeUndefined();
+    expect(
+      await getSignupExportFinalization("guild", "legacy-thread"),
+    ).toBeUndefined();
+
+    const finalization = { status: "cancelled", sheets: "confirmed" };
+    files.set(
+      path,
+      JSON.stringify({
+        run: { threadId: "finalized-thread", shareFinalization: finalization },
+      }),
+    );
+    await expect(
+      assertSignupExportEditable("guild", "finalized-thread"),
+    ).rejects.toThrow("finalized");
+    expect(
+      await getSignupExportFinalization("guild", "finalized-thread"),
+    ).toEqual(finalization);
   });
 
   it("keeps the confirmed Discord export and reports a manual-update warning when Sheets fails", async () => {
@@ -432,7 +463,9 @@ describe("signup export history", () => {
         explicit: {
           threadId: "explicit",
           participantUserIds: ["111"],
-          contents: ["01: Champ - <@111>\n\nParticipants: **1**\nVendor: **<@123>**"],
+          contents: [
+            "01: Champ - <@111>\n\nParticipants: **1**\nVendor: **<@123>**",
+          ],
         },
         legacy: {
           threadId: "legacy",
@@ -445,18 +478,25 @@ describe("signup export history", () => {
       }),
     );
     const fetch = jest.fn(async (id: string) => ({
-      id, guildId: "guild", name: "\u23f3 Run", isThread: () => true,
+      id,
+      guildId: "guild",
+      name: "\u23f3 Run",
+      isThread: () => true,
     }));
     const client = { channels: { fetch } };
-    await expect(getCurrentlyVendingThreads(client as never, "guild", "123"))
-      .resolves.toEqual([]);
+    await expect(
+      getCurrentlyVendingThreads(client as never, "guild", "123"),
+    ).resolves.toEqual([]);
     expect(fetch).not.toHaveBeenCalled();
-    await expect(getCurrentlyVendingThreads(client as never, "guild", "222"))
-      .resolves.toEqual(["<#legacy>"]);
-    await expect(getCurrentlyVendingThreads(client as never, "guild", "111"))
-      .resolves.toEqual(["<#explicit>", "<#legacy>"]);
-    await expect(getCurrentlyVendingThreads(client as never, "guild", "333"))
-      .resolves.toEqual([]);
+    await expect(
+      getCurrentlyVendingThreads(client as never, "guild", "222"),
+    ).resolves.toEqual(["<#legacy>"]);
+    await expect(
+      getCurrentlyVendingThreads(client as never, "guild", "111"),
+    ).resolves.toEqual(["<#explicit>", "<#legacy>"]);
+    await expect(
+      getCurrentlyVendingThreads(client as never, "guild", "333"),
+    ).resolves.toEqual([]);
   });
 
   it("degrades malformed history to no vending links but keeps exports fail-closed", async () => {
@@ -501,7 +541,11 @@ describe("signup export history", () => {
       ),
     ).resolves.toEqual({ created: true, threadId: "thread" });
     expect(JSON.parse(files.get(path)!)).toEqual({
-      first: { threadId: "thread", contents: ["<@member>"], participantUserIds: [] },
+      first: {
+        threadId: "thread",
+        contents: ["<@member>"],
+        participantUserIds: [],
+      },
     });
     expect(find).toHaveBeenCalledWith("first");
     expect(find).toHaveBeenCalledWith("combined");

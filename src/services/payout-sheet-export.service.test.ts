@@ -5,6 +5,7 @@ import type { PayoutSheetSnapshot } from "../types/payout-sheet-export.js";
 import {
   buildPendingShareCell,
   PAYOUT_EXPORT_METADATA_KEY,
+  READY_SHARE_COLOR,
 } from "../utils/payout-sheet-export.js";
 
 jest.unstable_mockModule("../config/discord-settings.js", () => ({
@@ -49,7 +50,7 @@ jest.unstable_mockModule("./signup-export.service.js", () => ({
     return action(entry, save, history);
   },
 }));
-const { queuePayoutSheetOperation, syncPayoutExport } =
+const { finalizePayoutExport, queuePayoutSheetOperation, syncPayoutExport } =
   await import("./payout-sheet-export.service.js");
 
 const snapshot = (): PayoutSheetSnapshot => ({
@@ -69,6 +70,9 @@ const grid = (linked = false): sheets_v4.Schema$Spreadsheet => {
   );
   rows[4]!.values![7] = { userEnteredValue: { stringValue: "Unclaimed" } };
   if (linked) {
+    rows[4]!.values![6] = {
+      userEnteredValue: { stringValue: "ET 29/10" },
+    };
     rows[6]!.values![6] = {
       userEnteredValue: { stringValue: "Vendor" },
     };
@@ -79,7 +83,10 @@ const grid = (linked = false): sheets_v4.Schema$Spreadsheet => {
     { userEnteredValue: { stringValue: "Discord" } },
   ];
   rows[9]!.values![2] = { userEnteredValue: { stringValue: "@alice" } };
-  rows[9]!.values![6] = buildPendingShareCell(6, 1);
+  rows[9]!.values![6] = {
+    ...buildPendingShareCell(6, 1),
+    effectiveValue: { numberValue: 100_000 },
+  };
   return {
     sheets: [
       {
@@ -115,9 +122,19 @@ const grid = (linked = false): sheets_v4.Schema$Spreadsheet => {
         data: [
           {
             rowData: [
-              {},
               {
-                values: [{ userEnteredValue: { stringValue: "Discord Tag" } }],
+                values: [
+                  {},
+                  { userEnteredValue: { stringValue: "499171225046876170" } },
+                ],
+              },
+              {
+                values: [
+                  { userEnteredValue: { stringValue: "Discord Tag" } },
+                  { userEnteredValue: { stringValue: "Pending" } },
+                  { userEnteredValue: { stringValue: "Share Ready" } },
+                  { userEnteredValue: { stringValue: "Distributed" } },
+                ],
               },
               {
                 values: [
@@ -128,6 +145,7 @@ const grid = (linked = false): sheets_v4.Schema$Spreadsheet => {
                         "=IFERROR(VLOOKUP($A3,'FSN 2026'!$C$10:$Z$100,8,FALSE),0)",
                     },
                   },
+                  { effectiveValue: { numberValue: 250_000 } },
                 ],
               },
             ],
@@ -192,6 +210,144 @@ describe("payout Sheets synchronization", () => {
     readPayoutSpreadsheet.mockResolvedValue(grid());
     writePayoutSpreadsheet.mockResolvedValue();
     save.mockResolvedValue();
+  });
+
+  it("blocks export and vendor sync after finalization intent is saved", async () => {
+    entry.shareFinalization = { status: "cancelled", sheets: "confirmed" };
+
+    const notice = await syncPayoutExport(guild() as never, "thread", {
+      vendor: "Changed",
+    });
+
+    expect(notice).toContain("finalized");
+    expect(entry.sheetsSync?.vendor).toBe("Vendor");
+    expect(readPayoutSpreadsheet).not.toHaveBeenCalled();
+    expect(writePayoutSpreadsheet).not.toHaveBeenCalled();
+  });
+
+  it("finalizes by exact metadata and never retries an uncertain status write", async () => {
+    const managedSnapshot = snapshot();
+    managedSnapshot.status = "synced";
+    readPayoutSpreadsheet.mockResolvedValue(grid(true));
+
+    await finalizePayoutExport(
+      "FSN 2026",
+      "499171225046876170",
+      "thread",
+      managedSnapshot,
+      "cancelled",
+    );
+
+    expect(readPayoutSpreadsheet).toHaveBeenCalledWith("FSN 2026", true);
+    expect(writePayoutSpreadsheet).toHaveBeenCalledWith([
+      {
+        deleteDimension: {
+          range: {
+            sheetId: 1,
+            dimension: "COLUMNS",
+            startIndex: 6,
+            endIndex: 7,
+          },
+        },
+      },
+    ]);
+
+    const uncertainSheet = grid(true);
+    readPayoutSpreadsheet.mockResolvedValue(uncertainSheet);
+    writePayoutSpreadsheet.mockRejectedValueOnce(new Error("timeout"));
+    await expect(
+      finalizePayoutExport(
+        "FSN 2026",
+        "499171225046876170",
+        "thread",
+        managedSnapshot,
+        "cancelled",
+      ),
+    ).rejects.toThrow("timeout");
+    const writesBeforeRetry = writePayoutSpreadsheet.mock.calls.length;
+    await expect(
+      finalizePayoutExport(
+        "FSN 2026",
+        "499171225046876170",
+        "thread",
+        managedSnapshot,
+        "cancelled",
+      ),
+    ).rejects.toThrow("uncertain outcome");
+    expect(writePayoutSpreadsheet).toHaveBeenCalledTimes(writesBeforeRetry);
+  });
+
+  it("recalculates formulas after recoloring and returns evaluated Ready amounts", async () => {
+    const managedSnapshot = snapshot();
+    managedSnapshot.status = "synced";
+    const spreadsheet = grid(true);
+    readPayoutSpreadsheet.mockResolvedValue(spreadsheet);
+    writePayoutSpreadsheet.mockImplementation(async (requests) => {
+      const worksheetRows = spreadsheet.sheets![0]!.data![0]!.rowData!;
+      for (const request of requests) {
+        const update = request.updateCells;
+        if (update?.start?.sheetId !== 1) continue;
+        const row = update.start.rowIndex!;
+        const column = update.start.columnIndex!;
+        const cell = worksheetRows[row]!.values![column]!;
+        cell.userEnteredFormat = { backgroundColor: READY_SHARE_COLOR };
+        cell.effectiveFormat = { backgroundColor: READY_SHARE_COLOR };
+      }
+    });
+
+    const amounts = await finalizePayoutExport(
+      "FSN 2026",
+      "499171225046876170",
+      "thread",
+      managedSnapshot,
+      "ready",
+    );
+
+    expect(readPayoutSpreadsheet).toHaveBeenCalledTimes(3);
+    expect(writePayoutSpreadsheet).toHaveBeenCalledTimes(3);
+    expect(
+      writePayoutSpreadsheet.mock.calls[0]![0].every((request) =>
+        Boolean(request.updateCells),
+      ),
+    ).toBe(true);
+    expect(writePayoutSpreadsheet.mock.calls[1]![0]).toEqual([
+      {
+        insertDimension: {
+          range: {
+            sheetId: 1,
+            dimension: "COLUMNS",
+            startIndex: 7,
+            endIndex: 8,
+          },
+          inheritFromBefore: true,
+        },
+      },
+    ]);
+    expect(writePayoutSpreadsheet.mock.calls[2]![0]).toEqual([
+      {
+        deleteDimension: {
+          range: {
+            sheetId: 1,
+            dimension: "COLUMNS",
+            startIndex: 7,
+            endIndex: 8,
+          },
+        },
+      },
+    ]);
+    expect(writePayoutSpreadsheet.mock.invocationCallOrder[0]).toBeLessThan(
+      readPayoutSpreadsheet.mock.invocationCallOrder[1]!,
+    );
+    expect(readPayoutSpreadsheet.mock.invocationCallOrder[1]).toBeLessThan(
+      writePayoutSpreadsheet.mock.invocationCallOrder[2]!,
+    );
+    expect(amounts).toEqual({
+      sheetName: "FSN 2026",
+      columnName: "ET 29/10",
+      shareAmounts: [
+        { userId: "111", thisRun: 100_000, totalUnclaimed: 250_000 },
+      ],
+    });
   });
 
   it("reconciles every potentially committed roster after consecutive timeouts", async () => {
@@ -288,9 +444,9 @@ describe("payout Sheets synchronization", () => {
     expect(JSON.stringify(writePayoutSpreadsheet.mock.calls[0]?.[0])).toContain(
       "@alice",
     );
-    expect(JSON.stringify(writePayoutSpreadsheet.mock.calls[0]?.[0])).not.toContain(
-      "@alice-old",
-    );
+    expect(
+      JSON.stringify(writePayoutSpreadsheet.mock.calls[0]?.[0]),
+    ).not.toContain("@alice-old");
   });
 
   it("resolves changed usernames and migrates retained user IDs instead of appending", async () => {

@@ -1,22 +1,26 @@
 import type { sheets_v4 } from "googleapis";
 import type {
   PayoutSheetMember,
+  PayoutFinalizationShareAmount,
   PayoutSheetSnapshot,
   PayoutSheetFormula,
   PayoutSheetGrid as Grid,
   PayoutSheetRequest as Request,
 } from "../types/payout-sheet-export.js";
+import { parseZeny } from "./payout-sheet.js";
 import {
   EMPTY_SHARE_COLOR,
   PAYOUT_BACKGROUND_FIELDS,
   PAYOUT_EXPORT_METADATA_KEY,
   PAYOUT_VALUE_AND_BACKGROUND_FIELDS,
   PENDING_SHARE_COLOR,
+  READY_SHARE_COLOR,
 } from "../constants/payout-sheet-export.js";
 
 export {
   PAYOUT_EXPORT_METADATA_KEY,
   PENDING_SHARE_COLOR,
+  READY_SHARE_COLOR,
 } from "../constants/payout-sheet-export.js";
 
 /** Converts a zero-based column index to an A1 column label. */
@@ -81,7 +85,8 @@ export const buildPendingShareCell = (
   };
 };
 
-const hasPendingColor = (cell: sheets_v4.Schema$CellData): boolean => {
+export const hasPendingColor = (cell?: sheets_v4.Schema$CellData): boolean => {
+  if (!cell) return false;
   const color =
     cell.effectiveFormat?.backgroundColorStyle?.rgbColor ??
     cell.effectiveFormat?.backgroundColor ??
@@ -1797,5 +1802,359 @@ export const planPayoutSheetExport = (
       ),
     );
   }
+  return requests;
+};
+
+/** Exact configured worksheet grid and column resolved from export metadata or its unique note. */
+interface FinalizationColumn {
+  sheetId: number;
+  grid: Grid;
+  column: number;
+}
+
+/** Resolves and bounds-checks one exact run column without title/date/color guesses. */
+const resolveFinalizationColumn = (
+  spreadsheet: sheets_v4.Schema$Spreadsheet,
+  worksheet: string,
+  identifier: string,
+): FinalizationColumn => {
+  const matchingMetadata = (spreadsheet.sheets ?? []).flatMap((sheet) =>
+    (sheet.developerMetadata ?? [])
+      .filter(
+        (entry) =>
+          entry.metadataKey === PAYOUT_EXPORT_METADATA_KEY &&
+          entry.metadataValue === identifier,
+      )
+      .map((entry) => ({ sheet, entry })),
+  );
+  if (matchingMetadata.length > 1) {
+    throw new Error(
+      "Duplicate Export ID metadata; update Google Sheets manually.",
+    );
+  }
+
+  let sheet: sheets_v4.Schema$Sheet;
+  let range: sheets_v4.Schema$DimensionRange | undefined;
+  if (matchingMetadata.length === 1) {
+    sheet = matchingMetadata[0]!.sheet;
+    range = matchingMetadata[0]!.entry.location?.dimensionRange;
+  } else {
+    const noteMatches = (spreadsheet.sheets ?? []).flatMap((candidate) =>
+      (sheetGrid(candidate)[4] ?? []).flatMap((cell, column) =>
+        cell?.note === identifier ? [{ sheet: candidate, column }] : [],
+      ),
+    );
+    if (noteMatches.length > 1) {
+      throw new Error(
+        "Duplicate Export ID cell notes exist; update Google Sheets manually.",
+      );
+    }
+    if (noteMatches.length === 0) {
+      throw new Error(
+        "This export has no linked Google Sheets column; update Google Sheets manually.",
+      );
+    }
+    const noteMatch = noteMatches[0]!;
+    if (noteMatch.sheet.properties?.title !== worksheet) {
+      throw new Error(
+        "The Export ID note is not in the configured payout worksheet; update Google Sheets manually.",
+      );
+    }
+    sheet = noteMatch.sheet;
+    range = {
+      dimension: "COLUMNS",
+      sheetId: sheet.properties?.sheetId,
+      startIndex: noteMatch.column,
+      endIndex: noteMatch.column + 1,
+    };
+  }
+
+  const sheetId = sheet.properties?.sheetId;
+  const configuredSheets = (spreadsheet.sheets ?? []).filter(
+    (candidate) => candidate.properties?.title === worksheet,
+  );
+  if (
+    configuredSheets.length !== 1 ||
+    sheet !== configuredSheets[0] ||
+    sheetId == null
+  ) {
+    throw new Error(
+      "The Export ID is not in the configured payout worksheet; update Google Sheets manually.",
+    );
+  }
+  if (
+    range?.dimension !== "COLUMNS" ||
+    range.sheetId !== sheetId ||
+    range.startIndex == null ||
+    range.endIndex !== range.startIndex + 1
+  ) {
+    throw new Error("Invalid Export ID column metadata.");
+  }
+
+  const grid = sheetGrid(sheet);
+  if (
+    !/discord/i.test(payoutCellText(grid[8]?.[2])) ||
+    !/name/i.test(payoutCellText(grid[8]?.[0]))
+  ) {
+    throw new Error(
+      "Expected Name and Discord roster headers in row 9 (columns A and C).",
+    );
+  }
+  const column = range.startIndex;
+  const boundary = findUnclaimedColumn(grid[4] ?? []);
+  if (column < 5 || column >= boundary) {
+    throw new Error(
+      "The linked run column is outside the expected shares area; update Google Sheets manually.",
+    );
+  }
+
+  return { sheetId, grid, column };
+};
+
+/** Resolves the exact managed column's visible row-5 label after identity validation. */
+export const getPayoutFinalizationColumnName = (
+  spreadsheet: sheets_v4.Schema$Spreadsheet,
+  worksheet: string,
+  identifier: string,
+): string => {
+  const { grid, column } = resolveFinalizationColumn(
+    spreadsheet,
+    worksheet,
+    identifier,
+  );
+  const name = payoutCellText(grid[4]?.[column]).trim();
+  if (!name) {
+    throw new Error(
+      "The identified payout column has no name in row 5; update Google Sheets manually.",
+    );
+  }
+  return name;
+};
+
+/** Reads an evaluated number, falling back only to a literal value when available. */
+const payoutCellAmount = (
+  cell?: sheets_v4.Schema$CellData,
+): number | undefined => {
+  const value =
+    cell?.effectiveValue?.numberValue ??
+    cell?.effectiveValue?.stringValue ??
+    cell?.userEnteredValue?.numberValue ??
+    cell?.userEnteredValue?.stringValue;
+  if (value == null) return undefined;
+  return typeof value === "number" ? value : parseZeny(value);
+};
+
+/** Checks a cell's effective or entered background against the Ready yellow. */
+const hasReadyShareColor = (cell?: sheets_v4.Schema$CellData): boolean => {
+  const color =
+    cell?.effectiveFormat?.backgroundColorStyle?.rgbColor ??
+    cell?.effectiveFormat?.backgroundColor ??
+    cell?.userEnteredFormat?.backgroundColorStyle?.rgbColor ??
+    cell?.userEnteredFormat?.backgroundColor;
+  return Boolean(
+    color &&
+    ["red", "green", "blue"].every(
+      (component) =>
+        Math.abs(
+          ((color as Record<string, number | undefined>)[component] ?? 0) -
+            READY_SHARE_COLOR[component as keyof typeof READY_SHARE_COLOR],
+        ) < 0.01,
+    ),
+  );
+};
+
+/** Confirms all old purple cells are gone and each saved participant cell is effectively yellow. */
+export const assertPayoutFinalizationShareColors = (
+  spreadsheet: sheets_v4.Schema$Spreadsheet,
+  worksheet: string,
+  identifier: string,
+  members: readonly PayoutSheetMember[],
+): void => {
+  const { grid, column } = resolveFinalizationColumn(
+    spreadsheet,
+    worksheet,
+    identifier,
+  );
+  if (grid.some((row, index) => index >= 5 && hasPendingColor(row[column]))) {
+    throw new Error(
+      "Some cells in the run column are still purple; update Google Sheets manually.",
+    );
+  }
+  if (!members.length) {
+    throw new Error("The saved payout participant identities are unavailable.");
+  }
+  const participantRows = identityRows(grid, 2, 9);
+  for (const member of members) {
+    const row = participantRows.get(normalizeTag(member.discordTag));
+    if (row == null || !hasReadyShareColor(grid[row]?.[column])) {
+      throw new Error(
+        `The run share for @${normalizeTag(member.discordTag)} is not confirmed yellow; update Google Sheets manually.`,
+      );
+    }
+  }
+};
+
+/** Reads recalculated per-run and guild Share Ready amounts for saved participants.
+ * @param spreadsheet Fresh spreadsheet read after the finalization write batch.
+ * @param worksheet Configured guild worksheet containing the run column.
+ * @param identifier Saved Export ID from the starter post and history.
+ * @param guildId Guild identifier used to select its Combined Share Ready column.
+ * @param members Exported participants with their saved Discord identities.
+ * @returns Exact run amount and current total unclaimed amount for each participant.
+ * @throws When identities or evaluated amounts are missing or ambiguous.
+ */
+export const readPayoutFinalizationShareAmounts = (
+  spreadsheet: sheets_v4.Schema$Spreadsheet,
+  worksheet: string,
+  identifier: string,
+  guildId: string,
+  members: readonly PayoutSheetMember[],
+): PayoutFinalizationShareAmount[] => {
+  assertPayoutFinalizationShareColors(
+    spreadsheet,
+    worksheet,
+    identifier,
+    members,
+  );
+  const { grid, column } = resolveFinalizationColumn(
+    spreadsheet,
+    worksheet,
+    identifier,
+  );
+  if (!members.length) {
+    throw new Error("The saved payout participant identities are unavailable.");
+  }
+  const combined = (spreadsheet.sheets ?? []).find(
+    (sheet) => sheet.properties?.title === "Combined",
+  );
+  if (!combined) throw new Error("The Combined payout worksheet is missing.");
+  const combinedGrid = sheetGrid(combined);
+  const guildStartColumn = (combinedGrid[0] ?? []).findIndex(
+    (cell) => payoutCellText(cell).trim() === guildId,
+  );
+  const totalUnclaimedColumn = (combinedGrid[1] ?? []).findIndex(
+    (cell, index) =>
+      index >= guildStartColumn &&
+      payoutCellText(cell).trim().toLowerCase() === "share ready",
+  );
+  if (guildStartColumn < 0 || totalUnclaimedColumn < 0) {
+    throw new Error(
+      "The guild's Combined Share Ready column could not be located.",
+    );
+  }
+
+  const participantRows = identityRows(grid, 2, 9);
+  const combinedRows = identityRows(combinedGrid, 0, 2);
+  return members.map((member) => {
+    const tag = normalizeTag(member.discordTag);
+    const runRow = participantRows.get(tag);
+    const combinedRow = combinedRows.get(tag);
+    if (runRow == null || combinedRow == null) {
+      throw new Error(
+        `Could not find payout rows for @${tag} after recalculation.`,
+      );
+    }
+    const thisRun = payoutCellAmount(grid[runRow]?.[column]);
+    const totalUnclaimed = payoutCellAmount(
+      combinedGrid[combinedRow]?.[totalUnclaimedColumn],
+    );
+    if (thisRun == null || totalUnclaimed == null) {
+      throw new Error(
+        `Could not read recalculated payout amounts for @${tag}.`,
+      );
+    }
+    return { userId: member.userId, thisRun, totalUnclaimed };
+  });
+};
+
+/** Plans exact-column status updates and forces formula recalculation with a temporary column.
+ * @param spreadsheet Current spreadsheet grids and developer metadata.
+ * @param worksheet Configured guild worksheet that must own the Export ID.
+ * @param identifier Saved Export ID from the payout starter post and history.
+ * @param status Terminal share status to apply.
+ * @returns Formatting updates followed by a temporary insert/delete trigger, or one exact deletion.
+ * @throws When the Export ID or worksheet layout is ambiguous or unsafe.
+ */
+export const planPayoutSheetFinalization = (
+  spreadsheet: sheets_v4.Schema$Spreadsheet,
+  worksheet: string,
+  identifier: string,
+  status: "ready" | "done-no-share" | "cancelled",
+): Request[] => {
+  const { sheetId, grid, column } = resolveFinalizationColumn(
+    spreadsheet,
+    worksheet,
+    identifier,
+  );
+  if (status === "cancelled") {
+    return [
+      {
+        deleteDimension: {
+          range: {
+            sheetId,
+            dimension: "COLUMNS",
+            startIndex: column,
+            endIndex: column + 1,
+          },
+        },
+      },
+    ];
+  }
+
+  const requests: Request[] = [];
+  for (let row = 5; row < grid.length; row += 1) {
+    const cell = grid[row]?.[column];
+    if (!cell || !hasPendingColor(cell)) continue;
+    const effectiveColor =
+      cell.effectiveFormat?.backgroundColorStyle?.rgbColor ??
+      cell.effectiveFormat?.backgroundColor;
+    const enteredColor =
+      cell.userEnteredFormat?.backgroundColorStyle?.rgbColor ??
+      cell.userEnteredFormat?.backgroundColor;
+    if (
+      effectiveColor &&
+      !["red", "green", "blue"].every(
+        (component) =>
+          Math.abs(
+            ((effectiveColor as Record<string, number | undefined>)[
+              component
+            ] ?? 0) -
+              ((
+                enteredColor as Record<string, number | undefined> | undefined
+              )?.[component] ?? 0),
+          ) < 0.01,
+      )
+    ) {
+      throw new Error(
+        "Effective share formatting cannot be safely changed; update Google Sheets manually.",
+      );
+    }
+    requests.push(
+      cellUpdate(
+        sheetId,
+        row,
+        column,
+        { userEnteredFormat: { backgroundColor: READY_SHARE_COLOR } },
+        PAYOUT_BACKGROUND_FIELDS,
+      ),
+    );
+  }
+
+  const recalcColumn = column + 1;
+  const temporaryColumnRange = {
+    sheetId,
+    dimension: "COLUMNS" as const,
+    startIndex: recalcColumn,
+    endIndex: recalcColumn + 1,
+  };
+  requests.push(
+    {
+      insertDimension: {
+        range: temporaryColumnRange,
+        inheritFromBefore: true,
+      },
+    },
+    { deleteDimension: { range: temporaryColumnRange } },
+  );
   return requests;
 };

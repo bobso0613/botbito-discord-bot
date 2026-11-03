@@ -146,6 +146,22 @@ describe("help command", () => {
       ],
     },
     {
+      command: "/set share status",
+      expected: [
+        "Ready for distribution",
+        "Done (no share)",
+        "Cancelled",
+        "Manage Server",
+        "managed export",
+        "sync pending/failed exports",
+        "manually adjust amounts and formulas",
+        "no DMs",
+        "exact Export ID column",
+        "Manage Threads",
+        "Send Messages in Threads",
+      ],
+    },
+    {
       command: "/show",
       expected: [
         "current action buttons",

@@ -5,12 +5,16 @@ const syncPayoutExport = jest.fn(async (..._args: unknown[]) => "");
 const getSignupExportOrganizerId = jest.fn(
   async (_guildId: string, _threadId: string) => null as string | null,
 );
+const assertSignupExportEditable = jest.fn(
+  async (_guildId: string, _threadId: string) => undefined,
+);
 jest.unstable_mockModule("../services/payout-sheet-export.service.js", () => ({
   syncPayoutExport,
   queuePayoutSheetOperation: async (action: () => Promise<unknown>) => action(),
 }));
 jest.unstable_mockModule("../services/signup-export.service.js", () => ({
   getSignupExportOrganizerId,
+  assertSignupExportEditable,
 }));
 
 jest.unstable_mockModule("../config/discord-settings.js", () => ({
@@ -23,6 +27,7 @@ jest.unstable_mockModule("../config/discord-settings.js", () => ({
 const {
   changeShareParticipantsCommand,
   changeShareVendorCommand,
+  getSharePost,
   handleShareParticipantsMessage,
 } = await import("./payout-thread.command.js");
 
@@ -119,6 +124,7 @@ describe("payout thread commands", () => {
   beforeEach(() => {
     syncPayoutExport.mockReset().mockResolvedValue("");
     getSignupExportOrganizerId.mockReset().mockResolvedValue(null);
+    assertSignupExportEditable.mockReset().mockResolvedValue(undefined);
   });
 
   it("includes three-digit export slots when copying and replacing a roster", async () => {
@@ -141,7 +147,10 @@ describe("payout thread commands", () => {
       reply: jest.fn(async (_content: string) => undefined),
     };
     await handleShareParticipantsMessage(message as never);
-    await handleShareParticipantsMessage({ ...message, content: "done" } as never);
+    await handleShareParticipantsMessage({
+      ...message,
+      content: "done",
+    } as never);
     expect(thread.members.remove).toHaveBeenCalledWith("444");
     expect(continuation.delete).toHaveBeenCalled();
   });
@@ -226,6 +235,41 @@ describe("payout thread commands", () => {
     );
   });
 
+  it("rejects non-thread and non-payout-guild status targets", async () => {
+    const { interaction, thread } = createHarness();
+    await expect(
+      getSharePost(
+        "guild",
+        interaction.guild as never,
+        { isThread: () => false } as never,
+        "bot",
+      ),
+    ).rejects.toThrow("configured payout channel");
+    await expect(
+      getSharePost(
+        "other-guild",
+        interaction.guild as never,
+        thread as never,
+        "bot",
+      ),
+    ).rejects.toThrow("payout-enabled server");
+  });
+
+  it("blocks vendor changes after share finalization has been selected", async () => {
+    const { interaction, starter, editReply } = createHarness();
+    assertSignupExportEditable.mockRejectedValueOnce(
+      new Error("This payout is being finalized"),
+    );
+
+    await changeShareVendorCommand.execute(interaction as never);
+
+    expect(starter.edit).not.toHaveBeenCalled();
+    expect(syncPayoutExport).not.toHaveBeenCalled();
+    expect(editReply).toHaveBeenCalledWith(
+      expect.stringContaining("This payout is being finalized"),
+    );
+  });
+
   it("recalculates participants and synchronizes thread membership", async () => {
     const { editReply, interaction, memberList, starter, thread } =
       createHarness();
@@ -295,7 +339,9 @@ describe("payout thread commands", () => {
       reply,
     });
     await handleShareParticipantsMessage(
-      makeMessage("01: Champ - <@111> (alt for <@222>)\n02: Clown - <@333>") as never,
+      makeMessage(
+        "01: Champ - <@111> (alt for <@222>)\n02: Clown - <@333>",
+      ) as never,
     );
     await handleShareParticipantsMessage(makeMessage("done") as never);
 
@@ -332,7 +378,11 @@ describe("payout thread commands", () => {
       /\n\nParticipants: \*\*\d+\*\*/,
     )[0]!;
     for (const followup of followups) {
-      if (followup.content.startsWith("**Payout roster continued (same line):**\n")) {
+      if (
+        followup.content.startsWith(
+          "**Payout roster continued (same line):**\n",
+        )
+      ) {
         reconstructed += followup.content.slice(
           "**Payout roster continued (same line):**\n".length,
         );

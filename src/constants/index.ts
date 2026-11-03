@@ -566,6 +566,20 @@ export const COMMAND_GUIDE: ReadonlyArray<{
     emoji: "👥",
   },
   {
+    name: "/set share status",
+    summary: "Finalize a payout run as ready, no share, or cancelled.",
+    description:
+      "In a pending bot-generated payout thread, only the original organizer or a member with Manage Server can set Ready for distribution, Done (no share), or Cancelled. Requires a complete managed export with a confirmed Sheets sync; sync pending/failed exports with `/export` first. Ready marks purple cells in the exact Export ID column yellow, inserts and removes an adjacent blank column in separate writes to recalculate custom formulas, verifies the colors and evaluated balances, then DMs unique current participants with a claimable embed. Done (no share) sends no DMs; the organizer must manually adjust amounts and formulas, and amounts may appear claimable until corrected. Cancelled deletes only that run column. The public response names the status and sheet column; the thread is locked. Unconfirmed Sheets changes require manual correction; Ready DMs are skipped. Interrupted DMs are not resent automatically. Requires Manage Threads and Send Messages in Threads.",
+    emoji: "✅",
+    parameters: [
+      {
+        name: "status",
+        description: "Ready for distribution, Done (no share), or Cancelled",
+        required: true,
+      },
+    ],
+  },
+  {
     name: "/export",
     summary:
       "Export confirmed slots to the payout forum with vendor and optional split posts (organizer only).",

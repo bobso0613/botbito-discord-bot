@@ -568,7 +568,7 @@ export const guildSettingCommand: Command = {
             .addStringOption((option) =>
               option
                 .setName("categories")
-                .setDescription("Category links or #names, separated by commas")
+                .setDescription("Category ID, separated by commas")
                 .setRequired(true),
             ),
         )

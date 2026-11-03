@@ -85,9 +85,11 @@ export const getCurrentlyVendingThreads = async (
   const threadIds = new Set(
     Object.values(history)
       .filter((entry) =>
-        (entry.participantUserIds ??
+        (
+          entry.participantUserIds ??
           entry.sheetsSync?.userIds ??
-          getExportRosterUserIds(entry.contents ?? [])).includes(userId),
+          getExportRosterUserIds(entry.contents ?? [])
+        ).includes(userId),
       )
       .flatMap((entry) => (entry.threadId ? [entry.threadId] : [])),
   );
@@ -335,4 +337,46 @@ export const getSignupExportOrganizerId = async (
     ),
   );
   return operation;
+};
+
+/** Reads finalization state without requiring legacy threads to have export history. */
+export const getSignupExportFinalization = async (
+  guildId: string,
+  threadId: string,
+): Promise<SignupExportHistoryEntry["shareFinalization"]> => {
+  const previous = exportQueues.get(guildId) ?? Promise.resolve();
+  const operation = previous.then(async () => {
+    const history = await readHistory(
+      resolve(process.cwd(), "private", "signup-exports", `${guildId}.json`),
+    );
+    const matches = Object.values(history).filter(
+      (entry) => entry.threadId === threadId,
+    );
+    if (matches.length > 1) {
+      throw new Error(
+        "The export history is ambiguous; contact an administrator before editing this payout.",
+      );
+    }
+    return matches[0]?.shareFinalization;
+  });
+  exportQueues.set(
+    guildId,
+    operation.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return operation;
+};
+
+/** Blocks follow-up edits once a share-status finalization has been selected. */
+export const assertSignupExportEditable = async (
+  guildId: string,
+  threadId: string,
+): Promise<void> => {
+  if (await getSignupExportFinalization(guildId, threadId)) {
+    throw new Error(
+      "This payout is being finalized or has already been finalized; vendor and roster edits are disabled.",
+    );
+  }
 };

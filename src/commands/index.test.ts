@@ -8,6 +8,7 @@ describe("command registry", () => {
       expect.arrayContaining([
         "guildsetting",
         "export",
+        "set",
         "payout",
         "payoutsummary",
         "guildsched",
