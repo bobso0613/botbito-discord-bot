@@ -36,6 +36,18 @@ const statusLabel = (status: ShareFinalizationStatus): string =>
 const safeError = (error: unknown): string =>
   (error instanceof Error ? error.message : String(error)).slice(0, 250);
 
+const isRunDate = (value: string): boolean =>
+  value.length === 5 &&
+  value[2] === "/" &&
+  value
+    .slice(0, 2)
+    .split("")
+    .every((digit) => digit >= "0" && digit <= "9") &&
+  value
+    .slice(3)
+    .split("")
+    .every((digit) => digit >= "0" && digit <= "9");
+
 /** Verifies the bot can rename and reply to the payout thread before Sheets is mutated. */
 const requireBotPermissions = (
   interaction: ChatInputCommandInteraction,
@@ -57,12 +69,29 @@ const getRunLabel = (
   thread: ThreadChannel,
   snapshotTitle: string,
 ): { runName: string; date: string } => {
-  const title = thread.name.replace(/^[⏳✅❌]\s*/u, "");
-  const match = /^(.*) - (\d{2}\/\d{2})(?:\s+.*)?$/.exec(title);
-  if (match) return { runName: match[1]!, date: match[2]! };
-  const saved = /^(.*)\s+(\d{2}\/\d{2})$/.exec(snapshotTitle);
-  return saved
-    ? { runName: saved[1]!, date: saved[2]! }
+  const statusIcon = ["⏳", "✅", "❌"].find((icon) =>
+    thread.name.startsWith(icon),
+  );
+  const title = statusIcon
+    ? thread.name.slice(statusIcon.length).trimStart()
+    : thread.name;
+  const separator = title.lastIndexOf(" - ");
+  if (separator >= 0) {
+    const tail = title.slice(separator + 3);
+    const date = tail.slice(0, 5);
+    const instanceSuffix = tail.slice(5);
+    if (
+      isRunDate(date) &&
+      (instanceSuffix.length === 0 ||
+        (instanceSuffix.startsWith(" [") && instanceSuffix.endsWith("]")))
+    ) {
+      return { runName: title.slice(0, separator), date };
+    }
+  }
+  const dateSeparator = snapshotTitle.lastIndexOf(" ");
+  const date = snapshotTitle.slice(dateSeparator + 1);
+  return dateSeparator > 0 && isRunDate(date)
+    ? { runName: snapshotTitle.slice(0, dateSeparator), date }
     : { runName: snapshotTitle, date: "the exported date" };
 };
 
@@ -425,6 +454,7 @@ const getInterruptedDmIds = (
     .filter(([, result]) => result === "attempting")
     .map(([userId]) => userId);
 
+/** Locks the thread and returns actionable text when Discord rejects the operation. */
 const lockThread = async (
   thread: ThreadChannel,
   state: SignupExportFinalization,
@@ -440,8 +470,8 @@ const lockThread = async (
     return `The result was published, but the thread could not be locked (${safeError(error)}). Ask a server manager to lock it.`;
   }
 };
-/** Locks the thread and returns actionable text when Discord rejects the operation. */
 
+/** Runs authorization, Sheets finalization, participant delivery, reporting, and locking. */
 const finalizeStatus = async (
   interaction: ChatInputCommandInteraction,
   status: ShareFinalizationStatus,
@@ -454,7 +484,6 @@ const finalizeStatus = async (
     interaction.client.user?.id ?? null,
   );
   requireBotPermissions(interaction, thread);
-  /** Runs authorization, Sheets finalization, participant delivery, reporting, and locking. */
 
   return withSignupExportHistory(guildId, thread.id, async (entry, save) => {
     if (
@@ -534,7 +563,7 @@ const finalizeStatus = async (
 /** Serializes and completes a payout status lifecycle.
  * @param interaction Authorized guild interaction in the payout thread.
  * @param status Immutable terminal outcome selected by the organizer.
- * @returns Completion summary with any manual-action or partial-failure guidance.
+ * @returns Resolves after saving progress and attempting the public result and thread lock.
  */
 export const finalizeShareStatus = (
   interaction: ChatInputCommandInteraction,
