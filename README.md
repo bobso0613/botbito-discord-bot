@@ -5,10 +5,12 @@ TypeScript Discord bot built with `discord.js` and `googleapis`. It provides pay
 ## Runtime Error Recovery
 
 Only the identified raw `ws` opening-handshake timeout is allowed to continue
-after an uncaught exception. A single two-minute watchdog then checks both
-`client.isReady()` and gateway `Status.Ready`. Repeated timeouts do not extend
-the deadline. If the gateway remains unhealthy, the bot exits with code 1;
-production must run under a supervisor configured to restart it.
+after an uncaught exception. A single two-minute watchdog then verifies that
+the gateway manager is not destroyed, has at least one shard, and every shard
+has `Status.Ready`. The manager's own status can remain Ready during a shard
+reconnect, so it is not used as proof of recovery. Repeated timeouts do not
+extend the deadline. If the gateway remains unhealthy, the bot exits with code
+1; production must run under a supervisor configured to restart it.
 
 All other uncaught exceptions remain fatal. There is intentionally no
 `unhandledRejection` listener: with Node.js 22's default rejection policy,
@@ -23,6 +25,8 @@ gateway identification, rather than through an unawaited ready-time presence
 broadcast. This does not claim recovery from arbitrary gateway-send failures.
 
 ## Setup ⚙️
+
+Use Node.js 22 or newer, as declared in the package's `engines` field.
 
 Install dependencies:
 

@@ -6,7 +6,7 @@ import {
   jest,
   test,
 } from "@jest/globals";
-import { Status } from "discord.js";
+import { Collection, Status } from "discord.js";
 import { createUncaughtDiscordWebSocketErrorHandler } from "./discord-websocket-error.js";
 import { logger } from "./logger.js";
 
@@ -19,7 +19,11 @@ const createTimeoutError = (): Error => {
 describe("createUncaughtDiscordWebSocketErrorHandler", () => {
   const client = {
     isReady: jest.fn(() => true),
-    ws: { status: Status.Ready },
+    ws: {
+      status: Status.Ready,
+      destroyed: false,
+      shards: new Collection<number, { status: Status }>(),
+    },
   };
   let handleError: ReturnType<
     typeof createUncaughtDiscordWebSocketErrorHandler
@@ -27,8 +31,13 @@ describe("createUncaughtDiscordWebSocketErrorHandler", () => {
 
   beforeEach(() => {
     jest.useFakeTimers();
-    client.isReady.mockReturnValue(true);
+    client.isReady.mockImplementation(
+      () => !client.ws.destroyed && client.ws.status === Status.Ready,
+    );
     client.ws.status = Status.Ready;
+    client.ws.destroyed = false;
+    client.ws.shards.clear();
+    client.ws.shards.set(0, { status: Status.Ready });
     handleError = createUncaughtDiscordWebSocketErrorHandler(client as never);
     jest.spyOn(logger, "log").mockImplementation(() => undefined);
     jest.spyOn(logger, "warn").mockImplementation(() => undefined);
@@ -61,12 +70,11 @@ describe("createUncaughtDiscordWebSocketErrorHandler", () => {
   });
 
   test("verifies that the whole gateway recovered before clearing the watchdog", () => {
-    client.isReady.mockReturnValue(false);
-    client.ws.status = Status.Connecting;
+    const recoveringShard = { status: Status.Connecting };
+    client.ws.shards.set(1, recoveringShard);
     handleError(createTimeoutError(), "uncaughtException");
     jest.advanceTimersByTime(119_999);
-    client.isReady.mockReturnValue(true);
-    client.ws.status = Status.Ready;
+    recoveringShard.status = Status.Ready;
 
     jest.advanceTimersByTime(1);
 
@@ -76,15 +84,10 @@ describe("createUncaughtDiscordWebSocketErrorHandler", () => {
     expect(jest.getTimerCount()).toBe(0);
   });
 
-  test.each([
-    { ready: false, status: Status.Connecting },
-    { ready: true, status: Status.Connecting },
-    { ready: false, status: Status.Ready },
-  ])(
-    "exits if the gateway is stuck (ready=$ready, status=$status)",
-    ({ ready, status }) => {
-      client.isReady.mockReturnValue(ready);
-      client.ws.status = status;
+  test.each([Status.Connecting, Status.Resuming, Status.Identifying])(
+    "exits if one shard is stuck in status %s despite a Ready manager",
+    (status) => {
+      client.ws.shards.set(1, { status });
       const fatalLog = jest
         .spyOn(logger, "fatal")
         .mockImplementation(() => undefined);
@@ -98,11 +101,32 @@ describe("createUncaughtDiscordWebSocketErrorHandler", () => {
         expect.stringContaining("exiting for supervisor restart"),
       );
       expect(exit).toHaveBeenCalledWith(1);
+      expect(client.ws.status).toBe(Status.Ready);
+      expect(client.isReady()).toBe(true);
+    },
+  );
+
+  test.each(["destroyed", "empty"])(
+    "exits when the manager is %s despite a Ready manager status",
+    (state) => {
+      if (state === "destroyed") {
+        client.ws.destroyed = true;
+      } else {
+        client.ws.shards.clear();
+      }
+      jest.spyOn(logger, "fatal").mockImplementation(() => undefined);
+      const exit = jest.spyOn(process, "exit").mockImplementation(() => {
+        throw new Error("Process exited");
+      });
+      handleError(createTimeoutError(), "uncaughtException");
+
+      expect(() => jest.advanceTimersByTime(120_000)).toThrow("Process exited");
+      expect(exit).toHaveBeenCalledWith(1);
     },
   );
 
   test("repeated timeouts do not postpone the recovery deadline", () => {
-    client.isReady.mockReturnValue(false);
+    client.ws.shards.set(1, { status: Status.Connecting });
     jest.spyOn(logger, "fatal").mockImplementation(() => undefined);
     jest.spyOn(process, "exit").mockImplementation(() => {
       throw new Error("Process exited");

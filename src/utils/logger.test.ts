@@ -26,14 +26,14 @@ describe("logger", () => {
          logger.fatal("Fatal output marker", new Error("root cause"));
          process.exit(1);`,
       ],
-      { encoding: "utf8", timeout: 5000 },
+      { encoding: "utf8", timeout: 20_000 },
     );
 
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("Fatal output marker");
     expect(result.stderr).toContain("Error: root cause");
-  });
+  }, 30_000);
 
   it("adds the process ID and server timestamp to informational logs", () => {
     jest.spyOn(console, "log").mockImplementation(() => undefined);

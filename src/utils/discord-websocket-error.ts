@@ -38,7 +38,11 @@ export const createUncaughtDiscordWebSocketErrorHandler = (
 
     recoveryWatchdog ??= setTimeout(() => {
       recoveryWatchdog = undefined;
-      if (client.isReady() && client.ws.status === Status.Ready) {
+      if (
+        client.isReady() &&
+        client.ws.shards.size > 0 &&
+        client.ws.shards.every((shard) => shard.status === Status.Ready)
+      ) {
         logger.log("Discord gateway recovery verified; bot is ready.");
         return;
       }
