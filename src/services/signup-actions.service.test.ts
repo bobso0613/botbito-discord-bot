@@ -21,6 +21,7 @@ jest.unstable_mockModule("../templates/signup-sheet.template.js", () => ({
 const {
   buildSignupSheetComponents,
   cleanupStaleSheetComponents,
+  executeAdd,
   getSheet,
   publish,
   publishToChannel,
@@ -52,6 +53,36 @@ describe("signup actions service", () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
+
+  it.each([
+    { input: "999", deferred: false },
+    { input: "999", deferred: true },
+    { input: "random", deferred: false },
+    { input: "random", deferred: true },
+  ])(
+    "awaits validation reply failures for $input (deferred=$deferred)",
+    async ({ input, deferred }) => {
+      getSignupSheet.mockResolvedValue(createSheet());
+      const error = new Error("Discord API request timed out");
+      const send = jest.fn(async () => {
+        throw error;
+      });
+      const interaction = {
+        guildId: "guild-id",
+        channelId: "channel-id",
+        user: { id: "user-id", displayName: "User" },
+        deferred,
+        replied: false,
+        reply: send,
+        editReply: send,
+      };
+
+      await expect(executeAdd(interaction as never, input)).rejects.toBe(error);
+
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(mutateSignupSheet).not.toHaveBeenCalled();
+    },
+  );
 
   it.each(["action", "replacement"])(
     "sends %s notices sequentially and skips empty labels",

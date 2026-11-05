@@ -543,20 +543,13 @@ const parseAddInput = (
   };
 };
 
-const resolveAddSlotNumbers = (
+const resolveAddSlotNumbers = async (
   positionInput: string,
   sheet: SignupSheet,
   interaction: SignupInteraction,
-): number[] | null => {
-  const replyError = (message: string): null => {
-    if (interaction.deferred || interaction.replied) {
-      void interaction.editReply(message);
-    } else {
-      void interaction.reply({
-        content: message,
-        flags: MessageFlags.Ephemeral,
-      });
-    }
+): Promise<number[] | null> => {
+  const replyError = async (message: string): Promise<null> => {
+    await replyAddInputError(interaction, message);
     return null;
   };
   if (positionInput === "random") {
@@ -1360,7 +1353,11 @@ export const executeAdd = async (
     await addUserToReserve(interaction, targetUser, options);
     return;
   }
-  const slotNumbers = resolveAddSlotNumbers(positionInput, sheet, interaction);
+  const slotNumbers = await resolveAddSlotNumbers(
+    positionInput,
+    sheet,
+    interaction,
+  );
   if (!slotNumbers) return;
   const randomSlotNumber =
     positionInput === "random" ? slotNumbers[0] : undefined;
