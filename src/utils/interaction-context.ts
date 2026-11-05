@@ -1,10 +1,36 @@
-import type {
-  ButtonInteraction,
-  ChatInputCommandInteraction,
+import {
+  MessageFlags,
+  type ButtonInteraction,
+  type ChatInputCommandInteraction,
+  type ModalSubmitInteraction,
+  type StringSelectMenuInteraction,
 } from "discord.js";
 import type { InteractionContext } from "../types/interaction-context.js";
+import { logger } from "./logger.js";
 
 export type { InteractionContext } from "../types/interaction-context.js";
+
+export const replyWithFailureMessage = async (
+  interaction:
+    | ButtonInteraction
+    | ChatInputCommandInteraction
+    | ModalSubmitInteraction
+    | StringSelectMenuInteraction,
+  message: string,
+): Promise<void> => {
+  try {
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply(message);
+    } else {
+      await interaction.reply({
+        content: message,
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+  } catch (error) {
+    logger.error("Failed to send interaction error response:", error);
+  }
+};
 
 /** Extracts user and guild presentation data from a command or button interaction. */
 export const getInteractionContext = (

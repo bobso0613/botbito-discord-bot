@@ -4,7 +4,6 @@ import {
   Collection,
   Events,
   GatewayIntentBits,
-  MessageFlags,
   Partials,
   REST,
   Routes,
@@ -70,6 +69,8 @@ import {
 } from "./templates/guild-schedule.template.js";
 import { DISCORD_SETTINGS } from "./config/discord-settings.js";
 import { logger } from "./utils/logger.js";
+import { createUncaughtDiscordWebSocketErrorHandler } from "./utils/discord-websocket-error.js";
+import { replyWithFailureMessage } from "./utils/interaction-context.js";
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.DISCORD_CLIENT_ID;
@@ -95,7 +96,19 @@ const client = new Client({
   ],
   // Uncached schedule messages need to be partial, or Discord.js drops their edit events entirely.
   partials: [Partials.Message, Partials.Channel],
+  presence: {
+    activities: [
+      {
+        name: "Use /help for command list | @bobito",
+        type: ActivityType.Listening,
+      },
+    ],
+  },
 });
+process.on(
+  "uncaughtException",
+  createUncaughtDiscordWebSocketErrorHandler(client),
+);
 if (shouldRegisterGuildScheduleAnnouncementListener) {
   registerGuildScheduleAnnouncementListener(client);
 } else {
@@ -160,15 +173,6 @@ const initializeGuild = async (guildId: string): Promise<void> => {
 };
 
 client.once(Events.ClientReady, async (readyClient) => {
-  readyClient.user.setPresence({
-    activities: [
-      {
-        name: "Use /help for command list | @bobito",
-        type: ActivityType.Listening,
-      },
-    ],
-  });
-
   await Promise.all(
     Array.from(readyClient.guilds.cache.keys(), initializeGuild),
   );
@@ -195,25 +199,6 @@ client.on(Events.MessageCreate, async (message) => {
     logger.error("Signup roster message processing failed:", error);
   }
 });
-
-/** Replies with a failure message, editing the deferred/replied response if one already exists. */
-const replyWithFailureMessage = async (
-  interaction:
-    | ButtonInteraction
-    | ModalSubmitInteraction
-    | StringSelectMenuInteraction
-    | ChatInputCommandInteraction,
-  message: string,
-): Promise<void> => {
-  if (interaction.deferred || interaction.replied) {
-    await interaction.editReply(message);
-  } else {
-    await interaction.reply({
-      content: message,
-      flags: MessageFlags.Ephemeral,
-    });
-  }
-};
 
 const handleModalSubmitInteraction = async (
   interaction: ModalSubmitInteraction,
@@ -293,14 +278,10 @@ const handleButtonInteraction = async (
       `button=${interaction.customId} buttonLabel=${JSON.stringify(buttonLabel)} status=fail guildId=${interaction.guildId ?? "direct-message"} userId=${interaction.user.id} ${getCommandLogContext(interaction)}`,
       error,
     );
-    try {
-      await replyWithFailureMessage(
-        interaction,
-        "Something went wrong while processing this command. Please try again.",
-      );
-    } catch (replyError) {
-      logger.error("Failed to send button error response:", replyError);
-    }
+    await replyWithFailureMessage(
+      interaction,
+      "Something went wrong while processing this command. Please try again.",
+    );
   }
 };
 
@@ -312,14 +293,10 @@ const handleSelectMenuInteraction = async (
     await handleSignupInstanceTypeSelect(interaction);
   } catch (error) {
     logger.error("Signup instance type select processing failed:", error);
-    try {
-      await replyWithFailureMessage(
-        interaction,
-        "Something went wrong while processing this command. Please try again.",
-      );
-    } catch (replyError) {
-      logger.error("Failed to send select menu error response:", replyError);
-    }
+    await replyWithFailureMessage(
+      interaction,
+      "Something went wrong while processing this command. Please try again.",
+    );
   }
 };
 
@@ -357,14 +334,10 @@ const handleChatInputCommandInteraction = async (
       `command=/${interaction.commandName} status=fail guildId=${interaction.guildId ?? "direct-message"} userId=${interaction.user.id} ${getCommandLogContext(interaction)}`,
       error,
     );
-    try {
-      await replyWithFailureMessage(
-        interaction,
-        "Something went wrong while processing this command. Please try again.",
-      );
-    } catch (replyError) {
-      logger.error("Failed to send command error response:", replyError);
-    }
+    await replyWithFailureMessage(
+      interaction,
+      "Something went wrong while processing this command. Please try again.",
+    );
   }
 };
 
@@ -389,6 +362,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
 client.on(Events.Error, (error) => {
   logger.error("Discord client error:", error);
+});
+
+client.on(Events.ShardError, (error, shardId) => {
+  logger.error(`Discord gateway error on shard ${shardId}:`, error);
+});
+
+client.on(Events.ShardDisconnect, (event, shardId) => {
+  logger.warn(
+    `Discord gateway disconnected on shard ${shardId}: code=${event.code}`,
+  );
+});
+
+client.on(Events.ShardReconnecting, (shardId) => {
+  logger.log(`Discord gateway reconnecting on shard ${shardId}.`);
 });
 
 try {

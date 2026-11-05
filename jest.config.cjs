@@ -28,6 +28,7 @@ module.exports = {
     "src/services/payout.service.ts",
     "src/services/share-status.service.ts",
     "src/utils/cooldown-initials.ts",
+    "src/utils/discord-websocket-error.ts",
     "src/utils/format-zeny.ts",
     "src/utils/guild-members.ts",
     "src/utils/interaction-context.ts",
