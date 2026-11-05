@@ -96,9 +96,9 @@ describe("createUncaughtDiscordWebSocketErrorHandler", () => {
       });
       handleError(createTimeoutError(), "uncaughtException");
 
-      expect(() => jest.advanceTimersByTime(120_000)).toThrow("Process exited");
+      expect(() => jest.advanceTimersByTime(130_000)).toThrow("Process exited");
       expect(fatalLog).toHaveBeenCalledWith(
-        expect.stringContaining("exiting for supervisor restart"),
+        expect.stringContaining("within the recovery window"),
       );
       expect(exit).toHaveBeenCalledWith(1);
       expect(client.ws.status).toBe(Status.Ready);
@@ -120,7 +120,7 @@ describe("createUncaughtDiscordWebSocketErrorHandler", () => {
       });
       handleError(createTimeoutError(), "uncaughtException");
 
-      expect(() => jest.advanceTimersByTime(120_000)).toThrow("Process exited");
+      expect(() => jest.advanceTimersByTime(130_000)).toThrow("Process exited");
       expect(exit).toHaveBeenCalledWith(1);
     },
   );
@@ -136,7 +136,43 @@ describe("createUncaughtDiscordWebSocketErrorHandler", () => {
     handleError(createTimeoutError(), "uncaughtException");
     expect(jest.getTimerCount()).toBe(1);
 
-    expect(() => jest.advanceTimersByTime(60_000)).toThrow("Process exited");
+    jest.advanceTimersByTime(60_000);
+    expect(jest.getTimerCount()).toBe(1);
+    expect(() => jest.advanceTimersByTime(10_000)).toThrow("Process exited");
+  });
+
+  test("allows an ordinary reconnect to finish during the recheck grace period", () => {
+    const recoveringShard = { status: Status.Connecting };
+    client.ws.shards.set(1, recoveringShard);
+    handleError(createTimeoutError(), "uncaughtException");
+    jest.advanceTimersByTime(120_000);
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("checking again in 5 seconds"),
+    );
+    recoveringShard.status = Status.Ready;
+    jest.advanceTimersByTime(5_000);
+
+    expect(logger.log).toHaveBeenCalledWith(
+      "Discord gateway recovery verified; bot is ready.",
+    );
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  test("does not extend the recovery rechecks when another timeout occurs", () => {
+    client.ws.shards.set(1, { status: Status.Connecting });
+    jest.spyOn(logger, "fatal").mockImplementation(() => undefined);
+    jest.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("Process exited");
+    });
+    handleError(createTimeoutError(), "uncaughtException");
+    jest.advanceTimersByTime(122_000);
+    handleError(createTimeoutError(), "uncaughtException");
+
+    expect(jest.getTimerCount()).toBe(1);
+    jest.advanceTimersByTime(3_000);
+    expect(jest.getTimerCount()).toBe(1);
+    expect(() => jest.advanceTimersByTime(5_000)).toThrow("Process exited");
   });
 
   test("arms a new watchdog after a previous recovery was verified", () => {
