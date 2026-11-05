@@ -1,24 +1,52 @@
+import { Status, type Client } from "discord.js";
 import { logger } from "./logger.js";
 
-export const handleUncaughtDiscordWebSocketError = (
-  error: Error,
-  origin: NodeJS.UncaughtExceptionOrigin,
-): void => {
-  const isHandshakeTimeout =
-    origin === "uncaughtException" &&
-    error.message === "Opening handshake has timed out" &&
-    /[\\/]node_modules[\\/]ws[\\/]lib[\\/]websocket\.js:\d+:\d+/.test(
-      error.stack ?? "",
-    );
+const GATEWAY_RECOVERY_TIMEOUT_MS = 120_000;
 
-  if (isHandshakeTimeout) {
+const exitWithFatalError = (
+  message: string,
+  ...additionalArguments: readonly unknown[]
+): never => {
+  try {
+    logger.fatal(message, ...additionalArguments);
+  } finally {
+    process.exit(1);
+  }
+};
+
+export const createUncaughtDiscordWebSocketErrorHandler = (
+  client: Pick<Client, "isReady" | "ws">,
+): ((error: Error, origin: NodeJS.UncaughtExceptionOrigin) => void) => {
+  let recoveryWatchdog: ReturnType<typeof setTimeout> | undefined;
+
+  return (error, origin): void => {
+    const isHandshakeTimeout =
+      origin === "uncaughtException" &&
+      error.message === "Opening handshake has timed out" &&
+      /[\\/]node_modules[\\/]ws[\\/]lib[\\/]websocket\.js:\d+:\d+/.test(
+        error.stack ?? "",
+      );
+
+    if (!isHandshakeTimeout) {
+      exitWithFatalError(`Fatal ${origin}:`, error);
+    }
+
     logger.warn(
-      "Caught an unhandled Discord WebSocket handshake timeout; keeping the bot running. Gateway reconnection remains managed by discord.js.",
+      "Caught an unhandled Discord WebSocket handshake timeout; keeping the bot running with a 120-second gateway recovery watchdog.",
       error,
     );
-    return;
-  }
 
-  logger.error(`Fatal ${origin}:`, error);
-  process.exit(1);
+    recoveryWatchdog ??= setTimeout(() => {
+      recoveryWatchdog = undefined;
+      if (client.isReady() && client.ws.status === Status.Ready) {
+        logger.log("Discord gateway recovery verified; bot is ready.");
+        return;
+      }
+
+      exitWithFatalError(
+        "Discord gateway did not recover within 120 seconds; exiting for supervisor restart.",
+      );
+    }, GATEWAY_RECOVERY_TIMEOUT_MS);
+    recoveryWatchdog.unref();
+  };
 };

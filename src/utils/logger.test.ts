@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, jest } from "@jest/globals";
+import { spawnSync } from "node:child_process";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { logger } from "./logger.js";
 
 const originalProcessId = process.pid;
@@ -6,6 +9,30 @@ const originalProcessId = process.pid;
 describe("logger", () => {
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  it("writes fatal diagnostics before an immediate process exit", () => {
+    const loggerUrl = pathToFileURL(
+      join(process.cwd(), "src/utils/logger.ts"),
+    ).href;
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "--input-type=module",
+        "--eval",
+        `import { logger } from ${JSON.stringify(loggerUrl)};
+         logger.fatal("Fatal output marker", new Error("root cause"));
+         process.exit(1);`,
+      ],
+      { encoding: "utf8", timeout: 5000 },
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Fatal output marker");
+    expect(result.stderr).toContain("Error: root cause");
   });
 
   it("adds the process ID and server timestamp to informational logs", () => {

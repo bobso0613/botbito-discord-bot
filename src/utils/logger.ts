@@ -1,3 +1,5 @@
+import { writeSync } from "node:fs";
+import { format } from "node:util";
 import { getServerTimestamp } from "./server-timestamp.js";
 
 export type LogArguments = readonly unknown[];
@@ -18,5 +20,12 @@ export const logger = {
   /** Writes an error message to the console. */
   error: (message: string, ...additionalArguments: LogArguments): void => {
     console.error(formatMessage(message), ...additionalArguments);
+  },
+  /** Must remain synchronous: fatal callers exit immediately after this write. */
+  fatal: (message: string, ...additionalArguments: LogArguments): void => {
+    writeSync(
+      process.stderr.fd,
+      `${format(formatMessage(message), ...additionalArguments)}\n`,
+    );
   },
 };

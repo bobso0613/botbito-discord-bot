@@ -69,10 +69,8 @@ import {
 } from "./templates/guild-schedule.template.js";
 import { DISCORD_SETTINGS } from "./config/discord-settings.js";
 import { logger } from "./utils/logger.js";
-import { handleUncaughtDiscordWebSocketError } from "./utils/discord-websocket-error.js";
+import { createUncaughtDiscordWebSocketErrorHandler } from "./utils/discord-websocket-error.js";
 import { replyWithFailureMessage } from "./utils/interaction-context.js";
-
-process.on("uncaughtException", handleUncaughtDiscordWebSocketError);
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.DISCORD_CLIENT_ID;
@@ -98,7 +96,19 @@ const client = new Client({
   ],
   // Uncached schedule messages need to be partial, or Discord.js drops their edit events entirely.
   partials: [Partials.Message, Partials.Channel],
+  presence: {
+    activities: [
+      {
+        name: "Use /help for command list | @bobito",
+        type: ActivityType.Listening,
+      },
+    ],
+  },
 });
+process.on(
+  "uncaughtException",
+  createUncaughtDiscordWebSocketErrorHandler(client),
+);
 if (shouldRegisterGuildScheduleAnnouncementListener) {
   registerGuildScheduleAnnouncementListener(client);
 } else {
@@ -163,19 +173,6 @@ const initializeGuild = async (guildId: string): Promise<void> => {
 };
 
 client.once(Events.ClientReady, async (readyClient) => {
-  try {
-    readyClient.user.setPresence({
-      activities: [
-        {
-          name: "Use /help for command list | @bobito",
-          type: ActivityType.Listening,
-        },
-      ],
-    });
-  } catch (error) {
-    logger.error("Failed to set Discord presence:", error);
-  }
-
   await Promise.all(
     Array.from(readyClient.guilds.cache.keys(), initializeGuild),
   );
@@ -369,6 +366,16 @@ client.on(Events.Error, (error) => {
 
 client.on(Events.ShardError, (error, shardId) => {
   logger.error(`Discord gateway error on shard ${shardId}:`, error);
+});
+
+client.on(Events.ShardDisconnect, (event, shardId) => {
+  logger.warn(
+    `Discord gateway disconnected on shard ${shardId}: code=${event.code}`,
+  );
+});
+
+client.on(Events.ShardReconnecting, (shardId) => {
+  logger.log(`Discord gateway reconnecting on shard ${shardId}.`);
 });
 
 try {

@@ -2,6 +2,26 @@
 
 TypeScript Discord bot built with `discord.js` and `googleapis`. It provides payout information from a Google Sheet and a private command guide.
 
+## Runtime Error Recovery
+
+Only the identified raw `ws` opening-handshake timeout is allowed to continue
+after an uncaught exception. A single two-minute watchdog then checks both
+`client.isReady()` and gateway `Status.Ready`. Repeated timeouts do not extend
+the deadline. If the gateway remains unhealthy, the bot exits with code 1;
+production must run under a supervisor configured to restart it.
+
+All other uncaught exceptions remain fatal. There is intentionally no
+`unhandledRejection` listener: with Node.js 22's default rejection policy,
+unhandled rejections reach the exception handler with origin
+`unhandledRejection` and exit with code 1. Do not deploy with a rejection policy
+that only warns or ignores errors. Fatal diagnostics use synchronous stderr
+writes before exit; this logger path must stay synchronous even if other log
+transports change.
+
+Initial presence is configured in the client options and sent as part of
+gateway identification, rather than through an unawaited ready-time presence
+broadcast. This does not claim recovery from arbitrary gateway-send failures.
+
 ## Setup ⚙️
 
 Install dependencies:
