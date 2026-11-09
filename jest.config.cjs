@@ -17,6 +17,7 @@ module.exports = {
   collectCoverageFrom: [
     "src/commands/export.command.ts",
     "src/commands/help.command.ts",
+    "src/commands/notification-setting.command.ts",
     "src/commands/payout.command.ts",
     "src/commands/payout-summary.command.ts",
     "src/commands/payout-thread.command.ts",

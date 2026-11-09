@@ -121,7 +121,7 @@ describe("/set notification setting", () => {
     });
   });
 
-  it.each(["invalid", "missing-guild", "write-error"])(
+  it.each(["invalid", "missing-guild", "write-error", "non-error-write-error"])(
     "reports %s privately without success",
     async (scenario) => {
       const interaction = createInteraction(
@@ -132,6 +132,8 @@ describe("/set notification setting", () => {
         updateUserNotificationSetting.mockRejectedValueOnce(
           new Error("disk failure"),
         );
+      if (scenario === "non-error-write-error")
+        updateUserNotificationSetting.mockRejectedValueOnce("disk failure");
       await notificationSettingCommand.execute(interaction as never);
       expect(interaction.deferReply).toHaveBeenCalledWith({
         flags: MessageFlags.Ephemeral,
@@ -143,8 +145,15 @@ describe("/set notification setting", () => {
           ),
         }),
       );
-      if (scenario !== "write-error")
+      if (scenario !== "write-error" && scenario !== "non-error-write-error") {
         expect(updateUserNotificationSetting).not.toHaveBeenCalled();
+      }
+      if (scenario === "non-error-write-error")
+        expect(interaction.editReply).toHaveBeenCalledWith(
+          expect.objectContaining({
+            content: "Could not set notification settings: disk failure",
+          }),
+        );
     },
   );
 });
