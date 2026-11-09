@@ -115,6 +115,13 @@ jest.unstable_mockModule("../config/discord-settings.js", () => ({
   },
 }));
 
+const isUserNotificationEnabled = jest.fn(
+  async (_guildId: string, _userId: string) => true,
+);
+jest.unstable_mockModule("./guild-settings.service.js", () => ({
+  isUserNotificationEnabled,
+}));
+
 const { finalizeShareStatus } = await import("./share-status.service.js");
 
 const createInteraction = (userId = "organizer", isManager = false) => {
@@ -167,6 +174,7 @@ const createInteraction = (userId = "organizer", isManager = false) => {
 };
 
 const resetState = (): void => {
+  isUserNotificationEnabled.mockReset().mockResolvedValue(true);
   spreadsheetQueue = Promise.resolve();
   historyQueue = Promise.resolve();
   sentDms.clear();
@@ -233,6 +241,61 @@ const resetState = (): void => {
 describe("share status service", () => {
   beforeEach(resetState);
 
+  it("skips opted-out recipients without fetching them or reporting DM failures", async () => {
+    isUserNotificationEnabled.mockImplementation(
+      async (guildId, userId) => guildId !== "guild" || userId !== "111",
+    );
+    const interaction = createInteraction();
+    await finalizeShareStatus(interaction as never, "ready");
+    expect(isUserNotificationEnabled).toHaveBeenCalledWith("guild", "111");
+    expect(interaction.usersFetch).not.toHaveBeenCalledWith("111");
+    expect(interaction.usersFetch).toHaveBeenCalledWith("222");
+    expect(entry.shareFinalization?.dmDeliveries).toEqual({
+      "111": "skipped",
+      "222": "sent",
+    });
+    expect(publicMessages[0]?.content).toContain(
+      "DMs skipped for 1 participant(s) with notifications Off.",
+    );
+    expect(publicMessages[0]?.content).not.toContain("DM failed");
+    await expect(
+      finalizeShareStatus(interaction as never, "ready"),
+    ).rejects.toThrow("This run has already been finalized");
+    expect(interaction.usersFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["negative run share", { thisRun: -2_435_417, totalUnclaimed: 26_789_583 }],
+    ["negative total balance", { thisRun: 1_000, totalUnclaimed: -2_435_417 }],
+  ])("skips DM for a %s", async (_description, negativeAmounts) => {
+    finalizePayoutExport.mockResolvedValueOnce({
+      sheetName: "Payout Sheet",
+      columnName: "EB 08/11",
+      payoutTotals: { totalEarned: 200_000, reimbursements: 50_000 },
+      shareAmounts: [
+        { userId: "111", ...negativeAmounts },
+        { userId: "222", thisRun: 50_000, totalUnclaimed: 300_000 },
+      ],
+    });
+    const interaction = createInteraction();
+
+    await finalizeShareStatus(interaction as never, "ready");
+
+    expect(interaction.usersFetch).not.toHaveBeenCalledWith("111");
+    expect(interaction.usersFetch).toHaveBeenCalledWith("222");
+    expect(isUserNotificationEnabled).not.toHaveBeenCalledWith("guild", "111");
+    expect(entry.shareFinalization?.dmDeliveries).toEqual({
+      "111": "skipped-negative-balance",
+      "222": "sent",
+    });
+    expect(publicMessages[0]?.content).toContain(
+      "DMs skipped for 1 participant(s) because their share balance was negative.",
+    );
+    expect(publicMessages[0]?.content).toContain(
+      "DMs sent to eligible participants.",
+    );
+  });
+
   it("finalizes Ready in Sheets, DMs each unique participant, reports, and locks", async () => {
     const firstDm = jest.fn(async (_message: unknown) => undefined);
     const secondDm = jest.fn(async (_message: unknown) => undefined);
@@ -287,22 +350,24 @@ describe("share status service", () => {
       finalizePayoutExport.mock.invocationCallOrder[0]!,
     );
     expect(publicMessages[0]?.content).toContain(
-      "**Payout Sheet (EB 27/10)** updated successfully. DMs sent to participants.",
+      "**Payout Sheet (EB 27/10)** updated successfully. DMs sent to eligible participants.",
     );
     expect(publicMessages[0]?.allowedMentions).toEqual({ parse: [] });
     expect(publicMessages[0]?.content).not.toContain("**Total earned**");
     expect(thread.setLocked.mock.invocationCallOrder[0]).toBeLessThan(
       thread.send.mock.invocationCallOrder[0]!,
     );
-    expect(publicMessages[1]?.content).toContain([
-      "**Total earned**: `200,000 z`",
-      "less **Reimbursements**: `50,000 z`",
-      "total: `150,000 z`",
-      "",
-      "Breakdown:",
-      "Alice - `100,000 z`",
-      "Bob - `50,000 z`",
-    ].join("\n"));
+    expect(publicMessages[1]?.content).toContain(
+      [
+        "**Total earned**: `200,000 z`",
+        "less **Reimbursements**: `50,000 z`",
+        "total: `150,000 z`",
+        "",
+        "Breakdown:",
+        "Alice - `100,000 z`",
+        "Bob - `50,000 z`",
+      ].join("\n"),
+    );
     expect(publicMessages[0]?.content).not.toContain("@alice");
     expect(publicMessages[0]?.content).not.toContain("@bob");
     expect(thread.name).toBe("✅Run Name - 02/11 [instance emoji]");
@@ -325,11 +390,19 @@ describe("share status service", () => {
 
     await finalizeShareStatus(createInteraction() as never, "ready");
 
-    expect(publicMessages[0]?.content).toContain("**DevTestSheet (Test+EC 02/11)**");
-    expect(publicMessages[1]?.content).toContain("**Total earned**: `34,856,795 z`");
-    expect(publicMessages[1]?.content).toContain("less **Reimbursements**: `0 z`");
+    expect(publicMessages[0]?.content).toContain(
+      "**DevTestSheet (Test+EC 02/11)**",
+    );
+    expect(publicMessages[1]?.content).toContain(
+      "**Total earned**: `34,856,795 z`",
+    );
+    expect(publicMessages[1]?.content).toContain(
+      "less **Reimbursements**: `0 z`",
+    );
     expect(publicMessages[1]?.content).toContain("total: `34,856,795 z`");
-    expect(publicMessages[1]?.content).toContain("Alice \\*Healer\\* - `11,618,931 z`");
+    expect(publicMessages[1]?.content).toContain(
+      "Alice \\*Healer\\* - `11,618,931 z`",
+    );
     expect(publicMessages[1]?.content).toContain("Bob - `11,618,931 z`");
     expect(publicMessages[1]?.content).not.toContain("25,000,000");
   });
@@ -359,8 +432,9 @@ describe("share status service", () => {
     thread.setLocked.mockRejectedValueOnce(new Error("missing permission"));
     await finalizeShareStatus(createInteraction() as never, "ready");
 
-    expect(publicMessages.map((message) => message.content).join("\n"))
-      .not.toContain("**Total earned**");
+    expect(
+      publicMessages.map((message) => message.content).join("\n"),
+    ).not.toContain("**Total earned**");
     expect(entry.shareFinalization?.summaryMessages).toBeUndefined();
     expect(entry.shareFinalization?.completed).toBe(false);
     const writes = finalizePayoutExport.mock.calls.length;
@@ -378,9 +452,13 @@ describe("share status service", () => {
     thread.send.mockRejectedValueOnce(new Error("send timeout"));
     await finalizeShareStatus(createInteraction() as never, "ready");
 
-    expect(entry.shareFinalization?.summaryMessages?.[0]?.status).toBe("failed");
+    expect(entry.shareFinalization?.summaryMessages?.[0]?.status).toBe(
+      "failed",
+    );
     expect(entry.shareFinalization?.completed).toBe(false);
-    expect(publicMessages.at(-1)?.content).toContain("payout summary could not be confirmed");
+    expect(publicMessages.at(-1)?.content).toContain(
+      "payout summary could not be confirmed",
+    );
     const writes = finalizePayoutExport.mock.calls.length;
     thread.send.mockClear();
 
@@ -388,9 +466,13 @@ describe("share status service", () => {
 
     expect(finalizePayoutExport).toHaveBeenCalledTimes(writes);
     expect(thread.send).toHaveBeenCalledTimes(1);
-    expect(thread.send).toHaveBeenCalledWith(expect.objectContaining({
-      content: expect.stringContaining("payout summary may have been partially delivered"),
-    }));
+    expect(thread.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining(
+          "payout summary may have been partially delivered",
+        ),
+      }),
+    );
     expect(entry.shareFinalization?.completed).toBe(false);
   });
 
@@ -406,7 +488,9 @@ describe("share status service", () => {
     };
     await finalizeShareStatus(createInteraction() as never, "ready");
 
-    expect(publicMessages[1]?.content).toContain("Payout summary is unavailable");
+    expect(publicMessages[1]?.content).toContain(
+      "Payout summary is unavailable",
+    );
     expect(publicMessages[1]?.content).not.toContain("**Total earned**");
     expect(finalizePayoutExport).not.toHaveBeenCalled();
   });
@@ -425,22 +509,33 @@ describe("share status service", () => {
       sheets: "confirmed",
       payoutTotals: { totalEarned: 100_000, reimbursements: 0 },
       shareAmounts: Object.fromEntries(
-        members.map((member) => [member.userId, { thisRun: 1_000, totalUnclaimed: 2_000 }]),
+        members.map((member) => [
+          member.userId,
+          { thisRun: 1_000, totalUnclaimed: 2_000 },
+        ]),
       ),
-      dmDeliveries: Object.fromEntries(members.map((member) => [member.userId, "sent" as const])),
+      dmDeliveries: Object.fromEntries(
+        members.map((member) => [member.userId, "sent" as const]),
+      ),
     };
 
     await finalizeShareStatus(createInteraction() as never, "ready");
 
     expect(publicMessages.length).toBeGreaterThan(1);
-    expect(publicMessages.every((message) => message.content.length <= 1_900)).toBe(true);
+    expect(
+      publicMessages.every((message) => message.content.length <= 1_900),
+    ).toBe(true);
     const report = publicMessages.map((message) => message.content).join("\n");
     for (const member of members) {
       expect(report).toContain(`${member.displayName} - \`1,000 z\``);
     }
-    expect(publicMessages.every((message) =>
-      JSON.stringify(message.allowedMentions) === JSON.stringify({ parse: [] }),
-    )).toBe(true);
+    expect(
+      publicMessages.every(
+        (message) =>
+          JSON.stringify(message.allowedMentions) ===
+          JSON.stringify({ parse: [] }),
+      ),
+    ).toBe(true);
   });
 
   it("continues Discord completion after Sheets failure without Ready DMs", async () => {
@@ -501,7 +596,9 @@ describe("share status service", () => {
 
     expect(finalizePayoutExport).toHaveBeenCalledTimes(2);
     expect(entry.shareFinalization).toMatchObject({
-      status: "done-no-share", sheets: "confirmed", completed: true,
+      status: "done-no-share",
+      sheets: "confirmed",
+      completed: true,
     });
   });
 
@@ -548,25 +645,39 @@ describe("share status service", () => {
   it("persists and publishes the leftover temporary column repair details", async () => {
     const interaction = createInteraction();
     finalizePayoutExport.mockRejectedValueOnce(
-      new Error('Temporary column AA may remain beside the run in "Payout Sheet"; inspect and remove it manually.'),
+      new Error(
+        'Temporary column AA may remain beside the run in "Payout Sheet"; inspect and remove it manually.',
+      ),
     );
     await finalizeShareStatus(interaction as never, "ready");
 
-    expect(entry.shareFinalization?.sheetsNotice).toContain("Temporary column AA");
+    expect(entry.shareFinalization?.sheetsNotice).toContain(
+      "Temporary column AA",
+    );
     expect(publicMessages[0]?.content).toContain("Temporary column AA");
     expect(interaction.usersFetch).not.toHaveBeenCalled();
   });
 
   it("releases both shared queues during DMs and preserves other history fields", async () => {
     let dmStarted!: () => void;
-    const started = new Promise<void>((resolve) => { dmStarted = resolve; });
+    const started = new Promise<void>((resolve) => {
+      dmStarted = resolve;
+    });
     let releaseDm!: () => void;
-    const blocked = new Promise<void>((resolve) => { releaseDm = resolve; });
-    sentDms.set("111", jest.fn(async () => {
-      dmStarted();
-      await blocked;
-    }));
-    const operation = finalizeShareStatus(createInteraction() as never, "ready");
+    const blocked = new Promise<void>((resolve) => {
+      releaseDm = resolve;
+    });
+    sentDms.set(
+      "111",
+      jest.fn(async () => {
+        dmStarted();
+        await blocked;
+      }),
+    );
+    const operation = finalizeShareStatus(
+      createInteraction() as never,
+      "ready",
+    );
     await started;
     try {
       await queuePayoutSheetOperation(() =>

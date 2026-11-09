@@ -8,6 +8,7 @@ import { mySchedCommand } from "./mysched.command.js";
 import { payoutCommand } from "./payout.command.js";
 import { payoutSummaryCommand } from "./payout-summary.command.js";
 import { setShareStatusCommand } from "./share-status.command.js";
+import { notificationSettingCommand } from "./notification-setting.command.js";
 import {
   changeShareParticipantsCommand,
   changeShareVendorCommand,
@@ -21,6 +22,7 @@ export const commands: Command[] = [
   payoutSummaryCommand,
   changeShareVendorCommand,
   changeShareParticipantsCommand,
+  notificationSettingCommand,
   setShareStatusCommand,
   guildSchedCommand,
   mySchedCommand,

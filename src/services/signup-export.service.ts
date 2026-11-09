@@ -176,6 +176,36 @@ const findSavedExport = async (
   return null;
 };
 
+/** Backfills missing organizer details without changing the identity already saved for an export. */
+const backfillSavedOrganizer = async (
+  path: string,
+  history: ExportHistory,
+  keys: readonly string[],
+  threadId: string | null,
+  organizer: Pick<
+    SignupExportHistoryEntry,
+    "organizerId" | "organizerName" | "organizerAvatarUrl"
+  >,
+): Promise<void> => {
+  const savedKey = keys.find((key) => history[key]?.threadId === threadId);
+  if (!savedKey) return;
+  const savedEntry = history[savedKey]!;
+  const missingOrganizerFields = {
+    ...(!savedEntry.organizerId && organizer.organizerId
+      ? { organizerId: organizer.organizerId }
+      : {}),
+    ...(!savedEntry.organizerName && organizer.organizerName
+      ? { organizerName: organizer.organizerName }
+      : {}),
+    ...(!savedEntry.organizerAvatarUrl && organizer.organizerAvatarUrl
+      ? { organizerAvatarUrl: organizer.organizerAvatarUrl }
+      : {}),
+  };
+  if (Object.keys(missingOrganizerFields).length === 0) return;
+  history[savedKey] = { ...savedEntry, ...missingOrganizerFields };
+  await writeHistory(path, history);
+};
+
 /**
  * Serializes guild exports, checks history/forum identifiers, and reserves before creating a post.
  * Combined requests also check all saved split keys for the same full title/date identity.
@@ -187,7 +217,7 @@ const findSavedExport = async (
  * @param findExistingThread Looks up coverage or recovers contents for a known thread ID. Without it, pending history stays blocked.
  * @param contents Exported roster messages saved with a newly created thread for participant lookup.
  * @param overlappingRunKeys Combined or per-instance keys whose coverage would duplicate this post.
- * @param metadata Optional exact Sheets retry snapshot and original organizer ID.
+ * @param metadata Optional Sheets retry snapshot and organizer identity captured for this export.
  * @returns Whether a new post was created and its ID, or null while an earlier export is pending.
  * @throws For unreadable history, unsuccessful forum checks, creation failures, or persistence failures.
  */
@@ -198,11 +228,20 @@ export const exportSignupRun = async (
   findExistingThread?: FindExistingThread,
   contents?: readonly string[],
   overlappingRunKeys: readonly string[] = [],
-  metadata: Pick<SignupExportHistoryEntry, "sheetsSync" | "organizerId"> = {},
+  metadata: Pick<
+    SignupExportHistoryEntry,
+    "sheetsSync" | "organizerId" | "organizerName" | "organizerAvatarUrl"
+  > = {},
 ): Promise<SignupExportResult> => {
-  const { sheetsSync, organizerId } = metadata;
-  const entryMetadata = {
+  const { sheetsSync, organizerId, organizerName, organizerAvatarUrl } =
+    metadata;
+  const organizerMetadata = {
     ...(organizerId && { organizerId }),
+    ...(organizerName && { organizerName }),
+    ...(organizerAvatarUrl && { organizerAvatarUrl }),
+  };
+  const entryMetadata = {
+    ...organizerMetadata,
     ...(contents && {
       contents,
       participantUserIds:
@@ -235,13 +274,20 @@ export const exportSignupRun = async (
     );
     if (saved) {
       result = saved;
+      await backfillSavedOrganizer(path, history, keys, saved.threadId, {
+        organizerId,
+        organizerName,
+        organizerAvatarUrl,
+      });
       return;
     }
     for (const key of keys) {
       const recovered = await findExistingThread?.(key);
       if (recovered) {
         history[key] =
-          typeof recovered === "string" ? { threadId: recovered } : recovered;
+          typeof recovered === "string"
+            ? { threadId: recovered, ...organizerMetadata }
+            : { ...recovered, ...organizerMetadata };
         await writeHistory(path, history);
         result.threadId = history[key]!.threadId;
         return;

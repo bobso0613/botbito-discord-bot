@@ -701,6 +701,9 @@ describe("signup export history", () => {
         "run-date": {
           threadId: null,
           organizerId: "organizer",
+          organizerName: "Current Organizer",
+          organizerAvatarUrl:
+            "https://cdn.discordapp.com/avatars/organizer/avatar.png",
           contents: ["<@member>"],
           participantUserIds: ["member"],
           sheetsSync,
@@ -715,13 +718,22 @@ describe("signup export history", () => {
       undefined,
       ["<@member>"],
       [],
-      { sheetsSync, organizerId: "organizer" },
+      {
+        sheetsSync,
+        organizerId: "organizer",
+        organizerName: "Current Organizer",
+        organizerAvatarUrl:
+          "https://cdn.discordapp.com/avatars/organizer/avatar.png",
+      },
     );
     expect(create).toHaveBeenCalledTimes(1);
     expect(JSON.parse(files.get(path)!)).toEqual({
       "run-date": {
         threadId: "thread",
         organizerId: "organizer",
+        organizerName: "Current Organizer",
+        organizerAvatarUrl:
+          "https://cdn.discordapp.com/avatars/organizer/avatar.png",
         contents: ["<@member>"],
         participantUserIds: ["member"],
         sheetsSync,
@@ -732,7 +744,7 @@ describe("signup export history", () => {
     );
   });
 
-  it("preserves reservation ownership and Sheets retry input when recovering a created post", async () => {
+  it("preserves organizer details and Sheets retry input when recovering a created post", async () => {
     const path = resolve(
       process.cwd(),
       "private",
@@ -751,7 +763,14 @@ describe("signup export history", () => {
     files.set(
       path,
       JSON.stringify({
-        run: { threadId: null, organizerId: "organizer", sheetsSync },
+        run: {
+          threadId: null,
+          organizerId: "organizer",
+          organizerName: "Current Organizer",
+          organizerAvatarUrl:
+            "https://cdn.discordapp.com/avatars/organizer/avatar.png",
+          sheetsSync,
+        },
       }),
     );
     const create = jest.fn(async () => "duplicate");
@@ -764,18 +783,101 @@ describe("signup export history", () => {
       exportSignupRun("guild", "run", create, findExisting, ["<@member>"], [], {
         sheetsSync,
         organizerId: "organizer",
+        organizerName: "Current Organizer",
+        organizerAvatarUrl:
+          "https://cdn.discordapp.com/avatars/organizer/avatar.png",
       }),
     ).resolves.toEqual({ created: false, threadId: "recovered" });
     expect(JSON.parse(files.get(path)!)).toEqual({
       run: {
         threadId: "recovered",
         organizerId: "organizer",
+        organizerName: "Current Organizer",
+        organizerAvatarUrl:
+          "https://cdn.discordapp.com/avatars/organizer/avatar.png",
         contents: ["<@member>"],
         participantUserIds: ["member"],
         sheetsSync,
       },
     });
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it("backfills only missing organizer details for a previously saved export", async () => {
+    const path = resolve(
+      process.cwd(),
+      "private",
+      "signup-exports",
+      "guild.json",
+    );
+    files.set(
+      path,
+      JSON.stringify({
+        run: {
+          threadId: "existing-thread",
+          contents: ["<@member>"],
+          organizerId: "original-organizer",
+        },
+      }),
+    );
+    const create = jest.fn(async () => "unexpected-thread");
+
+    await expect(
+      exportSignupRun("guild", "run", create, undefined, ["<@member>"], [], {
+        organizerId: "current-organizer",
+        organizerName: "Current Organizer",
+        organizerAvatarUrl:
+          "https://cdn.discordapp.com/avatars/current-organizer/avatar.png",
+      }),
+    ).resolves.toEqual({ created: false, threadId: "existing-thread" });
+
+    expect(JSON.parse(files.get(path)!)).toEqual({
+      run: {
+        threadId: "existing-thread",
+        contents: ["<@member>"],
+        organizerId: "original-organizer",
+        organizerName: "Current Organizer",
+        organizerAvatarUrl:
+          "https://cdn.discordapp.com/avatars/current-organizer/avatar.png",
+      },
+    });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("backfills the export-time organizer ID when an older history entry has none", async () => {
+    const path = resolve(
+      process.cwd(),
+      "private",
+      "signup-exports",
+      "guild.json",
+    );
+    files.set(
+      path,
+      JSON.stringify({
+        run: { threadId: "existing-thread", contents: ["<@member>"] },
+      }),
+    );
+
+    await expect(
+      exportSignupRun(
+        "guild",
+        "run",
+        jest.fn(async () => "unexpected"),
+        undefined,
+        ["<@member>"],
+        [],
+        {
+          organizerId: "export-time-organizer",
+          organizerName: "Export Time Organizer",
+        },
+      ),
+    ).resolves.toEqual({ created: false, threadId: "existing-thread" });
+
+    expect(JSON.parse(files.get(path)!).run).toMatchObject({
+      threadId: "existing-thread",
+      organizerId: "export-time-organizer",
+      organizerName: "Export Time Organizer",
+    });
   });
 
   it("blocks Sheets synchronization when recovery finds an incomplete roster", async () => {

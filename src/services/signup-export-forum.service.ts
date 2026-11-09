@@ -257,7 +257,9 @@ export const sendExport = async (
         overlappingRunKeys,
         {
           sheetsSync: sheetsSnapshot,
-          organizerId: sheet.organizerId ?? undefined,
+          organizerId: userId,
+          organizerName: sheet.organizerName,
+          organizerAvatarUrl: sheet.organizerAvatarUrl,
         },
       );
     } catch (error) {

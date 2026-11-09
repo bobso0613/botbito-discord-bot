@@ -78,6 +78,11 @@ jest.unstable_mockModule("../config/discord-settings.js", () => ({
   },
 }));
 
+jest.unstable_mockModule("../services/guild-settings.service.js", () => ({
+  isUserNotificationEnabled: jest.fn(async () => true),
+  updateUserNotificationSetting: jest.fn(async () => undefined),
+}));
+
 const { setShareStatusCommand } = await import("./share-status.command.js");
 
 const exportIdentifier = "-# Export ID: stable-export-id";
@@ -154,7 +159,10 @@ const createInteraction = (
           isManager && permission === PermissionFlagsBits.ManageGuild,
       ),
     },
-    options: { getString: jest.fn(() => status) },
+    options: {
+      getString: jest.fn(() => status),
+      getSubcommandGroup: jest.fn(() => "share"),
+    },
     deferReply: jest.fn(async (_options: unknown) => undefined),
     editReply,
     usersFetch,
@@ -333,7 +341,7 @@ describe("/set share status", () => {
       finalizePayoutExport.mock.invocationCallOrder[0]!,
     );
     expect(publicMessages[0]?.content).toContain(
-      "**Sheet (EB 27/10)** updated successfully. DMs sent to participants.",
+      "**Sheet (EB 27/10)** updated successfully. DMs sent to eligible participants.",
     );
     expect(publicMessages).toHaveLength(2);
     expect(thread.name).toBe("✅Run Name - 02/11 [guild emoji]");

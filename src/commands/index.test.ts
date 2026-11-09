@@ -2,7 +2,7 @@ import { describe, expect, it } from "@jest/globals";
 import { commands } from "./index.js";
 
 describe("command registry", () => {
-  it("registers every top-level command exactly once", () => {
+  it("registers every top-level command exactly once per deployment scope", () => {
     const names = commands.map((command) => command.data.name);
     expect(names).toEqual(
       expect.arrayContaining([
@@ -21,6 +21,11 @@ describe("command registry", () => {
         "ping",
       ]),
     );
-    expect(new Set(names).size).toBe(names.length);
+    const scopedNames = commands.flatMap((command) =>
+      (command.guildIds ?? ["global"]).map((scope) =>
+        JSON.stringify([scope, command.data.name]),
+      ),
+    );
+    expect(new Set(scopedNames).size).toBe(scopedNames.length);
   });
 });

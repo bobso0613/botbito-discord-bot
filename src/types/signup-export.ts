@@ -18,8 +18,11 @@ export interface SignupExportFinalization {
   sheetsNotice?: string;
   /** Whether the pending hourglass title was replaced successfully. */
   titleUpdated?: boolean;
-  /** Per-participant DM state; attempting means delivery may be ambiguous after interruption. */
-  dmDeliveries?: Record<string, "attempting" | "sent" | "failed">;
+  /** Per-participant DM state, including notification and negative-balance skips. */
+  dmDeliveries?: Record<
+    string,
+    "attempting" | "sent" | "failed" | "skipped" | "skipped-negative-balance"
+  >;
   /** Recalculated per-run and total unclaimed amounts retained for interrupted DM recovery. */
   shareAmounts?: Record<string, Omit<PayoutFinalizationShareAmount, "userId">>;
   /** Verified run inputs retained for public reporting after interruption. */
@@ -43,7 +46,10 @@ export interface SignupExportFinalization {
 
 export interface SignupExportHistoryEntry {
   threadId: string | null;
+  /** Organizer identity captured for this export; old history may omit these fields. */
   organizerId?: string;
+  organizerName?: string;
+  organizerAvatarUrl?: string;
   contents?: readonly string[];
   participantUserIds?: string[];
   sheetsSync?: PayoutSheetSnapshot;

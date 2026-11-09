@@ -4,6 +4,8 @@
 
 ## Commands 💬
 
+`/set notification setting setting:On|Off` saves your personal DM notification preference for the current server and confirms it ephemerally with the server name and choice. Notifications default to On. Off currently skips only the Ready for distribution DMs from `/set share status`; a participant with a negative run share or total unclaimed balance also receives no Ready DM. Other DM commands and buttons are unchanged. Each server keeps a separate preference, persisted in its guild settings file. The notification subcommand is registered globally for servers and included in the payout-guild `/set` command.
+
 `/help` ℹ️ requires a `command` autocomplete parameter. Start typing a command name to find a match; selecting it displays a private guide with that command's description and parameters. Suggestions come from the same command list used to power the guide, so new entries appear automatically. The "Help" button on guild schedule output still shows the full guide grouped by category.
 
 `/payout` 💰 displays the command user's Pending, Share Ready, and Distributed balances in zeny (`z`), followed by **🛒Currently Vending** below Distributed. It is available in every channel of configured payout guilds. The optional `sendprivately` parameter sends the response ephemerally; it is public by default. The **My Payout Status** button shows the same information privately.
