@@ -61,7 +61,7 @@ src/
 - `npm run dev` runs the bot with `tsx watch`.
 - `npm run build` compiles TypeScript to `dist/`.
 - `npm start` runs the compiled bot.
-- `npm run deploy-commands` registers `/help`, `/mysched`, and `/mycooldowns` globally and guild-specific payout and schedule commands in their configured guilds.
+- `npm run deploy-commands` registers `/help`, `/mysched`, and `/mycooldowns` globally and guild-specific payout and schedule commands in their configured guilds. After merging the combined payout-guild `/set` command, run this once to replace command registrations and remove any previously published global `/set`.
 - `npm run retrofit:cooldown-initials -- --dry-run` previews inferred cooldown initials; omit `--dry-run` to save. After building, use `npm run retrofit:cooldown-initials:dist -- --dry-run`. Settings default to `private/guild-settings` under the working directory; `--directory /absolute/path/to/private/guild-settings` overrides that path.
 - `npm run migrate:signup-exports -- --dry-run` previews legacy pending-thread imports; omit `--dry-run` to save them. After building, use `npm run migrate:signup-exports:dist -- --dry-run` for the compiled script. `--root /absolute/path/to/bot` selects the bot root containing `.env` and `private/`; `--directory /absolute/path/to/signup-exports` overrides the destination history directory.
 - `npm test` runs the Jest unit tests.

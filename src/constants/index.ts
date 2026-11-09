@@ -581,9 +581,9 @@ export const COMMAND_GUIDE: ReadonlyArray<{
   },
   {
     name: "/set notification setting",
-    summary: "Turn your DM notifications On or Off in this server.",
+    summary: "Turn your DM notifications On or Off in payout-enabled servers.",
     description:
-      "Set your personal bot DM notification preference for the current server. Notifications default to On. Off currently skips only DMs from `/set share status`; other DM commands and buttons are unchanged. The confirmation is private. Preferences are saved separately for each server.",
+      "Set your personal bot DM notification preference for the current payout-enabled server. Notifications default to On. Off currently skips only DMs from `/set share status`; other DM commands and buttons are unchanged. The confirmation is private. Preferences are saved separately for each payout-enabled server.",
     emoji: "🔔",
     parameters: [
       {
