@@ -803,7 +803,7 @@ describe("signup export history", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
-  it("backfills only missing organizer details for a previously saved export", async () => {
+  it("does not mix organizer details when the saved export has a different organizer", async () => {
     const path = resolve(
       process.cwd(),
       "private",
@@ -836,12 +836,50 @@ describe("signup export history", () => {
         threadId: "existing-thread",
         contents: ["<@member>"],
         organizerId: "original-organizer",
+      },
+    });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("backfills missing organizer display details when the saved organizer ID matches", async () => {
+    const path = resolve(
+      process.cwd(),
+      "private",
+      "signup-exports",
+      "guild.json",
+    );
+    files.set(
+      path,
+      JSON.stringify({
+        run: {
+          threadId: "existing-thread",
+          contents: ["<@member>"],
+          organizerId: "current-organizer",
+        },
+      }),
+    );
+
+    await exportSignupRun(
+      "guild",
+      "run",
+      jest.fn(async () => "unexpected"),
+      undefined,
+      ["<@member>"],
+      [],
+      {
+        organizerId: "current-organizer",
         organizerName: "Current Organizer",
         organizerAvatarUrl:
           "https://cdn.discordapp.com/avatars/current-organizer/avatar.png",
       },
+    );
+
+    expect(JSON.parse(files.get(path)!).run).toMatchObject({
+      organizerId: "current-organizer",
+      organizerName: "Current Organizer",
+      organizerAvatarUrl:
+        "https://cdn.discordapp.com/avatars/current-organizer/avatar.png",
     });
-    expect(create).not.toHaveBeenCalled();
   });
 
   it("backfills the export-time organizer ID when an older history entry has none", async () => {

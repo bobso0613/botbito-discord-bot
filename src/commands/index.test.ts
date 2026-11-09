@@ -27,5 +27,13 @@ describe("command registry", () => {
       ),
     );
     expect(new Set(scopedNames).size).toBe(scopedNames.length);
+    const setCommands = commands.filter(
+      (command) => command.data.name === "set",
+    );
+    expect(setCommands).toHaveLength(1);
+    expect(setCommands[0]?.guildIds).toBeDefined();
+    expect(
+      setCommands[0]?.data.toJSON().options?.map(({ name }) => name),
+    ).toEqual(expect.arrayContaining(["share", "notification"]));
   });
 });

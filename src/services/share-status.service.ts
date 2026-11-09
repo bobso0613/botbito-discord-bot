@@ -24,7 +24,7 @@ import { withSignupExportHistory } from "./signup-export.service.js";
 import { buildReadyShareStatusEmbed } from "../templates/payout.template.js";
 import type { InteractionContext } from "../types/interaction-context.js";
 import { formatZeny } from "../utils/format-zeny.js";
-import { isUserNotificationEnabled } from "./guild-settings.service.js";
+import { getUserNotificationSettings } from "./guild-settings.service.js";
 
 const finalizationQueues = new Map<string, Promise<void>>();
 
@@ -155,6 +155,9 @@ const deliverReadyMessages = async (
   const dmDeliveries = (state.dmDeliveries ??= {});
   const memberById = new Map(members.map((member) => [member.userId, member]));
   const shareAmounts = state.shareAmounts ?? {};
+  const notificationSettings = await getUserNotificationSettings(
+    interaction.guildId!,
+  );
   await [...new Set(participantIds)].reduce(async (previous, userId) => {
     await previous;
     if (dmDeliveries[userId]) return;
@@ -164,7 +167,7 @@ const deliverReadyMessages = async (
       await save();
       return;
     }
-    if (!(await isUserNotificationEnabled(interaction.guildId!, userId))) {
+    if (notificationSettings[userId] === false) {
       dmDeliveries[userId] = "skipped";
       await save();
       return;
@@ -348,7 +351,7 @@ const buildResultReport = (
       : "Google Sheets";
   if (status === "ready" && sheets === "confirmed") {
     lines.push(
-      `${sheetTarget} updated successfully. DMs sent to eligible participants.`,
+      `${sheetTarget} updated successfully. DMs sent to eligible participants (if any).`,
     );
   } else if (status === "ready") {
     lines.push(

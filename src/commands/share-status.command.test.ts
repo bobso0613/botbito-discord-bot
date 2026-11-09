@@ -79,7 +79,7 @@ jest.unstable_mockModule("../config/discord-settings.js", () => ({
 }));
 
 jest.unstable_mockModule("../services/guild-settings.service.js", () => ({
-  isUserNotificationEnabled: jest.fn(async () => true),
+  getUserNotificationSettings: jest.fn(async () => ({})),
   updateUserNotificationSetting: jest.fn(async () => undefined),
 }));
 
@@ -341,7 +341,7 @@ describe("/set share status", () => {
       finalizePayoutExport.mock.invocationCallOrder[0]!,
     );
     expect(publicMessages[0]?.content).toContain(
-      "**Sheet (EB 27/10)** updated successfully. DMs sent to eligible participants.",
+      "**Sheet (EB 27/10)** updated successfully. DMs sent to eligible participants (if any).",
     );
     expect(publicMessages).toHaveLength(2);
     expect(thread.name).toBe("✅Run Name - 02/11 [guild emoji]");

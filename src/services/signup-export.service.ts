@@ -190,14 +190,20 @@ const backfillSavedOrganizer = async (
   const savedKey = keys.find((key) => history[key]?.threadId === threadId);
   if (!savedKey) return;
   const savedEntry = history[savedKey]!;
+  const organizerIdMatches =
+    !savedEntry.organizerId || savedEntry.organizerId === organizer.organizerId;
   const missingOrganizerFields = {
     ...(!savedEntry.organizerId && organizer.organizerId
       ? { organizerId: organizer.organizerId }
       : {}),
-    ...(!savedEntry.organizerName && organizer.organizerName
+    ...(organizerIdMatches &&
+    !savedEntry.organizerName &&
+    organizer.organizerName
       ? { organizerName: organizer.organizerName }
       : {}),
-    ...(!savedEntry.organizerAvatarUrl && organizer.organizerAvatarUrl
+    ...(organizerIdMatches &&
+    !savedEntry.organizerAvatarUrl &&
+    organizer.organizerAvatarUrl
       ? { organizerAvatarUrl: organizer.organizerAvatarUrl }
       : {}),
   };

@@ -95,13 +95,12 @@ export const updateUserNotificationSetting = async (
   });
 };
 
-/** Returns whether Ready share-status DMs are enabled, defaulting to true. */
-export const isUserNotificationEnabled = async (
+/** Loads per-user Ready share-status DM preferences for one guild; absent entries default to enabled. */
+export const getUserNotificationSettings = async (
   guildId: string,
-  userId: string,
-): Promise<boolean> => {
+): Promise<Readonly<Record<string, boolean>>> => {
   const settings = await readGuildSettings(guildId);
-  return settings?.notificationSettings?.[userId] !== false;
+  return settings?.notificationSettings ?? {};
 };
 
 /** Atomically sets the payout forum destination and refreshes the runtime guild settings. */

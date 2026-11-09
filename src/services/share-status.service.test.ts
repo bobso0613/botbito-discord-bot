@@ -115,11 +115,11 @@ jest.unstable_mockModule("../config/discord-settings.js", () => ({
   },
 }));
 
-const isUserNotificationEnabled = jest.fn(
-  async (_guildId: string, _userId: string) => true,
+const getUserNotificationSettings = jest.fn(
+  async (_guildId: string) => ({}) as Readonly<Record<string, boolean>>,
 );
 jest.unstable_mockModule("./guild-settings.service.js", () => ({
-  isUserNotificationEnabled,
+  getUserNotificationSettings,
 }));
 
 const { finalizeShareStatus } = await import("./share-status.service.js");
@@ -174,7 +174,7 @@ const createInteraction = (userId = "organizer", isManager = false) => {
 };
 
 const resetState = (): void => {
-  isUserNotificationEnabled.mockReset().mockResolvedValue(true);
+  getUserNotificationSettings.mockReset().mockResolvedValue({});
   spreadsheetQueue = Promise.resolve();
   historyQueue = Promise.resolve();
   sentDms.clear();
@@ -242,12 +242,11 @@ describe("share status service", () => {
   beforeEach(resetState);
 
   it("skips opted-out recipients without fetching them or reporting DM failures", async () => {
-    isUserNotificationEnabled.mockImplementation(
-      async (guildId, userId) => guildId !== "guild" || userId !== "111",
-    );
+    getUserNotificationSettings.mockResolvedValue({ "111": false });
     const interaction = createInteraction();
     await finalizeShareStatus(interaction as never, "ready");
-    expect(isUserNotificationEnabled).toHaveBeenCalledWith("guild", "111");
+    expect(getUserNotificationSettings).toHaveBeenCalledTimes(1);
+    expect(getUserNotificationSettings).toHaveBeenCalledWith("guild");
     expect(interaction.usersFetch).not.toHaveBeenCalledWith("111");
     expect(interaction.usersFetch).toHaveBeenCalledWith("222");
     expect(entry.shareFinalization?.dmDeliveries).toEqual({
@@ -283,7 +282,7 @@ describe("share status service", () => {
 
     expect(interaction.usersFetch).not.toHaveBeenCalledWith("111");
     expect(interaction.usersFetch).toHaveBeenCalledWith("222");
-    expect(isUserNotificationEnabled).not.toHaveBeenCalledWith("guild", "111");
+    expect(getUserNotificationSettings).toHaveBeenCalledTimes(1);
     expect(entry.shareFinalization?.dmDeliveries).toEqual({
       "111": "skipped-negative-balance",
       "222": "sent",
@@ -292,7 +291,7 @@ describe("share status service", () => {
       "DMs skipped for 1 participant(s) because their share balance was negative.",
     );
     expect(publicMessages[0]?.content).toContain(
-      "DMs sent to eligible participants.",
+      "DMs sent to eligible participants (if any).",
     );
   });
 
@@ -350,7 +349,7 @@ describe("share status service", () => {
       finalizePayoutExport.mock.invocationCallOrder[0]!,
     );
     expect(publicMessages[0]?.content).toContain(
-      "**Payout Sheet (EB 27/10)** updated successfully. DMs sent to eligible participants.",
+      "**Payout Sheet (EB 27/10)** updated successfully. DMs sent to eligible participants (if any).",
     );
     expect(publicMessages[0]?.allowedMentions).toEqual({ parse: [] });
     expect(publicMessages[0]?.content).not.toContain("**Total earned**");

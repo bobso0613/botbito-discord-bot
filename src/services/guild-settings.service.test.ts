@@ -45,7 +45,7 @@ const {
   updateGuildScheduleSource,
   updateGuildPayoutChannel,
   updateUserNotificationSetting,
-  isUserNotificationEnabled,
+  getUserNotificationSettings,
 } = await import("./guild-settings.service.js");
 
 const getPath = (guildId: string): string =>
@@ -58,11 +58,12 @@ describe("guild settings service", () => {
   });
 
   it("defaults notifications to On and isolates preferences by guild and user", async () => {
-    expect(await isUserNotificationEnabled("guild-a", "user-a")).toBe(true);
+    expect(await getUserNotificationSettings("guild-a")).toEqual({});
     await updateUserNotificationSetting("guild-a", "user-a", false);
-    expect(await isUserNotificationEnabled("guild-a", "user-a")).toBe(false);
-    expect(await isUserNotificationEnabled("guild-b", "user-a")).toBe(true);
-    expect(await isUserNotificationEnabled("guild-a", "user-b")).toBe(true);
+    expect(await getUserNotificationSettings("guild-a")).toEqual({
+      "user-a": false,
+    });
+    expect(await getUserNotificationSettings("guild-b")).toEqual({});
     await updateGuildPayoutChannel("guild-a", "forum-id");
     await Promise.all([
       updateUserNotificationSetting("guild-a", "user-a", true),

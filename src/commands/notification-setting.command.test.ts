@@ -11,9 +11,9 @@ const updateUserNotificationSetting = jest.fn(
 );
 jest.unstable_mockModule("../services/guild-settings.service.js", () => ({
   updateUserNotificationSetting,
-  isUserNotificationEnabled: jest.fn(async () => true),
+  getUserNotificationSettings: jest.fn(async () => ({})),
 }));
-const { notificationSettingCommand, notificationControlledActions } =
+const { setNotificationSetting, notificationControlledActions } =
   await import("./notification-setting.command.js");
 const { setShareStatusCommand } = await import("./share-status.command.js");
 
@@ -38,12 +38,13 @@ describe("/set notification setting", () => {
     jest.clearAllMocks();
   });
 
-  it("registers required On/Off choices globally and in the payout-guild set command", () => {
-    const data = notificationSettingCommand.data.toJSON();
-    expect(data.name).toBe("set");
+  it("registers required On/Off choices in the payout-guild set command", () => {
+    const data = setShareStatusCommand.data.toJSON();
     expect(data.contexts).toEqual([InteractionContextType.Guild]);
-    expect(notificationSettingCommand.guildIds).toBeUndefined();
-    expect(data.options?.[0]).toMatchObject({
+    expect(setShareStatusCommand.guildIds).toBeDefined();
+    expect(
+      data.options?.find(({ name }) => name === "notification"),
+    ).toMatchObject({
       name: "notification",
       type: 2,
       options: [
@@ -76,7 +77,7 @@ describe("/set notification setting", () => {
     "persists %s for the caller and confirms ephemerally",
     async (setting, enabled, choice) => {
       const interaction = createInteraction(setting);
-      await notificationSettingCommand.execute(interaction as never);
+      await setNotificationSetting(interaction as never);
       expect(interaction.deferReply).toHaveBeenCalledWith({
         flags: MessageFlags.Ephemeral,
       });
@@ -87,14 +88,14 @@ describe("/set notification setting", () => {
       );
       expect(interaction.editReply).toHaveBeenCalledWith({
         content: expect.stringContaining(
-          `you have set your notification settings in Guild Name as ${choice}`,
+          `You have set your notification settings in Guild Name as ${choice}`,
         ),
         allowedMentions: { parse: [] },
       });
       const content = interaction.editReply.mock.calls[0]?.[0].content;
       if (enabled) {
         expect(content).toBe(
-          `you have set your notification settings in Guild Name as ${choice}`,
+          `You have set your notification settings in Guild Name as ${choice}`,
         );
       } else {
         expect(content).toContain(
@@ -121,6 +122,18 @@ describe("/set notification setting", () => {
     });
   });
 
+  it("escapes markdown in the guild name in the confirmation", async () => {
+    const interaction = createInteraction("on");
+    interaction.guild.name = "Raid *Guild*";
+    await setNotificationSetting(interaction as never);
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content:
+          "You have set your notification settings in Raid \\*Guild\\* as On",
+      }),
+    );
+  });
+
   it.each(["invalid", "missing-guild", "write-error", "non-error-write-error"])(
     "reports %s privately without success",
     async (scenario) => {
@@ -134,7 +147,7 @@ describe("/set notification setting", () => {
         );
       if (scenario === "non-error-write-error")
         updateUserNotificationSetting.mockRejectedValueOnce("disk failure");
-      await notificationSettingCommand.execute(interaction as never);
+      await setNotificationSetting(interaction as never);
       expect(interaction.deferReply).toHaveBeenCalledWith({
         flags: MessageFlags.Ephemeral,
       });

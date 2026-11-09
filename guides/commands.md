@@ -4,7 +4,7 @@
 
 ## Commands 💬
 
-`/set notification setting setting:On|Off` saves your personal DM notification preference for the current server and confirms it ephemerally with the server name and choice. Notifications default to On. Off currently skips only the Ready for distribution DMs from `/set share status`; a participant with a negative run share or total unclaimed balance also receives no Ready DM. Other DM commands and buttons are unchanged. Each server keeps a separate preference, persisted in its guild settings file. The notification subcommand is registered globally for servers and included in the payout-guild `/set` command.
+`/set notification setting setting:On|Off` is available in payout-enabled servers. It saves your personal DM notification preference for that server and confirms it ephemerally with the server name and choice. Notifications default to On. Off skips only the Ready for distribution DMs from `/set share status`; a participant with a negative run share or total unclaimed balance also receives no Ready DM. Other DM commands and buttons are unchanged. Each payout server keeps a separate preference in its guild settings file.
 
 `/help` ℹ️ requires a `command` autocomplete parameter. Start typing a command name to find a match; selecting it displays a private guide with that command's description and parameters. Suggestions come from the same command list used to power the guide, so new entries appear automatically. The "Help" button on guild schedule output still shows the full guide grouped by category.
 

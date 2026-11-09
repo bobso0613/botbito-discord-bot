@@ -1,12 +1,9 @@
 import {
-  ApplicationIntegrationType,
-  InteractionContextType,
+  escapeMarkdown,
   MessageFlags,
-  SlashCommandBuilder,
   SlashCommandSubcommandGroupBuilder,
   type ChatInputCommandInteraction,
 } from "discord.js";
-import type { Command } from "../types/command.js";
 import { updateUserNotificationSetting } from "../services/guild-settings.service.js";
 
 /** DM-producing actions whose participant delivery checks this preference. */
@@ -53,7 +50,7 @@ export const setNotificationSetting = async (
       interaction.user.id,
       setting === "on",
     );
-    const confirmation = `you have set your notification settings in ${interaction.guild.name} as ${setting === "on" ? "On" : "Off"}`;
+    const confirmation = `You have set your notification settings in ${escapeMarkdown(interaction.guild.name)} as ${setting === "on" ? "On" : "Off"}`;
     const disabledActions =
       setting === "off"
         ? [
@@ -73,14 +70,4 @@ export const setNotificationSetting = async (
       allowedMentions: { parse: [] },
     });
   }
-};
-
-export const notificationSettingCommand: Command = {
-  data: new SlashCommandBuilder()
-    .setName("set")
-    .setDescription("Set your preferences")
-    .addSubcommandGroup(createNotificationSettingGroup())
-    .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
-    .setContexts(InteractionContextType.Guild) as SlashCommandBuilder,
-  execute: setNotificationSetting,
 };
