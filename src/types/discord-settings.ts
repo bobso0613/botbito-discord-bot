@@ -38,6 +38,8 @@ export interface DiscordSettings {
 
 /** Settings stored in private/guild-settings/<guild-id>.json. */
 export interface GuildSettings {
+  /** Per-user Ready share-status DM preferences; missing entries default to enabled. */
+  notificationSettings?: Record<string, boolean>;
   /** Forum destination for exported signup rosters; absent or null until configured. */
   payoutSheetChannelId?: string | null;
   /** Source categories and optional restrictions for this guild's schedules. */

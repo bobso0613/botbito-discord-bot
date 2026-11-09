@@ -44,6 +44,8 @@ const {
   ensureGuildSettings,
   updateGuildScheduleSource,
   updateGuildPayoutChannel,
+  updateUserNotificationSetting,
+  getUserNotificationSettings,
 } = await import("./guild-settings.service.js");
 
 const getPath = (guildId: string): string =>
@@ -53,6 +55,26 @@ describe("guild settings service", () => {
   beforeEach(() => {
     files.clear();
     jest.clearAllMocks();
+  });
+
+  it("defaults notifications to On and isolates preferences by guild and user", async () => {
+    expect(await getUserNotificationSettings("guild-a")).toEqual({});
+    await updateUserNotificationSetting("guild-a", "user-a", false);
+    expect(await getUserNotificationSettings("guild-a")).toEqual({
+      "user-a": false,
+    });
+    expect(await getUserNotificationSettings("guild-b")).toEqual({});
+    await updateGuildPayoutChannel("guild-a", "forum-id");
+    await Promise.all([
+      updateUserNotificationSetting("guild-a", "user-a", true),
+      updateUserNotificationSetting("guild-a", "user-b", false),
+    ]);
+    const settings = JSON.parse(files.get(getPath("guild-a"))!);
+    expect(settings.notificationSettings).toEqual({
+      "user-a": true,
+      "user-b": false,
+    });
+    expect(settings.payoutSheetChannelId).toBe("forum-id");
   });
 
   it("creates the requested empty configuration for a new guild", async () => {

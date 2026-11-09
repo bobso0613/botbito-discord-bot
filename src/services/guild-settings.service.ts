@@ -83,6 +83,26 @@ export const ensureGuildSettings = async (guildId: string): Promise<void> => {
   await mutateGuildSettings(guildId, () => undefined);
 };
 
+/** Saves one user's Ready share-status DM preference for a single guild. */
+export const updateUserNotificationSetting = async (
+  guildId: string,
+  userId: string,
+  enabled: boolean,
+): Promise<void> => {
+  await mutateGuildSettings(guildId, (settings) => {
+    settings.notificationSettings ??= {};
+    settings.notificationSettings[userId] = enabled;
+  });
+};
+
+/** Loads per-user Ready share-status DM preferences for one guild; absent entries default to enabled. */
+export const getUserNotificationSettings = async (
+  guildId: string,
+): Promise<Readonly<Record<string, boolean>>> => {
+  const settings = await readGuildSettings(guildId);
+  return settings?.notificationSettings ?? {};
+};
+
 /** Atomically sets the payout forum destination and refreshes the runtime guild settings. */
 export const updateGuildPayoutChannel = async (
   guildId: string,

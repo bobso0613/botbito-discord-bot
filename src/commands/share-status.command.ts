@@ -8,6 +8,10 @@ import { PAYOUT_GUILD_IDS } from "../config/discord-settings.js";
 import type { Command } from "../types/command.js";
 import type { ShareFinalizationStatus } from "../types/signup-export.js";
 import {
+  createNotificationSettingGroup,
+  setNotificationSetting,
+} from "./notification-setting.command.js";
+import {
   finalizeShareStatus,
   shareStatusChoices,
 } from "../services/share-status.service.js";
@@ -60,10 +64,15 @@ export const setShareStatusCommand: Command = {
             ),
         ),
     )
+    .addSubcommandGroup(createNotificationSettingGroup())
     .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
     .setContexts(InteractionContextType.Guild) as SlashCommandBuilder,
   guildIds: PAYOUT_GUILD_IDS,
   execute: async (interaction: ChatInputCommandInteraction) => {
+    if (interaction.options.getSubcommandGroup() === "notification") {
+      await setNotificationSetting(interaction);
+      return;
+    }
     await interaction.deferReply();
     try {
       if (

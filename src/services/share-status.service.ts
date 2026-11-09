@@ -24,6 +24,7 @@ import { withSignupExportHistory } from "./signup-export.service.js";
 import { buildReadyShareStatusEmbed } from "../templates/payout.template.js";
 import type { InteractionContext } from "../types/interaction-context.js";
 import { formatZeny } from "../utils/format-zeny.js";
+import { getUserNotificationSettings } from "./guild-settings.service.js";
 
 const finalizationQueues = new Map<string, Promise<void>>();
 
@@ -141,7 +142,7 @@ const splitReport = (content: string): string[] => {
   return chunks;
 };
 
-/** Sends Ready notifications serially, persisting an attempt/result for each participant. */
+/** Sends eligible Ready notifications serially, persisting sent, failed, and skipped outcomes. */
 const deliverReadyMessages = async (
   interaction: ChatInputCommandInteraction,
   thread: ThreadChannel,
@@ -154,14 +155,27 @@ const deliverReadyMessages = async (
   const dmDeliveries = (state.dmDeliveries ??= {});
   const memberById = new Map(members.map((member) => [member.userId, member]));
   const shareAmounts = state.shareAmounts ?? {};
+  const notificationSettings = await getUserNotificationSettings(
+    interaction.guildId!,
+  );
   await [...new Set(participantIds)].reduce(async (previous, userId) => {
     await previous;
     if (dmDeliveries[userId]) return;
+    const amounts = shareAmounts[userId];
+    if (amounts && (amounts.thisRun < 0 || amounts.totalUnclaimed < 0)) {
+      dmDeliveries[userId] = "skipped-negative-balance";
+      await save();
+      return;
+    }
+    if (notificationSettings[userId] === false) {
+      dmDeliveries[userId] = "skipped";
+      await save();
+      return;
+    }
     dmDeliveries[userId] = "attempting";
     await save();
     try {
       const participant = memberById.get(userId);
-      const amounts = shareAmounts[userId];
       if (!participant || !amounts) {
         throw new Error("Saved participant payout amounts are unavailable.");
       }
@@ -218,7 +232,9 @@ const publishReport = async (
       status: "pending",
     })));
   const label =
-    destination === "publicMessages" ? "public status report" : "payout summary";
+    destination === "publicMessages"
+      ? "public status report"
+      : "payout summary";
   const useInteractionReply = destination === "publicMessages";
   await save();
   let editedInteractionReply = false;
@@ -231,16 +247,15 @@ const publishReport = async (
     await save();
     const isInteractionReply = index === 0 && useInteractionReply;
     try {
-      const message =
-        isInteractionReply
-          ? await interaction.editReply({
-              content: report.content,
-              allowedMentions: { parse: [] },
-            })
-          : await thread.send({
-              content: report.content,
-              allowedMentions: { parse: [] },
-            });
+      const message = isInteractionReply
+        ? await interaction.editReply({
+            content: report.content,
+            allowedMentions: { parse: [] },
+          })
+        : await thread.send({
+            content: report.content,
+            allowedMentions: { parse: [] },
+          });
       if (isInteractionReply) editedInteractionReply = true;
       report.status = "sent";
       report.messageId = message.id;
@@ -272,7 +287,11 @@ const publishLockedPayoutSummary = async (
   members: readonly PayoutSheetMember[],
   save: () => Promise<void>,
 ): Promise<string | null> => {
-  if (state.status !== "ready" || state.sheets !== "confirmed" || !state.locked) {
+  if (
+    state.status !== "ready" ||
+    state.sheets !== "confirmed" ||
+    !state.locked
+  ) {
     return null;
   }
   return publishReport(
@@ -332,7 +351,7 @@ const buildResultReport = (
       : "Google Sheets";
   if (status === "ready" && sheets === "confirmed") {
     lines.push(
-      `${sheetTarget} updated successfully. DMs sent to participants.`,
+      `${sheetTarget} updated successfully. DMs sent to eligible participants (if any).`,
     );
   } else if (status === "ready") {
     lines.push(
@@ -359,6 +378,22 @@ const buildResultReport = (
   const failed = Object.entries(dmDeliveries ?? {})
     .filter(([, result]) => result === "failed")
     .map(([userId]) => `<@${userId}>: DM failed.`);
+  const skipped = Object.values(dmDeliveries ?? {}).filter(
+    (result) => result === "skipped",
+  ).length;
+  if (skipped > 0) {
+    lines.push(
+      `DMs skipped for ${skipped} participant(s) with notifications Off.`,
+    );
+  }
+  const negativeBalanceSkips = Object.values(dmDeliveries ?? {}).filter(
+    (result) => result === "skipped-negative-balance",
+  ).length;
+  if (negativeBalanceSkips > 0) {
+    lines.push(
+      `DMs skipped for ${negativeBalanceSkips} participant(s) because their share balance was negative.`,
+    );
+  }
   lines.push(
     ...interruptedDms.map(
       (userId) =>
@@ -654,7 +689,9 @@ const finalizeStatus = async (
   );
   if (publicFailure || lockFailure || summaryFailure) {
     await thread.send({
-      content: [publicFailure, lockFailure, summaryFailure].filter(Boolean).join("\n"),
+      content: [publicFailure, lockFailure, summaryFailure]
+        .filter(Boolean)
+        .join("\n"),
       allowedMentions: { parse: [] },
     });
   }
