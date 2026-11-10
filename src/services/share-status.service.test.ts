@@ -375,6 +375,61 @@ describe("share status service", () => {
     expect(publicMessages).toHaveLength(2);
   });
 
+  it("falls back to the saved title when the thread has no usable run date", async () => {
+    const firstDm = jest.fn(async (_message: unknown) => undefined);
+    sentDms.set("111", firstDm);
+    thread.name = "⏳Undated run";
+    entry.sheetsSync!.title = "Saved run name";
+
+    await finalizeShareStatus(createInteraction() as never, "ready");
+
+    expect(firstDm.mock.calls[0]![0]).toMatchObject({
+      content: expect.stringContaining(
+        "**💰Share Status - Saved run name - the exported date**",
+      ),
+    });
+  });
+
+  it("reports cancelled runs without sending participant notifications", async () => {
+    const interaction = createInteraction();
+
+    await finalizeShareStatus(interaction as never, "cancelled");
+
+    expect(finalizePayoutExport).toHaveBeenCalledWith(
+      "Payout Sheet",
+      "guild",
+      "thread",
+      entry.sheetsSync,
+      "cancelled",
+    );
+    expect(interaction.usersFetch).not.toHaveBeenCalled();
+    expect(publicMessages[0]?.content).toContain("Cancelled");
+    expect(publicMessages[0]?.content).toContain(
+      "removed in the sheet successfully",
+    );
+    expect(thread.name).toBe("❌Run Name - 02/11 [instance emoji]");
+  });
+
+  it("reports missing saved amounts as failed DMs instead of fetching users", async () => {
+    finalizePayoutExport.mockResolvedValueOnce({
+      sheetName: "Payout Sheet",
+      columnName: "EB 27/10",
+      payoutTotals: { totalEarned: 200_000, reimbursements: 50_000 },
+      shareAmounts: [],
+    });
+    const interaction = createInteraction();
+
+    await finalizeShareStatus(interaction as never, "ready");
+
+    expect(interaction.usersFetch).not.toHaveBeenCalled();
+    expect(entry.shareFinalization?.dmDeliveries).toEqual({
+      "111": "failed",
+      "222": "failed",
+    });
+    expect(publicMessages[0]?.content).toContain("<@111>: DM failed.");
+    expect(publicMessages[0]?.content).toContain("<@222>: DM failed.");
+  });
+
   it("uses signup display names and truncates shares without redistributing rounding", async () => {
     entry.sheetsSync!.members![0]!.displayName = "Alice *Healer*";
     finalizePayoutExport.mockResolvedValueOnce({
@@ -538,7 +593,7 @@ describe("share status service", () => {
   });
 
   it("continues Discord completion after Sheets failure without Ready DMs", async () => {
-    finalizePayoutExport.mockRejectedValueOnce(new Error("offline"));
+    finalizePayoutExport.mockRejectedValueOnce("offline");
     const interaction = createInteraction();
 
     await finalizeShareStatus(interaction as never, "ready");
@@ -638,6 +693,274 @@ describe("share status service", () => {
     expect(thread.setName).not.toHaveBeenCalled();
     expect(thread.send).not.toHaveBeenCalled();
     expect(thread.setLocked).not.toHaveBeenCalled();
+    expect(entry.shareFinalization).toBeUndefined();
+  });
+
+  it("rejects a legacy export without managed Sheets history", async () => {
+    entry.sheetsSync = undefined;
+
+    await expect(
+      finalizeShareStatus(createInteraction() as never, "ready"),
+    ).rejects.toThrow("legacy or unmanaged export");
+    expect(finalizePayoutExport).not.toHaveBeenCalled();
+    expect(entry.shareFinalization).toBeUndefined();
+  });
+
+  it("records a rejected participant DM without stopping other deliveries", async () => {
+    sentDms.set(
+      "111",
+      jest.fn(async () => {
+        throw new Error("DMs are closed");
+      }),
+    );
+
+    await finalizeShareStatus(createInteraction() as never, "ready");
+
+    expect(entry.shareFinalization?.dmDeliveries).toEqual({
+      "111": "failed",
+      "222": "sent",
+    });
+    expect(publicMessages[0]?.content).toContain("<@111>: DM failed.");
+    expect(publicMessages[0]?.content).not.toContain("<@222>: DM failed.");
+  });
+
+  it("reports when Discord refuses to update the thread title", async () => {
+    thread.setName.mockRejectedValueOnce(new Error("missing permission"));
+
+    await finalizeShareStatus(createInteraction() as never, "cancelled");
+
+    expect(publicMessages[0]?.content).toContain(
+      "thread title could not be updated",
+    );
+    expect(entry.shareFinalization?.completed).toBe(false);
+  });
+
+  it("uses the manual-recovery notice for an existing manual Sheets state", async () => {
+    entry.shareFinalization = { status: "ready", sheets: "manual" };
+
+    await finalizeShareStatus(createInteraction() as never, "ready");
+
+    expect(finalizePayoutExport).not.toHaveBeenCalled();
+    expect(publicMessages[0]?.content).toContain(
+      "Google Sheets was not confirmed; manual correction is required",
+    );
+    expect(entry.shareFinalization?.sheets).toBe("manual");
+  });
+
+  it("refuses to start a new status on a thread without the pending icon", async () => {
+    thread.name = "✅Run Name - 02/11 [instance emoji]";
+
+    await expect(
+      finalizeShareStatus(createInteraction() as never, "cancelled"),
+    ).rejects.toThrow("only be set on a pending thread");
+    expect(finalizePayoutExport).not.toHaveBeenCalled();
+    expect(entry.shareFinalization).toBeUndefined();
+  });
+
+  it("reports unavailable participant shares in a saved Ready summary", async () => {
+    entry.shareFinalization = {
+      status: "ready",
+      sheets: "confirmed",
+      payoutTotals: { totalEarned: 200_000, reimbursements: 50_000 },
+      shareAmounts: {},
+      dmDeliveries: { "111": "sent", "222": "sent" },
+      titleUpdated: true,
+      locked: true,
+    };
+    thread.name = "✅Run Name - 02/11 [instance emoji]";
+
+    await finalizeShareStatus(createInteraction() as never, "ready");
+
+    expect(publicMessages.at(-1)?.content).toContain(
+      "verified share unavailable; inspect Google Sheets",
+    );
+  });
+
+  it("parses a saved Ready thread title without a status icon", async () => {
+    const firstDm = jest.fn(async (_message: unknown) => undefined);
+    sentDms.set("111", firstDm);
+    entry.shareFinalization = {
+      status: "ready",
+      sheets: "confirmed",
+      payoutTotals: { totalEarned: 200_000, reimbursements: 50_000 },
+      shareAmounts: {
+        "111": { thisRun: 100_000, totalUnclaimed: 250_000 },
+        "222": { thisRun: 50_000, totalUnclaimed: 300_000 },
+      },
+      dmDeliveries: {},
+      titleUpdated: true,
+      locked: true,
+    };
+    thread.name = "Run Name - 02/11";
+
+    await finalizeShareStatus(createInteraction() as never, "ready");
+
+    expect(firstDm.mock.calls[0]![0]).toMatchObject({
+      content: expect.stringContaining("**💰Share Status - Run Name - 02/11**"),
+    });
+  });
+
+  it("uses saved roster and username fallbacks when optional metadata is absent", async () => {
+    const members = entry.sheetsSync!.members!;
+    const firstDm = jest.fn(async (_message: unknown) => undefined);
+    sentDms.set("111", firstDm);
+    entry.organizerId = undefined;
+    entry.participantUserIds = undefined;
+    entry.sheetsSync!.members = undefined;
+    entry.sheetsSync!.syncedMembers = members;
+    entry.shareFinalization = {
+      status: "ready",
+      sheets: "confirmed",
+      payoutTotals: { totalEarned: 200_000, reimbursements: 50_000 },
+      shareAmounts: {
+        "111": { thisRun: 100_000, totalUnclaimed: 250_000 },
+        "222": { thisRun: 50_000, totalUnclaimed: 300_000 },
+      },
+      dmDeliveries: {},
+      locked: true,
+    };
+    thread.name = "Run Name - 02/11";
+    canEditShare.mockReturnValueOnce(true);
+    const interaction = createInteraction();
+    Object.assign(interaction, { memberPermissions: undefined });
+    Object.assign(interaction.client, { user: null });
+    Object.assign(interaction.user, {
+      globalName: null,
+      username: "Fallback Organizer",
+    });
+
+    await finalizeShareStatus(interaction as never, "ready");
+
+    expect(firstDm.mock.calls[0]![0]).toMatchObject({
+      content: expect.stringContaining(
+        "Fallback Organizer has set https://discord.test/threads/thread",
+      ),
+    });
+    expect(entry.shareFinalization?.titleUpdated).toBe(true);
+  });
+
+  it.each([
+    [
+      "done-no-share",
+      "This run has no share: the organizer must manually correct",
+    ],
+    ["cancelled", "Google Sheets did not confirm removal"],
+  ] as const)(
+    "reports a failed Sheets %s operation accurately",
+    async (status, detail) => {
+      finalizePayoutExport.mockRejectedValueOnce(new Error("offline"));
+
+      await finalizeShareStatus(createInteraction() as never, status);
+
+      expect(publicMessages[0]?.content).toContain(detail);
+      expect(finalizePayoutExport).toHaveBeenCalledWith(
+        "Payout Sheet",
+        "guild",
+        "thread",
+        entry.sheetsSync,
+        status,
+      );
+    },
+  );
+
+  it("splits an overlong saved share-summary line without losing its contents", async () => {
+    const longName = "Participant".repeat(180);
+    const member = {
+      userId: "111",
+      displayName: longName,
+      discordTag: "alice",
+    };
+    entry.sheetsSync!.members = [member];
+    entry.sheetsSync!.userIds = [member.userId];
+    entry.participantUserIds = [member.userId];
+    entry.shareFinalization = {
+      status: "ready",
+      sheets: "confirmed",
+      payoutTotals: { totalEarned: 100_000, reimbursements: 0 },
+      shareAmounts: {
+        "111": { thisRun: 100_000, totalUnclaimed: 250_000 },
+      },
+      dmDeliveries: { "111": "sent" },
+      titleUpdated: true,
+      locked: true,
+    };
+    thread.name = "✅Run Name - 02/11";
+
+    await finalizeShareStatus(createInteraction() as never, "ready");
+
+    const summaryMessages = thread.send.mock.calls.map(
+      ([message]) => message.content,
+    );
+    expect(summaryMessages.length).toBeGreaterThan(1);
+    expect(summaryMessages.every((content) => content.length <= 1_900)).toBe(
+      true,
+    );
+    expect(summaryMessages.join("")).toContain(longName);
+  });
+
+  it.each([
+    ["Manage Threads", false, true],
+    ["Send Messages in Threads", true, false],
+  ])(
+    "requires the bot to have %s before starting finalization",
+    async (_permission, canManageThreads, canSendInThreads) => {
+      const interaction = createInteraction();
+      interaction.guild.members.me.permissionsIn = jest.fn(() => ({
+        has: jest.fn((permission: bigint) =>
+          permission === PermissionFlagsBits.ManageThreads
+            ? canManageThreads
+            : canSendInThreads,
+        ),
+      }));
+
+      await expect(
+        finalizeShareStatus(interaction as never, "ready"),
+      ).rejects.toThrow("needs Manage Threads and Send Messages in Threads");
+      expect(finalizePayoutExport).not.toHaveBeenCalled();
+      expect(entry.shareFinalization).toBeUndefined();
+    },
+  );
+
+  it("does not repeat an interrupted Sheets finalization", async () => {
+    entry.shareFinalization = {
+      status: "ready",
+      sheets: "in-progress",
+    };
+
+    await finalizeShareStatus(createInteraction() as never, "ready");
+
+    expect(finalizePayoutExport).not.toHaveBeenCalled();
+    expect(entry.shareFinalization).toMatchObject({
+      sheets: "manual",
+      completed: true,
+    });
+    expect(publicMessages[0]?.content).toContain(
+      "previous Sheets operation was interrupted and will not be repeated",
+    );
+  });
+
+  it.each([
+    [
+      "incomplete delivery",
+      (snapshot: PayoutSheetSnapshot) => {
+        snapshot.deliveryIncomplete = true;
+      },
+      "not fully delivered",
+    ],
+    [
+      "unsynced export",
+      (snapshot: PayoutSheetSnapshot) => {
+        snapshot.status = "pending";
+      },
+      "has not successfully synchronized",
+    ],
+  ])("rejects an %s before finalization", async (_name, mutate, reason) => {
+    (mutate as (snapshot: PayoutSheetSnapshot) => void)(entry.sheetsSync!);
+
+    await expect(
+      finalizeShareStatus(createInteraction() as never, "ready"),
+    ).rejects.toThrow(reason as string);
+    expect(finalizePayoutExport).not.toHaveBeenCalled();
     expect(entry.shareFinalization).toBeUndefined();
   });
 

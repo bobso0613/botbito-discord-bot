@@ -322,4 +322,236 @@ describe("payout statistics service", () => {
       stats.ranking?.some((player) => player.discordName === "zero-player"),
     ).toBe(false);
   });
+
+  it.each([
+    [
+      "missing",
+      (spreadsheet: sheets_v4.Schema$Spreadsheet) => {
+        spreadsheet.sheets = [];
+      },
+    ],
+    [
+      "duplicate",
+      (spreadsheet: sheets_v4.Schema$Spreadsheet) => {
+        spreadsheet.sheets!.push(structuredClone(spreadsheet.sheets![0]!));
+      },
+    ],
+    [
+      "empty grid",
+      (spreadsheet: sheets_v4.Schema$Spreadsheet) => {
+        spreadsheet.sheets![0]!.data = undefined;
+      },
+    ],
+  ])("rejects a %s payout worksheet", async (_name, mutate) => {
+    const spreadsheet = buildSpreadsheet();
+    (mutate as (sheet: sheets_v4.Schema$Spreadsheet) => void)(spreadsheet);
+    readPayoutSpreadsheet.mockResolvedValue(spreadsheet);
+
+    await expect(
+      getPayoutStats({
+        worksheet: "Guild 2026",
+        amount: "pending",
+        instanceTypes,
+      }),
+    ).rejects.toThrow(
+      _name === "empty grid"
+        ? "run-title row is not configured correctly"
+        : "configured payout worksheet could not be found",
+    );
+  });
+
+  it.each([
+    [
+      "missing",
+      (headers: sheets_v4.Schema$CellData[]) => {
+        delete headers[9];
+      },
+    ],
+    [
+      "duplicate",
+      (headers: sheets_v4.Schema$CellData[]) => {
+        headers[10] = textCell("Unclaimed");
+      },
+    ],
+    [
+      "before the run area",
+      (headers: sheets_v4.Schema$CellData[]) => {
+        delete headers[9];
+        headers[5] = textCell("Unclaimed");
+      },
+    ],
+  ])("rejects a %s Unclaimed boundary", async (_name, mutate) => {
+    const spreadsheet = buildSpreadsheet();
+    const headers = spreadsheet.sheets![0]!.data![0]!.rowData![4]!.values!;
+    (mutate as (cells: sheets_v4.Schema$CellData[]) => void)(headers);
+    readPayoutSpreadsheet.mockResolvedValue(spreadsheet);
+
+    await expect(
+      getPayoutStats({
+        worksheet: "Guild 2026",
+        amount: "pending",
+        instanceTypes,
+      }),
+    ).rejects.toThrow("run-title row is not configured correctly");
+  });
+
+  it("reads sparse grid blocks and user-entered payout values", async () => {
+    const spreadsheet: sheets_v4.Schema$Spreadsheet = {
+      sheets: [
+        {
+          properties: { title: "Guild 2026" },
+          data: [
+            {
+              startRow: 4,
+              startColumn: 5,
+              rowData: [
+                {
+                  values: [textCell("Unknown run"), textCell("Unclaimed")],
+                },
+              ],
+            },
+            {
+              startRow: 9,
+              startColumn: 2,
+              rowData: [
+                {
+                  values: [
+                    { userEnteredValue: { stringValue: "@alice" } },
+                    {},
+                    {},
+                    {
+                      userEnteredValue: { stringValue: "2,500" },
+                      userEnteredFormat: {
+                        backgroundColor: PENDING_SHARE_COLOR,
+                      },
+                    },
+                  ],
+                },
+                {
+                  values: [
+                    { userEnteredValue: { stringValue: "@bob" } },
+                    {},
+                    {},
+                    {
+                      userEnteredValue: { numberValue: 3_000 },
+                      userEnteredFormat: {
+                        backgroundColor: PENDING_SHARE_COLOR,
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    readPayoutSpreadsheet.mockResolvedValue(spreadsheet);
+
+    await expect(
+      getPayoutStats({ worksheet: "Guild 2026", amount: "pending" }),
+    ).resolves.toMatchObject({
+      overall: { amount: 5_500, joinedRuns: 1, totalRuns: 1 },
+      categories: [
+        {
+          name: "Others",
+          emoji: "💀",
+          amount: 5_500,
+          joinedRuns: 1,
+          totalRuns: 1,
+        },
+      ],
+    });
+  });
+
+  it("returns zero standing and an empty ranking when no run cells are populated", async () => {
+    const spreadsheet = buildSpreadsheet();
+    const rows = spreadsheet.sheets![0]!.data![0]!.rowData!;
+    rows[4]!.values![5] = {};
+    for (const column of [5, 6, 7, 8]) {
+      rows[9]!.values![column] = {};
+      rows[10]!.values![column] = {};
+    }
+    readPayoutSpreadsheet.mockResolvedValue(spreadsheet);
+
+    await expect(
+      getPayoutStats({
+        worksheet: "Guild 2026",
+        amount: "pending",
+        discordTag: "@missing-player",
+        includeRanking: true,
+      }),
+    ).resolves.toMatchObject({
+      overall: {
+        amount: 0,
+        joinedRuns: 0,
+        totalRuns: 3,
+        personalStanding: {
+          amount: 0,
+          impactPercent: 0,
+          rank: 1,
+          playerCount: 3,
+        },
+      },
+      ranking: [],
+    });
+  });
+
+  it("uses a configured Others category when no run type matches", async () => {
+    const configuredOthers: InstanceType = {
+      name: "Others",
+      keywords: [],
+      emoji: "📦",
+    };
+
+    await expect(
+      getPayoutStats({
+        worksheet: "Guild 2026",
+        amount: "pending",
+        instanceTypes: [...instanceTypes, configuredOthers],
+      }),
+    ).resolves.toMatchObject({
+      categories: expect.arrayContaining([
+        expect.objectContaining({ name: "Others", emoji: "📦" }),
+      ]),
+    });
+  });
+
+  it("sorts equal Ranking amounts by Discord tag and shares their rank", async () => {
+    const spreadsheet = buildSpreadsheet();
+    const rows = spreadsheet.sheets![0]!.data![0]!.rowData!;
+    rows[9]!.values![5] = amountCell(10_000, PENDING_SHARE_COLOR);
+    rows[10]!.values![5] = amountCell(10_000, PENDING_SHARE_COLOR);
+    for (const column of [6, 7, 8]) {
+      rows[9]!.values![column] = {};
+      rows[10]!.values![column] = {};
+    }
+    readPayoutSpreadsheet.mockResolvedValue(spreadsheet);
+
+    const stats = await getPayoutStats({
+      worksheet: "Guild 2026",
+      amount: "pending",
+      includeRanking: true,
+    });
+
+    expect(stats.ranking?.slice(0, 2)).toMatchObject([
+      { discordName: "alice", amount: 10_000, rank: 1 },
+      { discordName: "bob", amount: 10_000, rank: 1 },
+    ]);
+  });
+
+  it("handles grid blocks without row or cell arrays", async () => {
+    readPayoutSpreadsheet.mockResolvedValue({
+      sheets: [
+        {
+          properties: { title: "Guild 2026" },
+          data: [{}, { rowData: [{}] }],
+        },
+      ],
+    });
+
+    await expect(
+      getPayoutStats({ worksheet: "Guild 2026", amount: "pending" }),
+    ).rejects.toThrow("run-title row is not configured correctly");
+  });
 });

@@ -218,6 +218,37 @@ describe("payout thread commands", () => {
     });
   });
 
+  it("rejects an empty vendor and inserts the vendor line when absent", async () => {
+    const emptyVendor = createHarness();
+    emptyVendor.interaction.options.getString.mockReturnValue("  ");
+    await changeShareVendorCommand.execute(emptyVendor.interaction as never);
+    expect(emptyVendor.starter.edit).not.toHaveBeenCalled();
+    expect(emptyVendor.editReply).toHaveBeenCalledWith(
+      expect.stringContaining("Enter a vendor name"),
+    );
+
+    const missingVendor = createHarness();
+    missingVendor.starter.content = missingVendor.starter.content.replace(
+      "Vendor: **Vendor**\n",
+      "",
+    );
+    await changeShareVendorCommand.execute(missingVendor.interaction as never);
+    expect(missingVendor.starter.content).toContain(
+      "Vendor: **none**\n*Your Time:",
+    );
+  });
+
+  it("reports non-Error vendor command failures", async () => {
+    const { interaction, editReply } = createHarness();
+    syncPayoutExport.mockRejectedValueOnce("thread unavailable");
+
+    await changeShareVendorCommand.execute(interaction as never);
+
+    expect(editReply).toHaveBeenCalledWith(
+      "Could not update vendor: thread unavailable",
+    );
+  });
+
   it("preserves vendor replacement tokens and suppresses echoed mentions", async () => {
     const { editReply, interaction, starter } = createHarness();
     interaction.options.getString.mockReturnValue("$& <@123>");
@@ -265,6 +296,148 @@ describe("payout thread commands", () => {
         "bot",
       ),
     ).rejects.toThrow("payout-enabled server");
+  });
+
+  it("ignores roster messages without an active edit from the same user", async () => {
+    const { interaction, thread } = createHarness();
+    const reply = jest.fn(async (_content: string) => undefined);
+    const message = {
+      guildId: "guild",
+      guild: interaction.guild,
+      channelId: thread.id,
+      channel: thread,
+      client: interaction.client,
+      author: { id: "editor", bot: false },
+      content: "done",
+      reply,
+    };
+
+    await handleShareParticipantsMessage({
+      ...message,
+      guildId: null,
+    } as never);
+    await handleShareParticipantsMessage({
+      ...message,
+      author: { id: "bot", bot: true },
+    } as never);
+    await handleShareParticipantsMessage({
+      ...message,
+      channel: { isThread: () => false },
+    } as never);
+    await handleShareParticipantsMessage(message as never);
+
+    await changeShareParticipantsCommand.execute(interaction as never);
+    await handleShareParticipantsMessage({
+      ...message,
+      author: { id: "another-user", bot: false },
+    } as never);
+    expect(reply).not.toHaveBeenCalled();
+  });
+
+  it("requires roster content before done and rejects an oversized chunk", async () => {
+    const { interaction, thread } = createHarness();
+    await changeShareParticipantsCommand.execute(interaction as never);
+    const makeMessage = (content: string) => ({
+      guildId: "guild",
+      guild: interaction.guild,
+      channelId: thread.id,
+      channel: thread,
+      client: interaction.client,
+      author: { id: "editor", bot: false },
+      content,
+      reply: jest.fn(async (_content: string) => undefined),
+    });
+    const emptyDone = makeMessage("done");
+    await handleShareParticipantsMessage(emptyDone as never);
+    expect(emptyDone.reply).toHaveBeenCalledWith(
+      "Paste at least one roster message before `done`.",
+    );
+
+    const oversized = makeMessage("x".repeat(100_001));
+    await handleShareParticipantsMessage(oversized as never);
+    expect(oversized.reply).toHaveBeenCalledWith(
+      expect.stringContaining("updated roster is too large to process"),
+    );
+  });
+
+  it("validates payout starter identity and resolves an uncached forum parent", async () => {
+    const { interaction, starter, thread } = createHarness();
+    const guild = interaction.guild as never;
+
+    await expect(
+      getSharePost(null, guild, thread as never, "bot"),
+    ).rejects.toThrow("payout-enabled server");
+    await expect(
+      getSharePost("guild", null, thread as never, "bot"),
+    ).rejects.toThrow("payout-enabled server");
+    await expect(
+      getSharePost("guild", guild, thread as never, null),
+    ).rejects.toThrow("bot user is unavailable");
+
+    thread.fetchStarterMessage.mockImplementationOnce(
+      async () => null as never,
+    );
+    await expect(
+      getSharePost("guild", guild, thread as never, "bot"),
+    ).rejects.toThrow("no starter post");
+
+    starter.author.id = "another-bot";
+    await expect(
+      getSharePost("guild", guild, thread as never, "bot"),
+    ).rejects.toThrow("not created by the bot");
+    starter.author.id = "bot";
+    starter.content = "Roster\n-# Export ID: invalid";
+    await expect(
+      getSharePost("guild", guild, thread as never, "bot"),
+    ).rejects.toThrow("not created by the bot");
+    starter.content = `Roster\n${exportIdentifier}`;
+    await expect(
+      getSharePost("guild", guild, thread as never, "bot"),
+    ).rejects.toThrow("missing its Participants metadata");
+
+    starter.content = `Roster\n\nParticipants: **2**\n${exportIdentifier}`;
+    const uncachedThread = { ...thread, parent: undefined };
+    interaction.guild.channels.fetch.mockResolvedValueOnce({
+      type: ChannelType.GuildForum,
+    });
+    await expect(
+      getSharePost("guild", guild, uncachedThread as never, "bot"),
+    ).resolves.toMatchObject({ botId: "bot", starter });
+    expect(interaction.guild.channels.fetch).toHaveBeenCalledWith("forum");
+  });
+
+  it("rejects a thread attached to another guild or a non-forum parent", async () => {
+    const { interaction, thread } = createHarness();
+    const guild = interaction.guild as never;
+
+    await expect(
+      getSharePost(
+        "guild",
+        guild,
+        { ...thread, guildId: "other-guild" } as never,
+        "bot",
+      ),
+    ).rejects.toThrow("configured payout channel");
+    await expect(
+      getSharePost(
+        "guild",
+        guild,
+        { ...thread, parent: { type: ChannelType.GuildText } } as never,
+        "bot",
+      ),
+    ).rejects.toThrow("not a forum channel");
+
+    interaction.guild.channels.fetch.mockResolvedValueOnce({
+      type: ChannelType.GuildText,
+    });
+    await expect(
+      getSharePost(
+        "guild",
+        guild,
+        { ...thread, parent: undefined } as never,
+        "bot",
+      ),
+    ).rejects.toThrow("not a forum channel");
   });
 
   it("blocks vendor changes after share finalization has been selected", async () => {
@@ -328,6 +501,185 @@ describe("payout thread commands", () => {
     expect(reply).toHaveBeenCalledWith(
       "Roster updated successfully. Participants: **2**.",
     );
+  });
+
+  it("uses a copy-from-thread prompt for a long current roster", async () => {
+    const { interaction, starter, editReply } = createHarness();
+    starter.content = `${"x".repeat(1_701)}\n\nParticipants: **2**\n${exportIdentifier}`;
+
+    await changeShareParticipantsCommand.execute(interaction as never);
+
+    expect(editReply).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Copy the current roster from this thread before editing it.",
+      ),
+    );
+    expect(editReply).not.toHaveBeenCalledWith(
+      expect.stringContaining("x".repeat(100)),
+    );
+  });
+
+  it("rejects a submitted roster without participant mentions", async () => {
+    const { interaction, thread } = createHarness();
+    await changeShareParticipantsCommand.execute(interaction as never);
+    const reply = jest.fn(async (_content: string) => undefined);
+    const message = {
+      guildId: "guild",
+      guild: interaction.guild,
+      channelId: thread.id,
+      channel: thread,
+      client: interaction.client,
+      author: { id: "editor", bot: false },
+      member: { permissions: { has: jest.fn(() => true) } },
+      content: "Just a note, no participant IDs",
+      reply,
+    };
+
+    await handleShareParticipantsMessage(message as never);
+    await handleShareParticipantsMessage({
+      ...message,
+      content: "done",
+    } as never);
+
+    expect(reply).toHaveBeenLastCalledWith(
+      "Could not update roster: Include a Discord mention for each roster participant.",
+    );
+    expect(thread.members.add).not.toHaveBeenCalled();
+  });
+
+  it("rejects an empty roster submission", async () => {
+    const { interaction, thread } = createHarness();
+    await changeShareParticipantsCommand.execute(interaction as never);
+    const reply = jest.fn(async (_content: string) => undefined);
+    const message = {
+      guildId: "guild",
+      guild: interaction.guild,
+      channelId: thread.id,
+      channel: thread,
+      client: interaction.client,
+      author: { id: "editor", bot: false },
+      member: { permissions: { has: jest.fn(() => true) } },
+      content: "   ",
+      reply,
+    };
+
+    await handleShareParticipantsMessage(message as never);
+    await handleShareParticipantsMessage({
+      ...message,
+      content: "done",
+    } as never);
+
+    expect(reply).toHaveBeenLastCalledWith(
+      "Could not update roster: Paste the updated roster after the command.",
+    );
+  });
+
+  it("rejects roster metadata that alone exceeds Discord's message limit", async () => {
+    const { interaction, starter, thread } = createHarness();
+    starter.content = `**Party 1:**\n01: Champ - <@111>\n\nParticipants: **2**${"x".repeat(2_001)}\n${exportIdentifier}`;
+    await changeShareParticipantsCommand.execute(interaction as never);
+    const reply = jest.fn(async (_content: string) => undefined);
+    const makeMessage = (content: string) => ({
+      guildId: "guild",
+      guild: interaction.guild,
+      channelId: thread.id,
+      channel: thread,
+      client: interaction.client,
+      author: { id: "editor", bot: false },
+      member: { permissions: { has: jest.fn(() => true) } },
+      content,
+      reply,
+    });
+
+    await handleShareParticipantsMessage(
+      makeMessage("01: Champ - <@222>") as never,
+    );
+    await handleShareParticipantsMessage(makeMessage("done") as never);
+
+    expect(reply).toHaveBeenLastCalledWith(
+      expect.stringContaining(
+        "payout post metadata exceeds Discord's message limit",
+      ),
+    );
+  });
+
+  it("rejects an incomplete thread-message pagination cursor", async () => {
+    const { interaction, thread, editReply, starter } = createHarness();
+    thread.messages.fetch.mockResolvedValueOnce({
+      size: 100,
+      values: () => Array.from({ length: 100 }, () => starter),
+      last: () => undefined,
+    } as never);
+
+    await changeShareParticipantsCommand.execute(interaction as never);
+
+    expect(editReply).toHaveBeenCalledWith(
+      expect.stringContaining("Could not finish reading the payout thread"),
+    );
+  });
+
+  it("rejects a repeated pagination cursor", async () => {
+    const { interaction, thread, editReply, starter } = createHarness();
+    const page = {
+      size: 100,
+      values: () => [starter],
+      last: () => ({ id: "same-cursor" }),
+    };
+    thread.messages.fetch
+      .mockResolvedValueOnce(page as never)
+      .mockResolvedValueOnce(page as never);
+
+    await changeShareParticipantsCommand.execute(interaction as never);
+
+    expect(thread.messages.fetch).toHaveBeenCalledTimes(2);
+    expect(editReply).toHaveBeenCalledWith(
+      expect.stringContaining("Could not finish reading the payout thread"),
+    );
+  });
+
+  it("preserves blank lines between roster sections", async () => {
+    const { interaction, starter, thread } = createHarness();
+    await changeShareParticipantsCommand.execute(interaction as never);
+    const roster = "**Party 1:**\n\n01: Champ - <@222>";
+    const makeMessage = (content: string) => ({
+      guildId: "guild",
+      guild: interaction.guild,
+      channelId: thread.id,
+      channel: thread,
+      client: interaction.client,
+      author: { id: "editor", bot: false },
+      member: { permissions: { has: jest.fn(() => true) } },
+      content,
+      reply: jest.fn(async (_content: string) => undefined),
+    });
+
+    await handleShareParticipantsMessage(makeMessage(roster) as never);
+    await handleShareParticipantsMessage(makeMessage("done") as never);
+
+    expect(starter.content).toContain("**Party 1:**\n\n01: Champ - <@222>");
+  });
+
+  it("moves an overlong but intact roster line to a continuation", async () => {
+    const { interaction, followups, thread } = createHarness();
+    await changeShareParticipantsCommand.execute(interaction as never);
+    const roster = `01: Champ - <@222> ${"x".repeat(1_900)}`;
+    const makeMessage = (content: string) => ({
+      guildId: "guild",
+      guild: interaction.guild,
+      channelId: thread.id,
+      channel: thread,
+      client: interaction.client,
+      author: { id: "editor", bot: false },
+      member: { permissions: { has: jest.fn(() => true) } },
+      content,
+      reply: jest.fn(async (_content: string) => undefined),
+    });
+
+    await handleShareParticipantsMessage(makeMessage(roster) as never);
+    await handleShareParticipantsMessage(makeMessage("done") as never);
+
+    expect(followups[0]?.content).toContain("**Payout roster continued:**\n");
+    expect(followups[0]?.content).toContain(roster);
   });
 
   it("rechecks a prepared roster edit inside the queue after finalization wins", async () => {

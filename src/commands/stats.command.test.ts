@@ -469,6 +469,49 @@ describe("/stats command", () => {
     expect(reply.embeds[0]!.toJSON().color).toBe(0xffd966);
   });
 
+  it("rejects a guild without configured payout data before deferring", async () => {
+    const interaction = createInteraction({ guildId: null });
+
+    await statsCommand.execute(interaction as never);
+
+    expect(interaction.reply).toHaveBeenCalledWith({
+      content:
+        "This command is not available in this server because it has no configured payout data.",
+      flags: MessageFlags.Ephemeral,
+    });
+    expect(interaction.deferReply).not.toHaveBeenCalled();
+    expect(getPayoutStats).not.toHaveBeenCalled();
+  });
+
+  it("uses the selected user's username when member lookup fails", async () => {
+    const selectedUser = {
+      id: "other-user",
+      tag: "other-user#1234",
+      globalName: null,
+      username: "Fallback Name",
+      displayAvatarURL: () => "https://example.com/fallback.png",
+    };
+    const interaction = createInteraction({
+      guild: {
+        members: {
+          fetch: jest.fn().mockRejectedValue(new Error("member unavailable")),
+        },
+      },
+      options: {
+        getString: jest.fn().mockReturnValue(null),
+        getBoolean: jest.fn().mockReturnValue(null),
+        getUser: jest.fn().mockReturnValue(selectedUser),
+      },
+    });
+
+    await statsCommand.execute(interaction as never);
+
+    expect(getPayoutStats).toHaveBeenCalledWith(
+      expect.objectContaining({ discordTag: "other-user#1234" }),
+    );
+    expect(interaction.editReply).toHaveBeenCalled();
+  });
+
   it.each(["Guild", "Ranking"] as const)(
     "rejects a user selection with %s statistics",
     async (which) => {

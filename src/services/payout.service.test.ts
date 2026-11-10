@@ -44,6 +44,27 @@ describe("payout service", () => {
     });
   });
 
+  it("returns empty results when the Combined sheet has no rows", async () => {
+    readCombinedPayoutSheetRows
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    await expect(
+      getPayoutDetails({ guildId: "guild-a", discordTag: "alice" }),
+    ).resolves.toEqual({
+      pending: 0,
+      shareReady: 0,
+      distributed: 0,
+      currency: "z",
+    });
+    await expect(getPayoutSummary("guild-a")).resolves.toEqual({
+      amount: "shareReady",
+      payouts: [],
+      total: 0,
+      currency: "z",
+    });
+  });
+
   it("returns non-zero Share Ready payouts and their total for a guild", async () => {
     await expect(getPayoutSummary("guild-a")).resolves.toEqual({
       amount: "shareReady",
@@ -87,5 +108,29 @@ describe("payout service", () => {
         ],
       }),
     );
+  });
+
+  it("ignores non-numeric payout values", async () => {
+    readCombinedPayoutSheetRows.mockResolvedValueOnce([
+      ...sheetRows,
+      ["@invalid", "-", "-", "-"],
+    ]);
+
+    await expect(getPayoutSummary("guild-a", "pending")).resolves.toMatchObject(
+      {
+        payouts: [{ displayName: "@alice", discordTag: "@alice", amount: 100 }],
+        total: 100,
+      },
+    );
+  });
+
+  it("treats a missing payout cell as zero", async () => {
+    const rows = sheetRows.map((row) => [...row]);
+    delete rows[2]![1];
+    readCombinedPayoutSheetRows.mockResolvedValueOnce(rows);
+
+    await expect(
+      getPayoutDetails({ guildId: "guild-a", discordTag: "alice" }),
+    ).resolves.toMatchObject({ pending: 0, shareReady: 200, distributed: 300 });
   });
 });

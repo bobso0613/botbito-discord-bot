@@ -7,13 +7,21 @@ import type {
 import {
   buildPendingShareCell,
   findUnclaimedColumn,
+  hasPendingColor,
+  payoutCellText,
   payoutColumnLabel,
   validatePendingShareCell,
+  assertPayoutFinalizationColumnRemoved,
   planPayoutSheetFinalization,
+  getPayoutFinalizationColumnName,
   readPayoutFinalizationShareAmounts,
   readPayoutFinalizationTotals,
+  readPayoutCombinedShareReadyAmounts,
+  isPayoutSnapshotApplied,
+  requiresPayoutIdentityMigration,
   planPayoutSheetExport,
   PAYOUT_EXPORT_METADATA_KEY,
+  PENDING_SHARE_COLOR,
   READY_SHARE_COLOR,
   NO_SHARE_COLOR,
   assertPayoutFinalizationShareColors,
@@ -1275,13 +1283,23 @@ describe("payout sheet export planning", () => {
     }
     expect(() =>
       assertPayoutFinalizationShareColors(
-        spreadsheet, "FSN 2026", snapshot.identifier, snapshot.members!, "done-no-share",
+        spreadsheet,
+        "FSN 2026",
+        snapshot.identifier,
+        snapshot.members!,
+        "done-no-share",
       ),
     ).not.toThrow();
-    rows[9]!.values![6]!.effectiveFormat = { backgroundColor: READY_SHARE_COLOR };
+    rows[9]!.values![6]!.effectiveFormat = {
+      backgroundColor: READY_SHARE_COLOR,
+    };
     expect(() =>
       assertPayoutFinalizationShareColors(
-        spreadsheet, "FSN 2026", snapshot.identifier, snapshot.members!, "done-no-share",
+        spreadsheet,
+        "FSN 2026",
+        snapshot.identifier,
+        snapshot.members!,
+        "done-no-share",
       ),
     ).toThrow("not confirmed green");
     expect(rows[9]!.values![6]!.userEnteredValue).toBeUndefined();
@@ -1291,47 +1309,71 @@ describe("payout sheet export planning", () => {
     { userEnteredValue: { numberValue: 0 } },
     { effectiveValue: { numberValue: 123 } },
     { userEnteredValue: { numberValue: -123 } },
-    { userEnteredValue: { formulaValue: "=0" }, effectiveValue: { numberValue: 0 } },
-    { userEnteredValue: { formulaValue: '=""' }, effectiveValue: { stringValue: "" } },
+    {
+      userEnteredValue: { formulaValue: "=0" },
+      effectiveValue: { numberValue: 0 },
+    },
+    {
+      userEnteredValue: { formulaValue: '=""' },
+      effectiveValue: { stringValue: "" },
+    },
     { effectiveValue: { errorValue: { type: "ERROR" } } },
-  ])("rejects uncleared no-share cells, even outside the saved roster: %j", (value) => {
-    const spreadsheet = buildSpreadsheet();
-    const snapshot = buildSnapshot();
-    linkColumn(spreadsheet, snapshot);
-    const rows = spreadsheet.sheets![0]!.data![0]!.rowData!;
-    rows[12]!.values![6] = value;
+  ])(
+    "rejects uncleared no-share cells, even outside the saved roster: %j",
+    (value) => {
+      const spreadsheet = buildSpreadsheet();
+      const snapshot = buildSnapshot();
+      linkColumn(spreadsheet, snapshot);
+      const rows = spreadsheet.sheets![0]!.data![0]!.rowData!;
+      rows[12]!.values![6] = value;
 
-    expect(() =>
-      planPayoutSheetFinalization(spreadsheet, "FSN 2026", snapshot.identifier, "done-no-share"),
-    ).toThrow("Clear participant cell G13 manually");
-  });
+      expect(() =>
+        planPayoutSheetFinalization(
+          spreadsheet,
+          "FSN 2026",
+          snapshot.identifier,
+          "done-no-share",
+        ),
+      ).toThrow("Clear participant cell G13 manually");
+    },
+  );
 
   it.each([
     [3_333, true],
     [3_332.33, true],
     [3_332.32, false],
     [0, false],
-  ])("handles rounded Combined balance %s with a one-zeny tolerance", (total, accepted) => {
-    const spreadsheet = buildSpreadsheet();
-    const snapshot = buildSnapshot();
-    linkColumn(spreadsheet, snapshot);
-    spreadsheet.sheets![0]!.data![0]!.rowData![9]!.values![6] = {
-      userEnteredFormat: { backgroundColor: READY_SHARE_COLOR },
-      effectiveValue: { numberValue: 3_333.33 },
-    };
-    spreadsheet.sheets![1]!.data![0]!.rowData![2]!.values![2] = {
-      effectiveValue: { numberValue: total },
-    };
-    const read = () => readPayoutFinalizationShareAmounts(
-      spreadsheet, "FSN 2026", snapshot.identifier, "499171225046876170",
-      snapshot.members!, new Map([["111", 0]]),
-    );
-    if (accepted) {
-      expect(read()).toEqual([{ userId: "111", thisRun: 3_333.33, totalUnclaimed: total }]);
-    } else {
-      expect(read).toThrow("has not yet included this run");
-    }
-  });
+  ])(
+    "handles rounded Combined balance %s with a one-zeny tolerance",
+    (total, accepted) => {
+      const spreadsheet = buildSpreadsheet();
+      const snapshot = buildSnapshot();
+      linkColumn(spreadsheet, snapshot);
+      spreadsheet.sheets![0]!.data![0]!.rowData![9]!.values![6] = {
+        userEnteredFormat: { backgroundColor: READY_SHARE_COLOR },
+        effectiveValue: { numberValue: 3_333.33 },
+      };
+      spreadsheet.sheets![1]!.data![0]!.rowData![2]!.values![2] = {
+        effectiveValue: { numberValue: total },
+      };
+      const read = () =>
+        readPayoutFinalizationShareAmounts(
+          spreadsheet,
+          "FSN 2026",
+          snapshot.identifier,
+          "499171225046876170",
+          snapshot.members!,
+          new Map([["111", 0]]),
+        );
+      if (accepted) {
+        expect(read()).toEqual([
+          { userId: "111", thisRun: 3_333.33, totalUnclaimed: total },
+        ]);
+      } else {
+        expect(read).toThrow("has not yet included this run");
+      }
+    },
+  );
 
   it("uses a unique exact Export ID note when column metadata is missing", () => {
     const spreadsheet = buildSpreadsheet();
@@ -1407,10 +1449,18 @@ describe("payout sheet export planning", () => {
       rows[7]!.values![7] = { effectiveValue: { numberValue: 0 } };
 
       expect(
-        readPayoutFinalizationTotals(spreadsheet, worksheet, snapshot.identifier),
+        readPayoutFinalizationTotals(
+          spreadsheet,
+          worksheet,
+          snapshot.identifier,
+        ),
       ).toEqual({ totalEarned: 150_000, reimbursements: 0 });
       expect(() =>
-        readPayoutFinalizationTotals(spreadsheet, "Other guild", snapshot.identifier),
+        readPayoutFinalizationTotals(
+          spreadsheet,
+          "Other guild",
+          snapshot.identifier,
+        ),
       ).toThrow("not in the configured payout worksheet");
     },
   );
@@ -1433,7 +1483,11 @@ describe("payout sheet export planning", () => {
         rows[7]!.values![6] = { effectiveValue: { numberValue: 50_000 } };
         rows[row]!.values![6] = invalid;
         expect(() =>
-          readPayoutFinalizationTotals(spreadsheet, "FSN 2026", snapshot.identifier),
+          readPayoutFinalizationTotals(
+            spreadsheet,
+            "FSN 2026",
+            snapshot.identifier,
+          ),
         ).toThrow("must be evaluated numbers");
       }
     },
@@ -1680,5 +1734,311 @@ describe("payout sheet export planning", () => {
     expect(() =>
       planPayoutSheetExport(spreadsheet, "FSN 2026", snapshot),
     ).toThrow("manually changed");
+  });
+
+  it("resolves the finalization column name from metadata or its exact note", () => {
+    const spreadsheet = buildSpreadsheet();
+    const snapshot = buildSnapshot();
+    linkColumn(spreadsheet, snapshot);
+
+    expect(
+      getPayoutFinalizationColumnName(
+        spreadsheet,
+        "FSN 2026",
+        snapshot.identifier,
+      ),
+    ).toBe("Previous run");
+
+    const sheet = spreadsheet.sheets![0]!;
+    sheet.developerMetadata = [];
+    sheet.data![0]!.rowData![4]!.values![6] = {
+      ...text("Current run"),
+      note: snapshot.identifier,
+    };
+    expect(
+      getPayoutFinalizationColumnName(
+        spreadsheet,
+        "FSN 2026",
+        snapshot.identifier,
+      ),
+    ).toBe("Current run");
+
+    sheet.data![0]!.rowData![4]!.values![6] = {
+      note: snapshot.identifier,
+    };
+    expect(() =>
+      getPayoutFinalizationColumnName(
+        spreadsheet,
+        "FSN 2026",
+        snapshot.identifier,
+      ),
+    ).toThrow("has no name in row 5");
+  });
+
+  it("verifies finalization-column deletion by both metadata and note", () => {
+    const spreadsheet = buildSpreadsheet();
+    const snapshot = buildSnapshot();
+    linkColumn(spreadsheet, snapshot);
+
+    expect(() =>
+      assertPayoutFinalizationColumnRemoved(
+        spreadsheet,
+        "FSN 2026",
+        snapshot.identifier,
+      ),
+    ).toThrow("still present after deletion");
+
+    const sheet = spreadsheet.sheets![0]!;
+    sheet.developerMetadata = [];
+    sheet.data![0]!.rowData![4]!.values![6] = {
+      ...text("Previous run"),
+      note: snapshot.identifier,
+    };
+    expect(() =>
+      assertPayoutFinalizationColumnRemoved(
+        spreadsheet,
+        "FSN 2026",
+        snapshot.identifier,
+      ),
+    ).toThrow("still present after deletion");
+
+    sheet.data![0]!.rowData![4]!.values![6] = text("Previous run");
+    expect(() =>
+      assertPayoutFinalizationColumnRemoved(
+        spreadsheet,
+        "FSN 2026",
+        snapshot.identifier,
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertPayoutFinalizationColumnRemoved(
+        spreadsheet,
+        "Missing worksheet",
+        snapshot.identifier,
+      ),
+    ).toThrow("could not be verified after deletion");
+  });
+
+  it("reads payout cell fallbacks and pending colors from Sheets formats", () => {
+    expect(payoutCellText()).toBe("");
+    expect(
+      payoutCellText({
+        effectiveValue: { stringValue: "evaluated" },
+        userEnteredValue: { stringValue: "entered" },
+      }),
+    ).toBe("evaluated");
+    expect(
+      payoutCellText({ userEnteredValue: { stringValue: "entered" } }),
+    ).toBe("entered");
+
+    expect(hasPendingColor()).toBe(false);
+    expect(
+      hasPendingColor({
+        effectiveFormat: {
+          backgroundColorStyle: { rgbColor: PENDING_SHARE_COLOR },
+        },
+      }),
+    ).toBe(true);
+    expect(
+      hasPendingColor({
+        userEnteredFormat: { backgroundColor: PENDING_SHARE_COLOR },
+      }),
+    ).toBe(true);
+    expect(hasPendingColor({ effectiveFormat: { backgroundColor: {} } })).toBe(
+      false,
+    );
+  });
+
+  it("reads Combined Share Ready amounts and rejects missing identities or values", () => {
+    const spreadsheet = buildSpreadsheet();
+    const snapshot = buildSnapshot();
+    spreadsheet.sheets![1]!.data![0]!.rowData![2]!.values![2] = {
+      effectiveValue: { numberValue: 25_000 },
+    };
+
+    expect(
+      readPayoutCombinedShareReadyAmounts(
+        spreadsheet,
+        "499171225046876170",
+        snapshot.members!,
+      ),
+    ).toEqual(new Map([["111", 25_000]]));
+    expect(() =>
+      readPayoutCombinedShareReadyAmounts(
+        spreadsheet,
+        "499171225046876170",
+        [],
+      ),
+    ).toThrow("participant identities are unavailable");
+    expect(() =>
+      readPayoutCombinedShareReadyAmounts(
+        spreadsheet,
+        "missing-guild",
+        snapshot.members!,
+      ),
+    ).toThrow("Share Ready column could not be located");
+
+    spreadsheet.sheets![1]!.data![0]!.rowData![1]!.values![2] =
+      text("Available");
+    expect(() =>
+      readPayoutCombinedShareReadyAmounts(
+        spreadsheet,
+        "499171225046876170",
+        snapshot.members!,
+      ),
+    ).toThrow("Share Ready column could not be located");
+    spreadsheet.sheets = spreadsheet.sheets!.filter(
+      (sheet) => sheet.properties?.title !== "Combined",
+    );
+    expect(() =>
+      readPayoutCombinedShareReadyAmounts(
+        spreadsheet,
+        "499171225046876170",
+        snapshot.members!,
+      ),
+    ).toThrow("Combined payout worksheet is missing");
+
+    spreadsheet.sheets = [
+      buildSpreadsheet().sheets![0]!,
+      buildSpreadsheet().sheets![1]!,
+    ];
+    spreadsheet.sheets[1]!.data![0]!.rowData![2]!.values![2] = text("Loading");
+    expect(() =>
+      readPayoutCombinedShareReadyAmounts(
+        spreadsheet,
+        "499171225046876170",
+        snapshot.members!,
+      ),
+    ).toThrow("is not an evaluated number yet");
+
+    snapshot.members![0]!.discordTag = "missing-player";
+    expect(() =>
+      readPayoutCombinedShareReadyAmounts(
+        spreadsheet,
+        "499171225046876170",
+        snapshot.members!,
+      ),
+    ).toThrow("Could not find the Combined payout row");
+  });
+
+  it("recognizes applied pending exports and retained tag migrations", () => {
+    const spreadsheet = buildSpreadsheet();
+    const snapshot = buildSnapshot();
+    linkColumn(spreadsheet, snapshot);
+    const rows = spreadsheet.sheets![0]!.data![0]!.rowData!;
+    rows[5]!.values![6] = {
+      userEnteredValue: { numberValue: 0 },
+      userEnteredFormat: {
+        backgroundColor: { red: 142 / 255, green: 124 / 255, blue: 195 / 255 },
+      },
+    };
+    rows[6]!.values![6] = text(snapshot.vendor);
+    rows[7]!.values![6] = {
+      userEnteredValue: { numberValue: 0 },
+      userEnteredFormat: {
+        backgroundColor: { red: 142 / 255, green: 124 / 255, blue: 195 / 255 },
+      },
+    };
+    rows[9]!.values![6] = buildPendingShareCell(6, 1);
+
+    expect(isPayoutSnapshotApplied(spreadsheet, "FSN 2026", snapshot)).toBe(
+      true,
+    );
+    rows[6]!.values![6] = text("Different vendor");
+    expect(isPayoutSnapshotApplied(spreadsheet, "FSN 2026", snapshot)).toBe(
+      false,
+    );
+    rows[6]!.values![6] = text(snapshot.vendor);
+    rows[9]!.values![6] = text("processed");
+    expect(isPayoutSnapshotApplied(spreadsheet, "FSN 2026", snapshot)).toBe(
+      false,
+    );
+
+    expect(requiresPayoutIdentityMigration(snapshot)).toBe(false);
+    snapshot.syncedMembers = [
+      { ...snapshot.members![0]!, discordTag: "old-alice" },
+    ];
+    expect(requiresPayoutIdentityMigration(snapshot)).toBe(true);
+  });
+
+  it("rejects finalization until participant rows are confirmed and purple cells are gone", () => {
+    const spreadsheet = buildSpreadsheet();
+    const snapshot = buildSnapshot();
+    linkColumn(spreadsheet, snapshot);
+
+    expect(() =>
+      assertPayoutFinalizationShareColors(
+        spreadsheet,
+        "FSN 2026",
+        snapshot.identifier,
+        [],
+      ),
+    ).toThrow("participant identities are unavailable");
+
+    spreadsheet.sheets![0]!.data![0]!.rowData![9]!.values![6] = {
+      userEnteredFormat: { backgroundColor: PENDING_SHARE_COLOR },
+    };
+    expect(() =>
+      assertPayoutFinalizationShareColors(
+        spreadsheet,
+        "FSN 2026",
+        snapshot.identifier,
+        snapshot.members!,
+      ),
+    ).toThrow("still purple");
+
+    spreadsheet.sheets![0]!.data![0]!.rowData![9]!.values![6] = {
+      userEnteredFormat: { backgroundColor: READY_SHARE_COLOR },
+    };
+    expect(() =>
+      assertPayoutFinalizationShareColors(
+        spreadsheet,
+        "FSN 2026",
+        snapshot.identifier,
+        [{ ...snapshot.members![0]!, discordTag: "missing-player" }],
+      ),
+    ).toThrow("not confirmed yellow");
+  });
+
+  it("refuses to recolor a cell whose effective and entered formats differ", () => {
+    const spreadsheet = buildSpreadsheet();
+    const snapshot = buildSnapshot();
+    linkColumn(spreadsheet, snapshot);
+    const pendingCell = buildPendingShareCell(6, 1);
+    pendingCell.effectiveFormat = { backgroundColor: PENDING_SHARE_COLOR };
+    pendingCell.userEnteredFormat = { backgroundColor: READY_SHARE_COLOR };
+    spreadsheet.sheets![0]!.data![0]!.rowData![9]!.values![6] = pendingCell;
+
+    expect(() =>
+      planPayoutSheetFinalization(
+        spreadsheet,
+        "FSN 2026",
+        snapshot.identifier,
+        "ready",
+      ),
+    ).toThrow("Effective share formatting cannot be safely changed");
+  });
+
+  it("returns false for an export without a managed run column", () => {
+    const spreadsheet = buildSpreadsheet();
+    expect(
+      isPayoutSnapshotApplied(spreadsheet, "FSN 2026", buildSnapshot()),
+    ).toBe(false);
+  });
+
+  it("rejects retained tag aliases that collide with another current participant", () => {
+    const snapshot = buildSnapshot();
+    snapshot.members = [
+      { userId: "111", displayName: "Alice", discordTag: "renamed" },
+      { userId: "222", displayName: "Bob", discordTag: "alice" },
+    ];
+    snapshot.userIds.push("222");
+    snapshot.syncedMembers = [
+      { userId: "111", displayName: "Alice", discordTag: "alice" },
+    ];
+
+    expect(() => requiresPayoutIdentityMigration(snapshot)).toThrow(
+      "Discord tag migration is ambiguous",
+    );
   });
 });

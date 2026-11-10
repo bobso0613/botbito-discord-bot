@@ -220,6 +220,17 @@ describe("help command", () => {
     );
   });
 
+  it("returns an empty guide for an unknown command selector", async () => {
+    const interaction = createInteraction();
+
+    await sendHelp(interaction as never, "/unknown-command");
+
+    const [{ embeds }] = interaction.reply.mock.calls[0] as [
+      { embeds: Array<{ data: { fields: unknown[] } }> },
+    ];
+    expect(embeds[0]?.data.fields ?? []).toEqual([]);
+  });
+
   it("documents the required /help selector and cooldown visibility option", async () => {
     const interaction = createInteraction();
 
@@ -306,5 +317,27 @@ describe("help command", () => {
         }),
       ]),
     );
+  });
+
+  it("caps autocomplete results at Discord's 25-choice limit", async () => {
+    const respond = jest.fn();
+
+    await handleHelpAutocomplete({
+      options: { getFocused: () => "" },
+      respond,
+    } as never);
+
+    expect(respond.mock.calls[0]?.[0]).toHaveLength(25);
+  });
+
+  it("returns no autocomplete choices when the selector has no matches", async () => {
+    const respond = jest.fn();
+
+    await handleHelpAutocomplete({
+      options: { getFocused: () => "no-such-command" },
+      respond,
+    } as never);
+
+    expect(respond).toHaveBeenCalledWith([]);
   });
 });

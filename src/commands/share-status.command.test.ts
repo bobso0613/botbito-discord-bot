@@ -289,6 +289,42 @@ describe("/set share status", () => {
     );
   });
 
+  it("rejects an invalid status choice and a non-payout guild", async () => {
+    const invalidStatus = createInteraction("unknown");
+    await setShareStatusCommand.execute(invalidStatus as never);
+    expect(finalizePayoutExport).not.toHaveBeenCalled();
+    expect(invalidStatus.editReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content:
+          "Could not set share status: Choose a valid payout share status.",
+      }),
+    );
+
+    const invalidGuild = createInteraction();
+    Object.assign(invalidGuild, { guildId: "other-guild" });
+    await setShareStatusCommand.execute(invalidGuild as never);
+    expect(finalizePayoutExport).not.toHaveBeenCalled();
+    expect(invalidGuild.editReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining("payout-enabled server"),
+      }),
+    );
+  });
+
+  it("formats a non-Error service rejection safely", async () => {
+    getSharePost.mockRejectedValueOnce("thread unavailable");
+    const interaction = createInteraction();
+
+    await setShareStatusCommand.execute(interaction as never);
+
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: "Could not set share status: thread unavailable",
+        allowedMentions: { parse: [] },
+      }),
+    );
+  });
+
   it("recolors first, DMs each unique current participant, reports, and locks", async () => {
     const firstDm = jest.fn(async (_message: unknown) => undefined);
     const secondDm = jest.fn(async (_message: unknown) => undefined);
