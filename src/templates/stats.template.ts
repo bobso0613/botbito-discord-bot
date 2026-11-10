@@ -73,13 +73,14 @@ const addRankingFields = (
     { name: "🥇1st", rank: 1 },
     { name: "🥈2nd", rank: 2 },
     { name: "🥉3rd", rank: 3 },
-  ].map(({ name, rank }) => {
+  ].flatMap(({ name, rank }) => {
     const players = ranking.filter((player) => player.rank === rank);
+    if (!players.length) return [];
     return {
       name,
-      value: players.length
-        ? players.map((player) => formatRankingPlayer(player, false)).join("\n")
-        : "No ranked player.",
+      value: players
+        .map((player) => formatRankingPlayer(player, false))
+        .join("\n"),
       inline: false,
     };
   });

@@ -109,7 +109,7 @@ export const statsCommand: Command = {
       option
         .setName("amount")
         .setDescription(
-          "Choose amount (Overall default; Share Ready, Pending, Distributed)",
+          "Choose Overall (default), Share Ready, Pending, or Distributed",
         )
         .setRequired(false)
         .addChoices(

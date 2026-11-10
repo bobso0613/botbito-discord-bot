@@ -369,26 +369,27 @@ describe("/stats command", () => {
         }>;
       },
     ];
-    expect(reply.embeds[0]!.toJSON().fields).toEqual(
-      expect.arrayContaining([
-        {
-          name: "🥇1st",
-          value: [
-            "**Alice** - `100 z` (33.33 %)",
-            "**Bob** - `100 z` (33.33 %)",
-            "**Casey** - `100 z` (33.33 %)",
-          ].join("\n"),
-          inline: false,
-        },
-        { name: "🥈2nd", value: "No ranked player.", inline: false },
-        { name: "🥉3rd", value: "No ranked player.", inline: false },
-        {
-          name: "✨Other ranked players",
-          value: "#4 **Dana** - `90 z` (30.00 %)",
-          inline: false,
-        },
-      ]),
-    );
+    expect(reply.embeds[0]!.toJSON().fields).toEqual([
+      {
+        name: "🥇1st",
+        value: [
+          "**Alice** - `100 z` (33.33 %)",
+          "**Bob** - `100 z` (33.33 %)",
+          "**Casey** - `100 z` (33.33 %)",
+        ].join("\n"),
+        inline: false,
+      },
+      {
+        name: "✨Other ranked players",
+        value: "#4 **Dana** - `90 z` (30.00 %)",
+        inline: false,
+      },
+      {
+        name: "🎖️Your Rank",
+        value: "Your rank is unavailable.",
+        inline: false,
+      },
+    ]);
   });
 
   it("paginates category fields and keeps TOTAL and notes on the final page", async () => {
