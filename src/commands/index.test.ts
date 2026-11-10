@@ -11,6 +11,7 @@ describe("command registry", () => {
         "set",
         "payout",
         "payoutsummary",
+        "stats",
         "guildsched",
         "mysched",
         "mycooldowns",

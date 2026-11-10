@@ -29,6 +29,8 @@ const amountColor: Record<StatsAmount, ColorResolvable> = {
   distributed: "#00ff00",
 };
 
+const MAX_CATEGORY_FIELDS_PER_PAGE = 23;
+
 const formatRunCount = (
   joinedRuns: number,
   totalRuns: number,
@@ -68,19 +70,24 @@ const addRankingFields = (
   personalStanding: PayoutStatsOverall["personalStanding"],
 ): void => {
   const medalFields = [
-    { name: "🥇1st", player: ranking[0] },
-    { name: "🥈2nd", player: ranking[1] },
-    { name: "🥉3rd", player: ranking[2] },
-  ].map(({ name, player }) => ({
-    name,
-    value: player ? formatRankingPlayer(player, false) : "No ranked player.",
-    inline: false,
-  }));
+    { name: "🥇1st", rank: 1 },
+    { name: "🥈2nd", rank: 2 },
+    { name: "🥉3rd", rank: 3 },
+  ].map(({ name, rank }) => {
+    const players = ranking.filter((player) => player.rank === rank);
+    return {
+      name,
+      value: players.length
+        ? players.map((player) => formatRankingPlayer(player, false)).join("\n")
+        : "No ranked player.",
+      inline: false,
+    };
+  });
   const remainingPlayers = ranking
-    .slice(3)
+    .filter((player) => player.rank > 3)
     .map((player) => formatRankingPlayer(player, true));
   embed.addFields(...medalFields, {
-    name: "✨4th-10th",
+    name: "✨Other ranked players",
     value: remainingPlayers.length
       ? remainingPlayers.join("\n")
       : "No other ranked players.",
@@ -155,21 +162,19 @@ const addNotesField = (embed: EmbedBuilder): void => {
   });
 };
 
-/** Builds the selected Personal, Guild, or Ranking statistics embed. */
-export const buildStatsEmbed = (
+const buildStatsEmbedPage = (
   stats: PayoutStats,
   context: InteractionContext,
   displayUser: StatsDisplayUser,
   which: StatsView,
+  categories: PayoutStats["categories"],
+  includeSummary: boolean,
 ): EmbedBuilder => {
   const guildName = context.guildName ?? "this server";
   const subject =
     which !== "Personal"
       ? guildName
       : `${displayUser.displayName} / ${guildName}`;
-  const categories = [...stats.categories].sort((left, right) =>
-    left.name.localeCompare(right.name),
-  );
   const footer = getEmbedFooter(context);
   const embed = new EmbedBuilder()
     .setAuthor({
@@ -197,8 +202,48 @@ export const buildStatsEmbed = (
     );
   } else {
     addCategoryFields(embed, categories, which);
-    addTotalField(embed, stats, which);
+    if (includeSummary) {
+      addTotalField(embed, stats, which);
+      addNotesField(embed);
+    }
   }
-  if (which !== "Ranking") addNotesField(embed);
   return embed;
+};
+
+/** Builds stats embeds, reserving room for TOTAL and notes on the final category page. */
+export const buildStatsEmbeds = (
+  stats: PayoutStats,
+  context: InteractionContext,
+  displayUser: StatsDisplayUser,
+  which: StatsView,
+): EmbedBuilder[] => {
+  if (which === "Ranking") {
+    return [buildStatsEmbedPage(stats, context, displayUser, which, [], false)];
+  }
+
+  const categories = [...stats.categories].sort((left, right) =>
+    left.name.localeCompare(right.name),
+  );
+  const categoryPages: PayoutStats["categories"][] = [];
+  for (
+    let index = 0;
+    index < categories.length;
+    index += MAX_CATEGORY_FIELDS_PER_PAGE
+  ) {
+    categoryPages.push(
+      categories.slice(index, index + MAX_CATEGORY_FIELDS_PER_PAGE),
+    );
+  }
+  if (!categoryPages.length) categoryPages.push([]);
+
+  return categoryPages.map((pageCategories, index) =>
+    buildStatsEmbedPage(
+      stats,
+      context,
+      displayUser,
+      which,
+      pageCategories,
+      index === categoryPages.length - 1,
+    ),
+  );
 };

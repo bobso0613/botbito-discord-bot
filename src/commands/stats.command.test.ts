@@ -38,10 +38,18 @@ const { statsCommand } = await import("./stats.command.js");
 
 const createInteraction = (overrides: Record<string, unknown> = {}) => ({
   guildId: "guild",
-  guild: { members: { cache: { get: jest.fn() } } },
+  guild: {
+    members: {
+      cache: { get: jest.fn() },
+      fetch: jest
+        .fn<() => Promise<{ displayName: string }>>()
+        .mockResolvedValue({ displayName: "Fetched Member" }),
+    },
+  },
   reply: jest.fn(),
   deferReply: jest.fn(),
   editReply: jest.fn(),
+  followUp: jest.fn(),
   options: {
     getString: jest.fn<(name: string) => string | null>().mockReturnValue(null),
     getBoolean: jest
@@ -138,6 +146,42 @@ describe("/stats command", () => {
       footer: {
         text: "Test Guild",
       },
+    });
+  });
+
+  it("looks up a selected member by full tag and fetches their display name", async () => {
+    const fetchMember = jest
+      .fn<() => Promise<{ displayName: string }>>()
+      .mockResolvedValue({ displayName: "Selected Display Name" });
+    const selectedUser = {
+      id: "selected-user-id",
+      username: "alice",
+      tag: "alice#1234",
+      globalName: "Alice Global",
+      displayAvatarURL: jest
+        .fn()
+        .mockReturnValue("https://example.com/selected.png"),
+    };
+    const interaction = createInteraction({
+      guild: { members: { cache: { get: jest.fn() }, fetch: fetchMember } },
+      options: {
+        getString: jest.fn().mockReturnValue(null),
+        getBoolean: jest.fn().mockReturnValue(null),
+        getUser: jest.fn().mockReturnValue(selectedUser),
+      },
+    });
+
+    await statsCommand.execute(interaction as never);
+
+    expect(fetchMember).toHaveBeenCalledWith(selectedUser.id);
+    expect(getPayoutStats).toHaveBeenCalledWith(
+      expect.objectContaining({ discordTag: "alice#1234" }),
+    );
+    const [reply] = (interaction.editReply as jest.Mock).mock.calls[0] as [
+      { embeds: Array<{ toJSON: () => Record<string, unknown> }> },
+    ];
+    expect(reply.embeds[0]!.toJSON()).toMatchObject({
+      author: { name: "📊 Selected Display Name (@alice#1234)" },
     });
   });
 
@@ -271,7 +315,7 @@ describe("/stats command", () => {
           inline: false,
         },
         {
-          name: "✨4th-10th",
+          name: "✨Other ranked players",
           value: [
             "#4 **player4** - `97,000 z` (7.00 %)",
             "#5 **player5** - `96,000 z` (6.00 %)",
@@ -292,6 +336,112 @@ describe("/stats command", () => {
     });
     expect(JSON.stringify(embed)).not.toContain("<@");
     expect(getDisplayNameByDiscordTag).toHaveBeenCalledWith(interaction.guild);
+  });
+
+  it("labels tied medal places by rank and uses a neutral remaining field", async () => {
+    getPayoutStats.mockResolvedValueOnce({
+      amount: "overall",
+      categories: [],
+      overall: { amount: 300, joinedRuns: 3, totalRuns: 3 },
+      ranking: [
+        { discordName: "Alice", amount: 100, impactPercent: 33.33, rank: 1 },
+        { discordName: "Bob", amount: 100, impactPercent: 33.33, rank: 1 },
+        { discordName: "Casey", amount: 100, impactPercent: 33.33, rank: 1 },
+        { discordName: "Dana", amount: 90, impactPercent: 30, rank: 4 },
+      ],
+    });
+    const interaction = createInteraction({
+      options: {
+        getString: jest.fn((name: string) =>
+          name === "which" ? "Ranking" : null,
+        ),
+        getBoolean: jest.fn().mockReturnValue(null),
+        getUser: jest.fn().mockReturnValue(null),
+      },
+    });
+
+    await statsCommand.execute(interaction as never);
+
+    const [reply] = (interaction.editReply as jest.Mock).mock.calls[0] as [
+      {
+        embeds: Array<{
+          toJSON: () => { fields: Array<{ name: string; value: string }> };
+        }>;
+      },
+    ];
+    expect(reply.embeds[0]!.toJSON().fields).toEqual(
+      expect.arrayContaining([
+        {
+          name: "🥇1st",
+          value: [
+            "**Alice** - `100 z` (33.33 %)",
+            "**Bob** - `100 z` (33.33 %)",
+            "**Casey** - `100 z` (33.33 %)",
+          ].join("\n"),
+          inline: false,
+        },
+        { name: "🥈2nd", value: "No ranked player.", inline: false },
+        { name: "🥉3rd", value: "No ranked player.", inline: false },
+        {
+          name: "✨Other ranked players",
+          value: "#4 **Dana** - `90 z` (30.00 %)",
+          inline: false,
+        },
+      ]),
+    );
+  });
+
+  it("paginates category fields and keeps TOTAL and notes on the final page", async () => {
+    getPayoutStats.mockResolvedValueOnce({
+      amount: "overall",
+      categories: Array.from({ length: 24 }, (_, index) => ({
+        name: `Instance ${String(index + 1).padStart(2, "0")}`,
+        emoji: "⭐",
+        amount: 100,
+        joinedRuns: 1,
+        totalRuns: 1,
+      })),
+      overall: { amount: 2_400, joinedRuns: 24, totalRuns: 24 },
+    });
+    const interaction = createInteraction({
+      options: {
+        getString: jest.fn().mockReturnValue(null),
+        getBoolean: jest.fn((name: string) =>
+          name === "sendprivately" ? true : null,
+        ),
+        getUser: jest.fn().mockReturnValue(null),
+      },
+    });
+
+    await statsCommand.execute(interaction as never);
+
+    const [firstPage] = (interaction.editReply as jest.Mock).mock.calls[0] as [
+      { embeds: Array<{ toJSON: () => { fields: Array<{ name: string }> } }> },
+    ];
+    const [secondPagePayload] = (interaction.followUp as jest.Mock).mock
+      .calls[0] as [
+      {
+        embeds: Array<{ toJSON: () => { fields: Array<{ name: string }> } }>;
+        flags: number;
+      },
+    ];
+    expect(firstPage.embeds[0]!.toJSON().fields).toHaveLength(23);
+    expect(
+      secondPagePayload.embeds[0]!.toJSON().fields.map(({ name }) => name),
+    ).toEqual(["⭐ Instance 24", "📋 TOTAL", "\u200b"]);
+    expect(secondPagePayload.flags).toBe(MessageFlags.Ephemeral);
+  });
+
+  it("returns a mention-safe error message when the stats service rejects", async () => {
+    getPayoutStats.mockRejectedValueOnce(new Error("Sheet failed <@123>"));
+    const interaction = createInteraction();
+
+    await statsCommand.execute(interaction as never);
+
+    expect(interaction.editReply).toHaveBeenCalledWith({
+      content: "Could not load statistics: Sheet failed <@123>",
+      allowedMentions: { parse: [] },
+    });
   });
 
   it("uses yellow for Share Ready statistics", async () => {

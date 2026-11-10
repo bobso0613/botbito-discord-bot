@@ -12,12 +12,12 @@ import {
 import { COOLDOWN_INSTANCE_TYPES } from "../constants/cooldowns.js";
 import { getPayoutStats } from "../services/stats.service.js";
 import {
-  buildStatsEmbed,
+  buildStatsEmbeds,
   type StatsDisplayUser,
 } from "../templates/stats.template.js";
 import type { Command } from "../types/command.js";
 import type { InteractionContext } from "../types/interaction-context.js";
-import type { StatsAmount, StatsView } from "../types/stats.js";
+import type { PayoutStats, StatsAmount, StatsView } from "../types/stats.js";
 import { getDisplayNameByDiscordTag } from "../utils/guild-members.js";
 import { getInteractionContext } from "../utils/interaction-context.js";
 
@@ -27,11 +27,21 @@ const unavailableMessage =
 const resolveStatsView = (value: string | null): StatsView =>
   value === "Guild" || value === "Ranking" ? value : "Personal";
 
-const resolveDisplayUser = (
+const getPayoutWorksheet = (
+  guildId: string | null,
+  guild: Guild | null,
+): string | undefined => {
+  if (!guildId || !guild || !PAYOUT_GUILD_IDS.includes(guildId)) {
+    return undefined;
+  }
+  return DISCORD_SETTINGS.payoutWorksheets?.[guildId];
+};
+
+const resolveDisplayUser = async (
   guild: Guild,
   selectedUser: User | null,
   context: InteractionContext,
-): StatsDisplayUser => {
+): Promise<StatsDisplayUser> => {
   if (!selectedUser) {
     return {
       displayName: context.displayName,
@@ -39,14 +49,30 @@ const resolveDisplayUser = (
       avatarUrl: context.userAvatarUrl,
     };
   }
+  const member = await guild.members
+    .fetch(selectedUser.id)
+    .catch(() => undefined);
   return {
     displayName:
-      guild.members.cache.get(selectedUser.id)?.displayName ??
-      selectedUser.globalName ??
-      selectedUser.username,
-    discordTag: selectedUser.username,
+      member?.displayName ?? selectedUser.globalName ?? selectedUser.username,
+    discordTag: selectedUser.tag,
     avatarUrl: selectedUser.displayAvatarURL(),
   };
+};
+
+const sendStatsEmbeds = async (
+  interaction: ChatInputCommandInteraction,
+  embeds: ReturnType<typeof buildStatsEmbeds>,
+  sendPrivately: boolean,
+): Promise<void> => {
+  await interaction.editReply({ embeds: [embeds[0]!] });
+  await embeds.slice(1).reduce(async (previous, embed) => {
+    await previous;
+    await interaction.followUp({
+      embeds: [embed],
+      ...(sendPrivately ? { flags: MessageFlags.Ephemeral } : {}),
+    });
+  }, Promise.resolve());
 };
 
 /** Shows Personal, Guild, or top-ten Ranking statistics from the invoking guild's payout sheet. */
@@ -95,11 +121,10 @@ export const statsCommand: Command = {
     ) as SlashCommandBuilder,
   guildIds: PAYOUT_GUILD_IDS,
   execute: async (interaction: ChatInputCommandInteraction) => {
-    if (
-      !interaction.guildId ||
-      !interaction.guild ||
-      !PAYOUT_GUILD_IDS.includes(interaction.guildId)
-    ) {
+    const guildId = interaction.guildId;
+    const guild = interaction.guild;
+    const worksheet = getPayoutWorksheet(guildId, guild);
+    if (!guildId || !guild || !worksheet) {
       await interaction.reply({
         content: unavailableMessage,
         flags: MessageFlags.Ephemeral,
@@ -117,15 +142,6 @@ export const statsCommand: Command = {
       return;
     }
 
-    const worksheet = DISCORD_SETTINGS.payoutWorksheets?.[interaction.guildId];
-    if (!worksheet) {
-      await interaction.reply({
-        content: unavailableMessage,
-        flags: MessageFlags.Ephemeral,
-      });
-      return;
-    }
-
     const sendPrivately =
       interaction.options.getBoolean("sendprivately") ?? false;
     await interaction.deferReply(
@@ -133,30 +149,40 @@ export const statsCommand: Command = {
     );
 
     const context = getInteractionContext(interaction);
-    const displayUser = resolveDisplayUser(
-      interaction.guild,
-      selectedUser,
-      context,
-    );
     const amount = (interaction.options.getString("amount") ??
       "overall") as StatsAmount;
     const instanceTypes =
-      DISCORD_SETTINGS.cooldownInstanceTypesByGuild[interaction.guildId] ??
+      DISCORD_SETTINGS.cooldownInstanceTypesByGuild[guildId] ??
       COOLDOWN_INSTANCE_TYPES;
-    const displayNameByDiscordTag =
-      which === "Ranking"
-        ? await getDisplayNameByDiscordTag(interaction.guild)
-        : undefined;
-    const stats = await getPayoutStats({
-      worksheet,
-      amount,
-      instanceTypes,
-      ...(which === "Personal" ? { discordTag: displayUser.discordTag } : {}),
-      ...(which === "Ranking" ? { includeRanking: true } : {}),
-      ...(which === "Ranking" ? { rankingViewerTag: context.discordTag } : {}),
-      ...(displayNameByDiscordTag ? { displayNameByDiscordTag } : {}),
-    });
-    const embed = buildStatsEmbed(stats, context, displayUser, which);
-    await interaction.editReply({ embeds: [embed] });
+    let displayUser: StatsDisplayUser;
+    let stats: PayoutStats;
+    try {
+      displayUser = await resolveDisplayUser(guild, selectedUser, context);
+      const displayNameByDiscordTag =
+        which === "Ranking"
+          ? await getDisplayNameByDiscordTag(guild)
+          : undefined;
+      stats = await getPayoutStats({
+        worksheet,
+        amount,
+        instanceTypes,
+        ...(which === "Personal" ? { discordTag: displayUser.discordTag } : {}),
+        ...(which === "Ranking" ? { includeRanking: true } : {}),
+        ...(which === "Ranking"
+          ? { rankingViewerTag: context.discordTag }
+          : {}),
+        ...(displayNameByDiscordTag ? { displayNameByDiscordTag } : {}),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await interaction.editReply({
+        content: `Could not load statistics: ${message.slice(0, 250)}`,
+        allowedMentions: { parse: [] },
+      });
+      return;
+    }
+
+    const embeds = buildStatsEmbeds(stats, context, displayUser, which);
+    await sendStatsEmbeds(interaction, embeds, sendPrivately);
   },
 };

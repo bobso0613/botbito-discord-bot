@@ -250,10 +250,12 @@ const getRankedPlayers = (
   playerAmounts: ReadonlyMap<string, number>,
   displayNameByDiscordTag?: ReadonlyMap<string, string>,
 ): PayoutStatsRankedPlayer[] => {
-  const players = [...playerAmounts].map(([discordTag, amount]) => ({
-    discordTag,
-    amount,
-  }));
+  const players = [...playerAmounts]
+    .map(([discordTag, amount]) => ({
+      discordTag,
+      amount,
+    }))
+    .filter((player) => player.amount !== 0);
   const guildAmount = players.reduce(
     (total, player) => total + player.amount,
     0,

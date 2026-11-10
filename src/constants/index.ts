@@ -89,7 +89,7 @@ export const COMMAND_GUIDE: ReadonlyArray<{
       {
         name: "amount",
         description:
-          "Choose amount (Overall default; Overall, Share Ready, Pending, Distributed)",
+          "Choose Overall (default), Share Ready, Pending, or Distributed",
         required: false,
       },
     ],

@@ -301,4 +301,24 @@ describe("payout statistics service", () => {
       playerCount: 13,
     });
   });
+
+  it("omits players with zero selected amount from Ranking", async () => {
+    const spreadsheet = buildSpreadsheet();
+    const rows = spreadsheet.sheets![0]!.data![0]!.rowData!;
+    const zeroRow = { values: [] as sheets_v4.Schema$CellData[] };
+    zeroRow.values[2] = textCell("@zero-player");
+    rows.push(zeroRow);
+    readPayoutSpreadsheet.mockResolvedValue(spreadsheet);
+
+    const stats = await getPayoutStats({
+      worksheet: "Guild 2026",
+      amount: "shareReady",
+      instanceTypes,
+      includeRanking: true,
+    });
+
+    expect(
+      stats.ranking?.some((player) => player.discordName === "zero-player"),
+    ).toBe(false);
+  });
 });
