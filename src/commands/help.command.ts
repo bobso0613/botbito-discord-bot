@@ -17,6 +17,7 @@ export type HelpInteraction = ChatInputCommandInteraction | ButtonInteraction;
 const CATEGORY_BY_COMMAND_NAME: Record<string, string> = {
   "/payout": "Payout",
   "/payoutsummary": "Payout",
+  "/stats": "Payout",
   "/changesharevendor": "Payout",
   "/changeshareparticipants": "Payout",
   "/set share status": "Payout",
