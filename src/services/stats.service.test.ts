@@ -1,0 +1,304 @@
+import { jest } from "@jest/globals";
+import type { sheets_v4 } from "googleapis";
+import {
+  NO_SHARE_COLOR,
+  PENDING_SHARE_COLOR,
+  READY_SHARE_COLOR,
+} from "../constants/payout-sheet-export.js";
+import type { InstanceType } from "../constants/cooldowns.js";
+
+const readPayoutSpreadsheet =
+  jest.fn<() => Promise<sheets_v4.Schema$Spreadsheet>>();
+
+jest.unstable_mockModule("./google-sheets.service.js", () => ({
+  readPayoutSpreadsheet,
+}));
+
+const { getPayoutStats } = await import("./stats.service.js");
+
+const textCell = (value: string): sheets_v4.Schema$CellData => ({
+  effectiveValue: { stringValue: value },
+});
+
+const amountCell = (
+  amount: number,
+  color: { red: number; green: number; blue: number },
+): sheets_v4.Schema$CellData => ({
+  effectiveValue: { numberValue: amount },
+  effectiveFormat: { backgroundColor: color },
+});
+
+const buildSpreadsheet = (): sheets_v4.Schema$Spreadsheet => {
+  const rowData = Array.from({ length: 11 }, () => ({
+    values: [] as sheets_v4.Schema$CellData[],
+  }));
+  rowData[4]!.values![5] = textCell("ET+EC 07/17");
+  rowData[4]!.values![6] = textCell("Wolfchev 17/09");
+  rowData[4]!.values![7] = textCell("ET 18/09");
+  rowData[4]!.values![8] = textCell("Mystery Run 19/09");
+  rowData[4]!.values![9] = textCell("Unclaimed");
+  rowData[9]!.values![2] = textCell("@alice");
+  rowData[9]!.values![5] = amountCell(10_000, PENDING_SHARE_COLOR);
+  rowData[9]!.values![6] = amountCell(40_000, READY_SHARE_COLOR);
+  rowData[9]!.values![8] = amountCell(1_234.9, PENDING_SHARE_COLOR);
+  rowData[10]!.values![2] = textCell("@bob");
+  rowData[10]!.values![5] = amountCell(20_000, PENDING_SHARE_COLOR);
+  rowData[10]!.values![6] = amountCell(5_000, NO_SHARE_COLOR);
+  rowData[10]!.values![7] = amountCell(7_000, NO_SHARE_COLOR);
+  return {
+    sheets: [
+      {
+        properties: { title: "Guild 2026" },
+        data: [{ startRow: 0, startColumn: 0, rowData }],
+      },
+    ],
+  };
+};
+
+const instanceTypes: InstanceType[] = [
+  {
+    name: "Endless Tower",
+    initials: "ET",
+    keywords: ["ET"],
+    maxAttempts: 3,
+    emoji: "🪜",
+  },
+  {
+    name: "Endless Cellar",
+    initials: "EC",
+    keywords: ["EC"],
+    maxAttempts: 3,
+    emoji: "📉",
+  },
+  {
+    name: "Wolfchev's Laboratory",
+    keywords: ["Wolfchev"],
+    maxAttempts: 1,
+    emoji: "🐺",
+  },
+];
+
+describe("payout statistics service", () => {
+  beforeEach(() => {
+    readPayoutSpreadsheet.mockResolvedValue(buildSpreadsheet());
+  });
+
+  it("matches combined initials and historical titles for one user", async () => {
+    await expect(
+      getPayoutStats({
+        worksheet: "Guild 2026",
+        amount: "pending",
+        discordTag: "alice",
+        instanceTypes,
+      }),
+    ).resolves.toEqual({
+      amount: "pending",
+      overall: {
+        amount: 11_234.9,
+        joinedRuns: 3,
+        totalRuns: 4,
+        personalStanding: {
+          amount: 11_234.9,
+          impactPercent: 35.96906024991276,
+          rank: 2,
+          playerCount: 2,
+        },
+      },
+      categories: [
+        {
+          name: "Endless Tower",
+          emoji: "🪜",
+          amount: 10_000,
+          joinedRuns: 1,
+          totalRuns: 2,
+        },
+        {
+          name: "Endless Cellar",
+          emoji: "📉",
+          amount: 10_000,
+          joinedRuns: 1,
+          totalRuns: 1,
+        },
+        {
+          name: "Wolfchev's Laboratory",
+          emoji: "🐺",
+          amount: 0,
+          joinedRuns: 1,
+          totalRuns: 1,
+        },
+        {
+          name: "Others",
+          emoji: "💀",
+          amount: 1_234.9,
+          joinedRuns: 1,
+          totalRuns: 1,
+        },
+      ],
+    });
+    expect(readPayoutSpreadsheet).toHaveBeenCalledWith("Guild 2026");
+  });
+
+  it("sums the selected guild-wide amount by each matched title category", async () => {
+    await expect(
+      getPayoutStats({
+        worksheet: "Guild 2026",
+        amount: "shareReady",
+        instanceTypes,
+      }),
+    ).resolves.toEqual({
+      amount: "shareReady",
+      overall: { amount: 40_000, joinedRuns: 4, totalRuns: 4 },
+      categories: [
+        {
+          name: "Endless Tower",
+          emoji: "🪜",
+          amount: 0,
+          joinedRuns: 2,
+          totalRuns: 2,
+        },
+        {
+          name: "Endless Cellar",
+          emoji: "📉",
+          amount: 0,
+          joinedRuns: 1,
+          totalRuns: 1,
+        },
+        {
+          name: "Wolfchev's Laboratory",
+          emoji: "🐺",
+          amount: 40_000,
+          joinedRuns: 1,
+          totalRuns: 1,
+        },
+        {
+          name: "Others",
+          emoji: "💀",
+          amount: 0,
+          joinedRuns: 1,
+          totalRuns: 1,
+        },
+      ],
+    });
+  });
+
+  it("includes pending, ready, and distributed cells in Overall", async () => {
+    await expect(
+      getPayoutStats({
+        worksheet: "Guild 2026",
+        amount: "overall",
+        discordTag: "alice",
+        instanceTypes,
+      }),
+    ).resolves.toEqual({
+      amount: "overall",
+      overall: {
+        amount: 51_234.9,
+        joinedRuns: 3,
+        totalRuns: 4,
+        personalStanding: {
+          amount: 51_234.9,
+          impactPercent: 61.55458827967596,
+          rank: 1,
+          playerCount: 2,
+        },
+      },
+      categories: [
+        {
+          name: "Endless Tower",
+          emoji: "🪜",
+          amount: 10_000,
+          joinedRuns: 1,
+          totalRuns: 2,
+        },
+        {
+          name: "Endless Cellar",
+          emoji: "📉",
+          amount: 10_000,
+          joinedRuns: 1,
+          totalRuns: 1,
+        },
+        {
+          name: "Wolfchev's Laboratory",
+          emoji: "🐺",
+          amount: 40_000,
+          joinedRuns: 1,
+          totalRuns: 1,
+        },
+        {
+          name: "Others",
+          emoji: "💀",
+          amount: 1_234.9,
+          joinedRuns: 1,
+          totalRuns: 1,
+        },
+      ],
+    });
+  });
+
+  it("gives players tied for the highest total the same lowest rank", async () => {
+    const spreadsheet = buildSpreadsheet();
+    const rows = spreadsheet.sheets![0]!.data![0]!.rowData!;
+    rows[10]!.values![8] = amountCell(19_234.9, PENDING_SHARE_COLOR);
+    readPayoutSpreadsheet.mockResolvedValue(spreadsheet);
+
+    const alice = await getPayoutStats({
+      worksheet: "Guild 2026",
+      amount: "overall",
+      discordTag: "alice",
+      instanceTypes,
+    });
+    const bob = await getPayoutStats({
+      worksheet: "Guild 2026",
+      amount: "overall",
+      discordTag: "bob",
+      instanceTypes,
+    });
+
+    expect(alice.overall.personalStanding).toMatchObject({
+      rank: 1,
+      playerCount: 2,
+    });
+    expect(bob.overall.personalStanding).toMatchObject({
+      rank: 1,
+      playerCount: 2,
+    });
+  });
+
+  it("returns only the top ten players in descending amount order", async () => {
+    const spreadsheet = buildSpreadsheet();
+    const rows = spreadsheet.sheets![0]!.data![0]!.rowData!;
+    for (let index = 0; index < 11; index += 1) {
+      const row = { values: [] as sheets_v4.Schema$CellData[] };
+      row.values[2] = textCell(`@player${String(index).padStart(2, "0")}`);
+      row.values[5] = amountCell(100_000 - index * 1_000, PENDING_SHARE_COLOR);
+      rows.push(row);
+    }
+    readPayoutSpreadsheet.mockResolvedValue(spreadsheet);
+
+    const stats = await getPayoutStats({
+      worksheet: "Guild 2026",
+      amount: "overall",
+      instanceTypes,
+      includeRanking: true,
+      rankingViewerTag: "alice",
+      displayNameByDiscordTag: new Map([["player00", "Player Zero"]]),
+    });
+
+    expect(stats.ranking).toHaveLength(10);
+    expect(stats.ranking?.[0]).toMatchObject({
+      discordName: "Player Zero",
+      amount: 100_000,
+      rank: 1,
+    });
+    expect(stats.ranking?.at(-1)).toMatchObject({
+      discordName: "player09",
+      amount: 91_000,
+      rank: 10,
+    });
+    expect(stats.overall.personalStanding).toMatchObject({
+      amount: 51_234.9,
+      rank: 12,
+      playerCount: 13,
+    });
+  });
+});

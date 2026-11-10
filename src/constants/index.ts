@@ -64,6 +64,37 @@ export const COMMAND_GUIDE: ReadonlyArray<{
     ],
   },
   {
+    name: "/stats",
+    summary: "View personal or guild payout amounts by instance.",
+    description:
+      "View overall, pending, share-ready, or distributed amounts by instance from this server's configured payout worksheet (Overall default includes purple, yellow, and green shares). Personal is the default; optionally select another user. Personal TOTAL includes guild impact and amount rank. Guild shows the whole server; Ranking displays the top 10 players by the selected amount using escaped Discord display names without pinging, plus 🎖️Your Rank with the invoking user's amount and impact. The user option is only available with Personal. Run titles are matched against configured instance names, initials, and keywords, including historical runs; unmatched runs go to Others. Combined runs count toward each matched instance. Instance fields are alphabetical. Personal shows joined / total runs; Guild shows total runs. The final field is 📋 TOTAL. Footer notes explain combined signup totals and that values are subject to change; Ranking omits that field.",
+    emoji: "📊",
+    parameters: [
+      {
+        name: "which",
+        description: "Personal (default), Guild, or Ranking",
+        required: false,
+      },
+      {
+        name: "sendprivately",
+        description: "Send the statistics privately (default: public)",
+        required: false,
+      },
+      {
+        name: "user",
+        description:
+          "Show this user's Personal statistics; only available with Personal",
+        required: false,
+      },
+      {
+        name: "amount",
+        description:
+          "Choose amount (Overall default; Overall, Share Ready, Pending, Distributed)",
+        required: false,
+      },
+    ],
+  },
+  {
     name: "/guildsched",
     description:
       "View active schedules from this guild's configured categories",
