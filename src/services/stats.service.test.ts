@@ -45,6 +45,7 @@ const buildSpreadsheet = (): sheets_v4.Schema$Spreadsheet => {
   rowData[10]!.values![5] = amountCell(20_000, PENDING_SHARE_COLOR);
   rowData[10]!.values![6] = amountCell(5_000, NO_SHARE_COLOR);
   rowData[10]!.values![7] = amountCell(7_000, NO_SHARE_COLOR);
+  rowData[10]!.values![9] = amountCell(999_000_000, READY_SHARE_COLOR);
   return {
     sheets: [
       {
